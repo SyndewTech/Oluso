@@ -1,0 +1,52 @@
+name: Deploy Demo
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'samples/Oluso.Sample/**'
+      - 'src/backend/**'
+
+env:
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore samples/Oluso.Sample/Oluso.Sample.csproj
+
+      - name: Build
+        run: dotnet build samples/Oluso.Sample/Oluso.Sample.csproj --configuration Release --no-restore
+
+      - name: Publish
+        run: dotnet publish samples/Oluso.Sample/Oluso.Sample.csproj --configuration Release --no-build --output ./publish
+
+      - name: Update secrets in config
+        run: |
+          cd publish
+          # Replace placeholders with secrets
+          sed -i 's|"OlusoDb": ""|"OlusoDb": "${{ secrets.SQLSERVER_CONNECTION_STRING }}"|g' appsettings.Production.json
+          sed -i 's|"Key": ""|"Key": "${{ secrets.JWT_SIGNING_KEY }}"|g' appsettings.Production.json
+
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          dangerous-clean-slate: false
