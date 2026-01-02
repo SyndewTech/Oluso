@@ -12,8 +12,11 @@ import { AccountApp, setApiBaseUrl } from '@oluso/account-ui';
 import { createFido2AccountPlugin } from '@oluso/fido2-ui';
 import { apiClient } from '@oluso/account-ui';
 
-// Configure API base URL from environment
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_OIDC_AUTHORITY || 'http://localhost:5050';
+// Runtime config (supports Cloudflare Pages env vars)
+import { config } from './config';
+
+// Configure API base URL
+const apiBaseUrl = config.apiUrl;
 setApiBaseUrl(apiBaseUrl);
 
 // Create account plugins

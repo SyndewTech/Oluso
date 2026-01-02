@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
+
+// Import AdminUI base styles first, then shell overrides
+import '@oluso/admin-ui/styles';
 import './index.css';
 
 // Import the Admin UI library
@@ -13,10 +16,14 @@ import { createSamlPlugin } from '@oluso/saml-ui';
 import { createFido2Plugin } from '@oluso/fido2-ui';
 import { createScimPlugin } from '@oluso/scim-ui';
 import { createTelemetryPlugin } from '@oluso/telemetry-ui';
+import {createLdapPlugin} from "@oluso/ldap-ui";
 
-// Configure API base URL from environment
-const serverBaseUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:5050';
-const apiBaseUrl = import.meta.env.VITE_API_URL || `${serverBaseUrl}/api/admin`;
+// Runtime config (supports Cloudflare Pages env vars)
+import { config } from './config';
+
+// Configure API base URL
+const serverBaseUrl = config.serverUrl;
+const apiBaseUrl = config.apiUrl;
 setApiBaseUrl(apiBaseUrl);
 
 // Create enterprise plugins
@@ -25,6 +32,7 @@ const plugins = [
   createFido2Plugin({ apiClient }),
   createScimPlugin({ apiClient, serverBaseUrl }),
   createTelemetryPlugin({ apiClient }),
+  createLdapPlugin({ apiClient }),
 ];
 
 const queryClient = new QueryClient({
