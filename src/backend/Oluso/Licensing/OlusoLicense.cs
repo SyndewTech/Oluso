@@ -73,8 +73,7 @@ AQIDAQAB
             LicensedFeatures.Telemetry,
             LicensedFeatures.AuditLogging,
             LicensedFeatures.KeyVault,
-            LicensedFeatures.Webhooks,
-            LicensedFeatures.UnlimitedClients
+            LicensedFeatures.Webhooks
         },
         [LicenseTier.Enterprise] = new()
         {
@@ -90,7 +89,6 @@ AQIDAQAB
             LicensedFeatures.AuditLogging,
             LicensedFeatures.KeyVault,
             LicensedFeatures.Webhooks,
-            LicensedFeatures.UnlimitedClients,
             // Enterprise features
             LicensedFeatures.Saml,
             LicensedFeatures.Ldap,
@@ -113,7 +111,6 @@ AQIDAQAB
             LicensedFeatures.AuditLogging,
             LicensedFeatures.KeyVault,
             LicensedFeatures.Webhooks,
-            LicensedFeatures.UnlimitedClients,
             LicensedFeatures.Saml,
             LicensedFeatures.Ldap,
             LicensedFeatures.UnlimitedTenants,
@@ -176,25 +173,24 @@ AQIDAQAB
     public LicenseValidationResult ValidateLimits(string limitType, int currentCount)
     {
         var limits = _licenseInfo.Limits;
-        int? limit = limitType.ToLower() switch
-        {
-            "clients" => limits.MaxClients,
-            "tenants" => limits.MaxTenants,
-            "users" => limits.MaxUsers,
-            "tokens_per_hour" => limits.MaxTokensPerHour,
-            _ => null
-        };
 
+        // Only tenants are limited - clients and users are unlimited
+        if (limitType.ToLower() != "tenants")
+        {
+            return LicenseValidationResult.Valid();
+        }
+
+        var limit = limits.MaxTenants;
         if (limit == null)
         {
-            return LicenseValidationResult.Valid(); // No limit
+            return LicenseValidationResult.Valid(); // No limit (Enterprise)
         }
 
         if (currentCount >= limit.Value)
         {
             return LicenseValidationResult.Invalid(
                 $"License limit reached: {limitType} ({currentCount}/{limit.Value}). " +
-                "Please upgrade your license for higher limits.");
+                "Please upgrade your license for more tenants.");
         }
 
         return LicenseValidationResult.Valid();
@@ -425,16 +421,11 @@ AQIDAQAB
         {
             LicenseTier.Community => LicenseLimits.Community,
             LicenseTier.Starter => LicenseLimits.Starter,
+            LicenseTier.Professional => LicenseLimits.Professional,
             _ => LicenseLimits.Unlimited
         };
 
-        // Override limits from claims if present
-        var maxClientsStr = jwt.Claims.FirstOrDefault(c => c.Type == "max_clients")?.Value;
-        if (int.TryParse(maxClientsStr, out var maxClients))
-        {
-            info.Limits.MaxClients = maxClients;
-        }
-
+        // Override tenant limit from claims if present
         var maxTenantsStr = jwt.Claims.FirstOrDefault(c => c.Type == "max_tenants")?.Value;
         if (int.TryParse(maxTenantsStr, out var maxTenants))
         {
