@@ -69,7 +69,6 @@ AQIDAQAB
             LicensedFeatures.AccountUI,
             // Pro features
             LicensedFeatures.Fido2,
-            LicensedFeatures.Scim,
             LicensedFeatures.Telemetry,
             LicensedFeatures.AuditLogging,
             LicensedFeatures.KeyVault,
@@ -84,12 +83,12 @@ AQIDAQAB
             LicensedFeatures.AdminUI,
             LicensedFeatures.AccountUI,
             LicensedFeatures.Fido2,
-            LicensedFeatures.Scim,
             LicensedFeatures.Telemetry,
             LicensedFeatures.AuditLogging,
             LicensedFeatures.KeyVault,
             LicensedFeatures.Webhooks,
             // Enterprise features
+            LicensedFeatures.Scim,
             LicensedFeatures.Saml,
             LicensedFeatures.Ldap,
             LicensedFeatures.UnlimitedTenants,

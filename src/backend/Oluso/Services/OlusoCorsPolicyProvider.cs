@@ -44,7 +44,7 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
         _logger = logger;
 
         // Cache configured origins at startup (these don't change)
-        var origins = configuration.GetSection("Cors:Origins").Get<string[]>() ?? [];
+        var origins = configuration.GetSection("Oluso:Cors:Origins").Get<string[]>() ?? [];
         _configuredOrigins = new HashSet<string>(origins, StringComparer.OrdinalIgnoreCase);
     }
 

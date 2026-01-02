@@ -55,7 +55,7 @@ public static class OlusoAdminExtensions
                     {
                         // Configuration is available here
                         var config = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-                        var jwtKey = config["Jwt:Key"] ?? config["Oluso:AdminJwtKey"];
+                        var jwtKey = config["Oluso:Jwt:Key"] ?? config["Oluso:AdminJwtKey"];
 
                         if (!string.IsNullOrEmpty(jwtKey))
                         {

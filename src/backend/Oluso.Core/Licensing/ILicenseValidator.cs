@@ -211,12 +211,11 @@ public class LicenseLimits
 /// Tier Breakdown (all tiers have unlimited clients and users):
 /// - Community (1 tenant): Core, MultiTenancy, JourneyEngine, AdminUI, AccountUI
 /// - Starter (3 tenants): Same as Community + email support
-/// - Professional (10 tenants): + Fido2, Scim, Telemetry, AuditLogging, KeyVault, Webhooks
-/// - Enterprise (unlimited tenants): + Saml, Ldap, CustomBranding, PrioritySupport, Sla
+/// - Professional (10 tenants): + Fido2, Telemetry, AuditLogging, KeyVault, Webhooks
+/// - Enterprise (unlimited tenants): + Scim, Saml, Ldap, CustomBranding, PrioritySupport, Sla
 ///
-/// Add-ons (purchasable at any tier):
-/// - Saml, Ldap (for Pro customers who need enterprise protocols)
-/// - Telemetry (for Community/Starter who want observability)
+/// Add-ons (purchasable for Starter/Professional):
+/// - Scim, Saml, Ldap (enterprise protocols)
 /// </summary>
 public static class LicensedFeatures
 {
@@ -244,9 +243,6 @@ public static class LicensedFeatures
     /// <summary>FIDO2/WebAuthn passkey authentication</summary>
     public const string Fido2 = "fido2";
 
-    /// <summary>SCIM 2.0 user provisioning</summary>
-    public const string Scim = "scim";
-
     /// <summary>OpenTelemetry metrics and tracing</summary>
     public const string Telemetry = "telemetry";
 
@@ -262,6 +258,9 @@ public static class LicensedFeatures
     #endregion
 
     #region Enterprise Features
+
+    /// <summary>SCIM 2.0 user provisioning</summary>
+    public const string Scim = "scim";
 
     /// <summary>SAML 2.0 Identity Provider</summary>
     public const string Saml = "saml";

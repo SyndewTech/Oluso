@@ -242,7 +242,7 @@ public class AuthController : ControllerBase
 
     private string GenerateJwtToken(ValidatedUser user, IEnumerable<string> roles)
     {
-        var jwtKey = _configuration["Jwt:Key"]
+        var jwtKey = _configuration["Oluso:Jwt:Key"]
             ?? _configuration["Oluso:AdminJwtKey"]
             ?? throw new InvalidOperationException("JWT key not configured. Set 'Jwt:Key' in configuration.");
 
