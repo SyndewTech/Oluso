@@ -19,6 +19,9 @@ get_context_config() {
         ldap)
             echo "src/backend/Oluso.Enterprise/Ldap|samples/Oluso.Sample|LdapDbContext"
             ;;
+        saml)
+            echo "src/backend/Oluso.Enterprise/Saml|samples/Oluso.Sample|SamlDbContext"
+            ;;
         *)
             echo ""
             ;;
@@ -34,6 +37,7 @@ get_context_name() {
         oluso|olusodb|main) echo "oluso" ;;
         scim) echo "scim" ;;
         ldap) echo "ldap" ;;
+        saml) echo "saml" ;;
         *) echo "" ;;
     esac
 }
@@ -89,7 +93,7 @@ config=$(get_context_config "$context_name")
 
 if [ -z "$config" ]; then
     echo "Unknown context: $context_name"
-    echo "Valid contexts: oluso, scim, ldap"
+    echo "Valid contexts: oluso, scim, ldap, saml"
     echo ""
     echo "For private contexts (billing, workflows), use:"
     echo "  ./private/scripts/migrations.sh"
@@ -174,13 +178,23 @@ case "$command" in
         ;;
 
     add-all-contexts)
-        migration_name="${2:-}"
+        prov_arg="${2:-Sqlite}"
+        migration_name="${3:-}"
+        prov=$(get_provider "$prov_arg")
+
+        # If second arg looks like a migration name (not a provider), assume Sqlite
+        if [ -z "$prov" ]; then
+            prov="Sqlite"
+            migration_name="$prov_arg"
+        fi
+
         if [ -z "$migration_name" ]; then
-            echo "Usage: $0 add-all-contexts <migration-name>"
+            echo "Usage: $0 add-all-contexts [provider] <migration-name>"
             exit 1
         fi
-        echo "Adding migration '$migration_name' for all public contexts (SQLite only)..."
-        for ctx in oluso scim ldap; do
+
+        echo "Adding migration '$migration_name' for all public contexts ($prov)..."
+        for ctx in oluso scim ldap saml; do
             cfg=$(get_context_config "$ctx")
             IFS='|' read -r proj start ctxname <<< "$cfg"
             echo "--- $ctx ($ctxname) ---"
@@ -188,8 +202,8 @@ case "$command" in
                 --context "$ctxname" \
                 --project "$proj" \
                 --startup-project "$start" \
-                --output-dir "Migrations/Sqlite" \
-                -- --provider Sqlite || echo "Skipped $ctx (may not exist)"
+                --output-dir "Migrations/$prov" \
+                -- --provider "$prov" || echo "Skipped $ctx (may not exist)"
         done
         ;;
 
@@ -206,14 +220,16 @@ case "$command" in
         echo "  add-all [context] <name>          Add migration for all providers"
         echo "  add-all-contexts <name>           Add migration for all contexts (SQLite)"
         echo ""
-        echo "Contexts: oluso (default), scim, ldap"
+        echo "Contexts: oluso (default), scim, ldap, saml"
         echo "Providers: Sqlite (default), SqlServer, Postgres"
         echo ""
         echo "Examples:"
         echo "  $0 add Sqlite AddUserFields              # OlusoDbContext"
         echo "  $0 add scim Sqlite Initial               # ScimDbContext"
         echo "  $0 add ldap Sqlite Initial               # LdapDbContext"
+        echo "  $0 add saml SqlServer Initial            # SamlDbContext"
         echo "  $0 add-all oluso AddNewFeature           # All providers for OlusoDbContext"
+        echo "  $0 add-all-contexts SqlServer Initial    # All contexts for SqlServer"
         echo "  $0 list scim Sqlite                      # List SCIM migrations"
         echo ""
         echo "For private contexts (billing, workflows), use:"

@@ -3,17 +3,20 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Oluso.Enterprise.Saml.EntityFramework;
 
 #nullable disable
 
-namespace Oluso.Enterprise.Saml.Migrations.Sqlite
+namespace Oluso.Enterprise.Saml.Migrations.SqlServer
 {
     [DbContext(typeof(SamlDbContext))]
-    partial class SamlDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260102230219_InitialCreate")]
+    partial class InitialCreate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
