@@ -166,54 +166,41 @@ public enum LicenseTier
 }
 
 /// <summary>
-/// License limits
+/// License limits (tenants only - clients and users are unlimited)
 /// </summary>
 public class LicenseLimits
 {
-    /// <summary>
-    /// Maximum number of clients (null = unlimited)
-    /// </summary>
-    public int? MaxClients { get; set; }
-
     /// <summary>
     /// Maximum number of tenants (null = unlimited)
     /// </summary>
     public int? MaxTenants { get; set; }
 
     /// <summary>
-    /// Maximum number of users (null = unlimited)
-    /// </summary>
-    public int? MaxUsers { get; set; }
-
-    /// <summary>
-    /// Maximum tokens per hour (null = unlimited)
-    /// </summary>
-    public int? MaxTokensPerHour { get; set; }
-
-    /// <summary>
-    /// Default limits for community license
+    /// Default limits for community license (1 tenant)
     /// </summary>
     public static LicenseLimits Community => new()
     {
-        MaxClients = 5,
-        MaxTenants = 1,
-        MaxUsers = 100,
-        MaxTokensPerHour = 1000
+        MaxTenants = 1
     };
 
     /// <summary>
-    /// Default limits for starter license
+    /// Default limits for starter license (3 tenants)
     /// </summary>
     public static LicenseLimits Starter => new()
     {
-        MaxClients = 25,
-        MaxTenants = 3,
-        MaxUsers = 1000,
-        MaxTokensPerHour = 10000
+        MaxTenants = 3
     };
 
     /// <summary>
-    /// No limits (professional/enterprise)
+    /// Default limits for professional license (10 tenants)
+    /// </summary>
+    public static LicenseLimits Professional => new()
+    {
+        MaxTenants = 10
+    };
+
+    /// <summary>
+    /// No limits (enterprise)
     /// </summary>
     public static LicenseLimits Unlimited => new();
 }
@@ -221,14 +208,14 @@ public class LicenseLimits
 /// <summary>
 /// Licensed feature identifiers for Oluso platform licensing.
 ///
-/// Tier Breakdown:
-/// - Community/Starter: Core, MultiTenancy, JourneyEngine, AdminUI, AccountUI
-/// - Professional: + Fido2, Scim, Telemetry, AuditLogging, KeyVault, Webhooks, UnlimitedClients
-/// - Enterprise: + Saml, Ldap, UnlimitedTenants, CustomBranding, PrioritySupport, Sla
+/// Tier Breakdown (all tiers have unlimited clients and users):
+/// - Community (1 tenant): Core, MultiTenancy, JourneyEngine, AdminUI, AccountUI
+/// - Starter (3 tenants): Same as Community + email support
+/// - Professional (10 tenants): + Fido2, Telemetry, AuditLogging, KeyVault, Webhooks
+/// - Enterprise (unlimited tenants): + Scim, Saml, Ldap, CustomBranding, PrioritySupport, Sla
 ///
-/// Add-ons (purchasable at any tier):
-/// - Saml, Ldap (for Pro customers who need enterprise protocols)
-/// - Telemetry (for Community/Starter who want observability)
+/// Add-ons (purchasable for Starter/Professional):
+/// - Scim, Saml, Ldap (enterprise protocols)
 /// </summary>
 public static class LicensedFeatures
 {
@@ -256,9 +243,6 @@ public static class LicensedFeatures
     /// <summary>FIDO2/WebAuthn passkey authentication</summary>
     public const string Fido2 = "fido2";
 
-    /// <summary>SCIM 2.0 user provisioning</summary>
-    public const string Scim = "scim";
-
     /// <summary>OpenTelemetry metrics and tracing</summary>
     public const string Telemetry = "telemetry";
 
@@ -271,12 +255,12 @@ public static class LicensedFeatures
     /// <summary>Webhook event notifications</summary>
     public const string Webhooks = "webhooks";
 
-    /// <summary>No client application limits</summary>
-    public const string UnlimitedClients = "unlimited-clients";
-
     #endregion
 
     #region Enterprise Features
+
+    /// <summary>SCIM 2.0 user provisioning</summary>
+    public const string Scim = "scim";
 
     /// <summary>SAML 2.0 Identity Provider</summary>
     public const string Saml = "saml";

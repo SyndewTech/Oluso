@@ -426,3 +426,4 @@ appsettings*.json
 # Sqlite database files
 *.db
 *.sqlite
+.vscode/*
