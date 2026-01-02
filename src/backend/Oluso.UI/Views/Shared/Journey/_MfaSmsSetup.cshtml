@@ -1,0 +1,176 @@
+@using Oluso.UserJourneys.Steps
+@model MfaSmsSetupViewModel
+
+<div class="mfa-card">
+    <h1 class="title">Set Up SMS Verification</h1>
+    <p class="subtitle">
+        We'll send a verification code to your phone number to confirm it works.
+    </p>
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    @if (Model?.CodeSent == true)
+    {
+        <p class="code-sent-message">
+            We sent a verification code to <strong>@Model.MaskedPhone</strong>.
+        </p>
+
+        <form method="post" id="verifyForm">
+            <input type="hidden" name="setup_sms_verify" value="true" />
+
+            <div class="form-group">
+                <label for="setup_sms_code">Verification Code</label>
+                <input type="text"
+                       id="setup_sms_code"
+                       name="setup_sms_code"
+                       class="form-control code-input"
+                       pattern="[0-9]{6}"
+                       maxlength="6"
+                       autocomplete="one-time-code"
+                       inputmode="numeric"
+                       autofocus
+                       required />
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">Verify and Enable</button>
+        </form>
+
+        <form method="post" id="resendForm" class="resend-form">
+            <input type="hidden" name="setup_sms_resend" value="true" />
+            <p class="text-center">
+                Didn't receive the code?
+                <button type="submit" class="btn-link">Resend</button>
+            </p>
+        </form>
+    }
+    else
+    {
+        <form method="post" id="phoneForm">
+            <input type="hidden" name="setup_sms_phone" value="true" />
+
+            <div class="form-group">
+                <label for="phone_number">Phone Number</label>
+                <input type="tel"
+                       id="phone_number"
+                       name="phone_number"
+                       class="form-control"
+                       value="@Model?.PhoneNumber"
+                       placeholder="+1 (555) 123-4567"
+                       autocomplete="tel"
+                       autofocus
+                       required />
+                <small class="form-text text-muted">
+                    Include country code (e.g., +1 for US)
+                </small>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">Send Verification Code</button>
+        </form>
+    }
+
+    <div class="back-link">
+        <form method="post">
+            <input type="hidden" name="setup_method_back" value="true" />
+            <button type="submit" class="btn-link">Choose a different method</button>
+        </form>
+    </div>
+</div>
+
+<style>
+.mfa-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.title {
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.code-sent-message {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+    padding: 0.75rem 1rem;
+    border-radius: 0.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    box-sizing: border-box;
+}
+
+.code-input {
+    font-size: 1.5rem;
+    letter-spacing: 0.5rem;
+    text-align: center;
+    font-family: monospace;
+}
+
+.form-text {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.text-muted {
+    color: #6c757d;
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+}
+
+.resend-form {
+    margin-top: 1.5rem;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #007bff;
+    cursor: pointer;
+    padding: 0;
+    font-size: inherit;
+    text-decoration: underline;
+}
+
+.btn-link:hover {
+    color: #0056b3;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.back-link {
+    margin-top: 1.5rem;
+    text-align: center;
+}
+</style>

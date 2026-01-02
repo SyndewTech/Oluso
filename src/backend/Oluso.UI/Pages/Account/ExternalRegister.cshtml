@@ -1,0 +1,326 @@
+@page "/account/external-register"
+@model Oluso.UI.Pages.Account.ExternalRegisterModel
+@{
+    ViewData["Title"] = "Complete Registration";
+}
+
+<div class="auth-container">
+    <div class="auth-card">
+        <h1 class="auth-title">Complete Registration</h1>
+        <p class="auth-subtitle">
+            You're signing up with <strong>@Model.ProviderDisplayName</strong>.
+            Please provide any missing information below.
+        </p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Model.ErrorMessage</span>
+            </div>
+        }
+
+        <form method="post" id="externalRegisterForm" novalidate>
+            <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+
+            <div class="form-group">
+                <label for="email">Email Address <span class="required">*</span></label>
+                <input type="email"
+                       id="email"
+                       name="Input.Email"
+                       class="form-control @(Model.ValidationErrors.ContainsKey("email") ? "is-invalid" : "")"
+                       value="@Model.Input.Email"
+                       autofocus
+                       autocomplete="email"
+                       required />
+                @if (Model.ValidationErrors.TryGetValue("email", out var emailError))
+                {
+                    <div class="invalid-feedback">@emailError</div>
+                }
+            </div>
+
+            <div class="form-row">
+                <div class="form-group form-group-half">
+                    <label for="firstName">First Name</label>
+                    <input type="text"
+                           id="firstName"
+                           name="Input.FirstName"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("firstName") ? "is-invalid" : "")"
+                           value="@Model.Input.FirstName"
+                           autocomplete="given-name" />
+                    @if (Model.ValidationErrors.TryGetValue("firstName", out var firstNameError))
+                    {
+                        <div class="invalid-feedback">@firstNameError</div>
+                    }
+                </div>
+
+                <div class="form-group form-group-half">
+                    <label for="lastName">Last Name</label>
+                    <input type="text"
+                           id="lastName"
+                           name="Input.LastName"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("lastName") ? "is-invalid" : "")"
+                           value="@Model.Input.LastName"
+                           autocomplete="family-name" />
+                    @if (Model.ValidationErrors.TryGetValue("lastName", out var lastNameError))
+                    {
+                        <div class="invalid-feedback">@lastNameError</div>
+                    }
+                </div>
+            </div>
+
+            <div class="info-box">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="info-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+                <span>No password required - you'll sign in using @Model.ProviderDisplayName</span>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">Complete Registration</button>
+        </form>
+
+        <hr class="auth-divider" />
+        <p class="text-center">
+            <a href="/account/login?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Cancel and return to sign in</a>
+        </p>
+    </div>
+</div>
+
+<style>
+:root {
+    --oluso-primary: #f97316;
+    --oluso-primary-hover: #ea580c;
+    --oluso-primary-dark: #c2410c;
+    --oluso-primary-light: rgba(249, 115, 22, 0.1);
+}
+
+.auth-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+}
+
+.auth-container::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.auth-card {
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    position: relative;
+    z-index: 1;
+    animation: cardSlideUp 0.5s ease-out;
+}
+
+@@keyframes cardSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.auth-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #1a1a2e;
+}
+
+.auth-subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.required {
+    color: #dc3545;
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-group-half {
+    flex: 1;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #374151;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #1a1a2e;
+    background-color: #f9fafb;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--oluso-primary);
+    box-shadow: 0 0 0 3px var(--oluso-primary-light);
+}
+
+.form-control.is-invalid {
+    border-color: #dc3545;
+}
+
+.invalid-feedback {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+.info-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    background-color: #f0f9ff;
+    border: 1px solid #bae6fd;
+    color: #0369a1;
+}
+
+.info-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    border: none;
+}
+
+.btn-block {
+    display: flex;
+    width: 100%;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--oluso-primary) 0%, var(--oluso-primary-dark) 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, var(--oluso-primary-hover) 0%, var(--oluso-primary-dark) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
+}
+
+.auth-divider {
+    margin: 1.5rem 0;
+    border: none;
+    border-top: 1px solid #e5e7eb;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.text-center a {
+    color: var(--oluso-primary);
+}
+
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.alert-danger {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.alert-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+@@media (max-width: 480px) {
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+}
+</style>
+
+@section Scripts {
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Focus first empty required field
+            var emailInput = document.getElementById('email');
+            if (emailInput && !emailInput.value) {
+                emailInput.focus();
+            }
+
+            // Disable button on submit
+            var form = document.getElementById('externalRegisterForm');
+            if (form) {
+                form.addEventListener('submit', function() {
+                    var submitBtn = form.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.innerHTML = '<span class="spinner"></span> Creating account...';
+                    }
+                });
+            }
+        });
+    </script>
+}

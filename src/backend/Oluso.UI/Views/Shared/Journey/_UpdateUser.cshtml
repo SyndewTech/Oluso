@@ -1,0 +1,164 @@
+@using Oluso.UserJourneys.Steps
+@model UpdateUserViewModel
+
+<div class="update-user-card">
+    <h1 class="title">@(Model?.Title ?? "Update Your Profile")</h1>
+
+    @if (!string.IsNullOrEmpty(Model?.Description))
+    {
+        <p class="subtitle">@Model.Description</p>
+    }
+
+    @if (!string.IsNullOrEmpty(Model?.FormError))
+    {
+        <div class="alert alert-danger">@Model.FormError</div>
+    }
+
+    <form method="post" id="updateUserForm">
+        <input type="hidden" name="_submitted" value="true" />
+
+        @foreach (var field in Model?.Fields ?? new List<UpdateFieldViewModel>())
+        {
+            <div class="form-group">
+                <label for="@field.Name">
+                    @field.Label
+                    @if (field.Required)
+                    {
+                        <span class="required">*</span>
+                    }
+                </label>
+
+                @if (field.Options?.Any() == true)
+                {
+                    <select id="@field.Name"
+                            name="@field.Name"
+                            class="form-control @(!string.IsNullOrEmpty(field.Error) ? "is-invalid" : "")"
+                            @(field.Required ? "required" : "")>
+                        <option value="">Select...</option>
+                        @foreach (var option in field.Options)
+                        {
+                            var isSelected = field.Value == option.Value;
+                            <option value="@option.Value" selected="@isSelected">
+                                @option.Label
+                            </option>
+                        }
+                    </select>
+                }
+                else if (field.Type == "textarea")
+                {
+                    <textarea id="@field.Name"
+                              name="@field.Name"
+                              class="form-control @(!string.IsNullOrEmpty(field.Error) ? "is-invalid" : "")"
+                              placeholder="@field.Placeholder"
+                              @(field.Required ? "required" : "")>@field.Value</textarea>
+                }
+                else
+                {
+                    <input type="@field.Type"
+                           id="@field.Name"
+                           name="@field.Name"
+                           class="form-control @(!string.IsNullOrEmpty(field.Error) ? "is-invalid" : "")"
+                           value="@field.Value"
+                           placeholder="@field.Placeholder"
+                           @(field.Required ? "required" : "")
+                           @(field.Type == "email" ? "autocomplete=email" : "")
+                           @(field.Type == "tel" ? "autocomplete=tel" : "") />
+                }
+
+                @if (!string.IsNullOrEmpty(field.Error))
+                {
+                    <div class="invalid-feedback">@field.Error</div>
+                }
+            </div>
+        }
+
+        <button type="submit" class="btn btn-primary btn-block">
+            @(Model?.SubmitButtonText ?? "Update Profile")
+        </button>
+    </form>
+</div>
+
+<style>
+.update-user-card {
+    max-width: 500px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.title {
+    margin-bottom: 0.5rem;
+    text-align: center;
+}
+
+.subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.form-group label .required {
+    color: #dc3545;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+}
+
+textarea.form-control {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.form-control.is-invalid {
+    border-color: #dc3545;
+}
+
+.invalid-feedback {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+    margin-top: 1.5rem;
+}
+
+.btn-primary {
+    padding: 0.5rem 1rem;
+    background-color: #007bff;
+    border-color: #007bff;
+    color: white;
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+
+.alert {
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0.25rem;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+    color: #721c24;
+}
+</style>

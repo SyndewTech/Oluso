@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Package metadata -->
+    <PackageId>Oluso.Enterprise.AzureWebhooks</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Oluso</Authors>
+    <Description>Azure-based webhook processing for Oluso identity platform. Provides queue-based webhook retry processing using Azure Storage Queues or Service Bus for production multi-instance deployments.</Description>
+    <PackageTags>identity;authentication;oauth;oidc;azure;webhooks;queue;servicebus</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Generate XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Azure Storage SDK for Queue-based processing -->
+    <PackageReference Include="Azure.Storage.Queues" Version="12.22.0" />
+
+    <!-- Azure Service Bus for higher throughput scenarios -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
+
+    <!-- Azure Identity for DefaultAzureCredential -->
+    <PackageReference Include="Azure.Identity" Version="1.13.2" />
+  </ItemGroup>
+
+  <!-- Include README in package -->
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" Condition="Exists('README.md')" />
+  </ItemGroup>
+
+  <!-- Reference Oluso packages -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Oluso.Core\Oluso.Core.csproj" />
+    <ProjectReference Include="..\..\Oluso\Oluso.csproj" />
+  </ItemGroup>
+
+</Project>

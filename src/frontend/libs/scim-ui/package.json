@@ -1,0 +1,34 @@
+{
+  "name": "@oluso/scim-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SCIM Provisioning Admin UI Plugin for Oluso",
+  "main": "index.ts",
+  "types": "index.ts",
+  "oluso": {
+    "plugin": true,
+    "feature": "scim",
+    "tier": "professional",
+    "displayName": "SCIM Provisioning",
+    "category": "provisioning"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext ts,tsx"
+  },
+  "dependencies": {
+    "@oluso/ui-core": "*"
+  },
+  "peerDependencies": {
+    "@heroicons/react": "^2.1.1",
+    "axios": "^1.6.0",
+    "react": "^18.2.0",
+    "react-router-dom": "^6.21.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "typescript": "^5.3.3"
+  }
+}

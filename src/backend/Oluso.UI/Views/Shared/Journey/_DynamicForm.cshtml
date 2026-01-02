@@ -1,0 +1,204 @@
+@model Oluso.UserJourneys.Steps.DynamicFormViewModel
+
+<div class="dynamic-form">
+    @if (!string.IsNullOrEmpty(Model.Title))
+    {
+        <h2>@Model.Title</h2>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.Description))
+    {
+        <p class="description">@Model.Description</p>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.FormError))
+    {
+        <div class="alert alert-danger" role="alert">
+            <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            <span>@Model.FormError</span>
+        </div>
+    }
+
+    <form method="post">
+        <input type="hidden" name="__submitted" value="true" />
+
+        @foreach (var field in Model.Fields)
+        {
+            @if (field.Hidden)
+            {
+                <input type="hidden" id="@field.Name" name="@field.Name" value="@field.Value" />
+                continue;
+            }
+
+            <div class="form-group mb-3">
+                <label for="@field.Name" class="form-label">
+                    @field.Label
+                    @if (field.Required)
+                    {
+                        <span class="text-danger">*</span>
+                    }
+                </label>
+
+                @{
+                    var hasError = !string.IsNullOrEmpty(field.Error);
+                    var errorClass = hasError ? "is-invalid" : "";
+                }
+
+                @switch (field.Type.ToLowerInvariant())
+                {
+                    case "textarea":
+                        <textarea id="@field.Name"
+                                  name="@field.Name"
+                                  class="form-control @errorClass"
+                                  placeholder="@field.Placeholder"
+                                  rows="@(field.Rows ?? 4)"
+                                  @(field.Required ? "required" : "")
+                                  @(field.ReadOnly ? "readonly" : "")>@field.Value</textarea>
+                        break;
+
+                    case "select":
+                        <select id="@field.Name"
+                                name="@field.Name"
+                                class="form-select @errorClass"
+                                @(field.Required ? "required" : "")
+                                @(field.ReadOnly ? "disabled" : "")>
+                            <option value="">@(field.Placeholder ?? "Select...")</option>
+                            @foreach (var option in field.Options)
+                            {
+                                if (option.Value == field.Value)
+                                {
+                                    <option value="@option.Value" selected>@option.Label</option>
+                                }
+                                else
+                                {
+                                    <option value="@option.Value">@option.Label</option>
+                                }
+                            }
+                        </select>
+                        break;
+
+                    case "radio":
+                        @foreach (var option in field.Options)
+                        {
+                            <div class="form-check">
+                                <input type="radio"
+                                       id="@field.Name-@option.Value"
+                                       name="@field.Name"
+                                       value="@option.Value"
+                                       class="form-check-input @errorClass"
+                                       @(option.Value == field.Value ? "checked" : "")
+                                       @(field.Required ? "required" : "")
+                                       @(field.ReadOnly ? "disabled" : "") />
+                                <label class="form-check-label" for="@field.Name-@option.Value">
+                                    @option.Label
+                                </label>
+                            </div>
+                        }
+                        break;
+
+                    case "checkbox":
+                        <div class="form-check">
+                            <input type="checkbox"
+                                   id="@field.Name"
+                                   name="@field.Name"
+                                   value="true"
+                                   class="form-check-input @errorClass"
+                                   @(field.Value == "true" ? "checked" : "")
+                                   @(field.Required ? "required" : "")
+                                   @(field.ReadOnly ? "disabled" : "") />
+                            <label class="form-check-label" for="@field.Name">
+                                @field.Placeholder
+                            </label>
+                        </div>
+                        break;
+
+                    case "date":
+                        <input type="date"
+                               id="@field.Name"
+                               name="@field.Name"
+                               class="form-control @errorClass"
+                               value="@field.Value"
+                               @(field.Required ? "required" : "")
+                               @(field.ReadOnly ? "readonly" : "") />
+                        break;
+
+                    case "number":
+                        <input type="number"
+                               id="@field.Name"
+                               name="@field.Name"
+                               class="form-control @errorClass"
+                               placeholder="@field.Placeholder"
+                               value="@field.Value"
+                               min="@field.Min"
+                               max="@field.Max"
+                               @(field.Required ? "required" : "")
+                               @(field.ReadOnly ? "readonly" : "") />
+                        break;
+
+                    case "email":
+                        <input type="email"
+                               id="@field.Name"
+                               name="@field.Name"
+                               class="form-control @errorClass"
+                               placeholder="@field.Placeholder"
+                               value="@field.Value"
+                               autocomplete="email"
+                               @(field.Required ? "required" : "")
+                               @(field.ReadOnly ? "readonly" : "") />
+                        break;
+
+                    case "tel":
+                    case "phone":
+                        <input type="tel"
+                               id="@field.Name"
+                               name="@field.Name"
+                               class="form-control @errorClass"
+                               placeholder="@field.Placeholder"
+                               value="@field.Value"
+                               autocomplete="tel"
+                               @(field.Required ? "required" : "")
+                               @(field.ReadOnly ? "readonly" : "") />
+                        break;
+
+                    default:
+                        <input type="text"
+                               id="@field.Name"
+                               name="@field.Name"
+                               class="form-control @errorClass"
+                               placeholder="@field.Placeholder"
+                               value="@field.Value"
+                               minlength="@field.MinLength"
+                               maxlength="@field.MaxLength"
+                               pattern="@field.Pattern"
+                               @(field.Required ? "required" : "")
+                               @(field.ReadOnly ? "readonly" : "") />
+                        break;
+                }
+
+                @if (!string.IsNullOrEmpty(field.Error))
+                {
+                    <div class="invalid-feedback">@field.Error</div>
+                }
+
+                @if (!string.IsNullOrEmpty(field.Description))
+                {
+                    <small class="form-text text-muted">@field.Description</small>
+                }
+            </div>
+        }
+
+        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+            @if (Model.ShowCancel)
+            {
+                <button type="submit" name="__cancel" value="true" class="btn btn-outline-secondary">
+                    @(Model.CancelButtonText ?? "Cancel")
+                </button>
+            }
+            <button type="submit" class="btn btn-primary">
+                @Model.SubmitButtonText
+            </button>
+        </div>
+    </form>
+</div>

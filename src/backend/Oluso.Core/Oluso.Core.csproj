@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>Oluso.Core</PackageId>
+    <Version>1.0.0</Version>
+    <Description>Core abstractions and domain entities for Oluso identity server.</Description>
+    <PackageTags>oauth;oidc;identity;core</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Required for OlusoUser/OlusoRole base classes -->
+    <PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="8.0.22" />
+    <!-- Required for signing key abstractions (SecurityKey, SigningCredentials, JsonWebKey) -->
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.3.1" />
+    <!-- Required for API extensions (AddOlusoApiAuthentication) -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
+    <!-- Required for PluginDbContextBase and IPluginDbContext -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.22" />
+    <!-- Required for HttpContext, IActionResult in protocol abstractions -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

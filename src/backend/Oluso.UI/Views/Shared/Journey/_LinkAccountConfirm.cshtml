@@ -1,0 +1,32 @@
+@model Oluso.UserJourneys.Steps.LinkAccountConfirmViewModel
+
+<div class="link-account-confirm-form">
+    <h2>Link @Model.ProviderDisplayName Account</h2>
+    <p class="description">
+        You're about to link your <strong>@Model.ProviderDisplayName</strong> account to your profile.
+        This will allow you to sign in using @Model.ProviderDisplayName in the future.
+    </p>
+
+    <div class="alert alert-info" role="alert">
+        <strong>What this means:</strong>
+        <ul class="mb-0 mt-2">
+            <li>You can sign in with your @Model.ProviderDisplayName account</li>
+            <li>Your @Model.ProviderDisplayName profile info may be used to keep your profile up to date</li>
+            <li>You can unlink this account at any time from your settings</li>
+        </ul>
+    </div>
+
+    <form method="post" class="mt-4">
+        <input type="hidden" name="_external_provider" value="@Model.Provider" />
+        <input type="hidden" name="_external_provider_key" value="@Model.ProviderKey" />
+        <input type="hidden" name="_external_provider_name" value="@Model.ProviderDisplayName" />
+        <input type="hidden" name="_confirmed" value="true" />
+
+        <div class="d-grid gap-2 d-md-flex">
+            <button type="submit" class="btn btn-primary">
+                Link @Model.ProviderDisplayName
+            </button>
+            <a href="?cancel=true" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</div>

@@ -1,0 +1,495 @@
+@page "/account/register"
+@using Oluso.UI.ViewModels
+@model Oluso.UI.Pages.Account.RegisterModel
+@{
+    ViewData["Title"] = "Create Account";
+}
+
+@section Styles {
+    @if (Model.UiConfig != null)
+    {
+        <style>
+            :root {
+                @if (!string.IsNullOrEmpty(Model.UiConfig.PrimaryColor))
+                {
+                    @:--primary-color: @Model.UiConfig.PrimaryColor;
+                    @:--primary-hover: color-mix(in srgb, @Model.UiConfig.PrimaryColor 85%, black);
+                }
+            }
+        </style>
+    }
+}
+
+<div class="auth-container">
+    @if (!string.IsNullOrEmpty(Model.UiConfig?.LogoUrl))
+    {
+        <div class="auth-logo">
+            <img src="@Model.UiConfig.LogoUrl" alt="Logo" />
+        </div>
+    }
+
+    <div class="auth-card">
+        <h1 class="auth-title">Create Account</h1>
+        <p class="auth-subtitle">Fill in your details to get started</p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Model.ErrorMessage</span>
+            </div>
+        }
+
+        <form method="post" id="registerForm" novalidate>
+            <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email"
+                       id="email"
+                       name="Input.Email"
+                       class="form-control @(Model.ValidationErrors.ContainsKey("email") ? "is-invalid" : "")"
+                       value="@Model.Input.Email"
+                       autofocus
+                       autocomplete="email"
+                       required />
+                @if (Model.ValidationErrors.TryGetValue("email", out var emailError))
+                {
+                    <div class="invalid-feedback">@emailError</div>
+                }
+            </div>
+
+            @if (Model.RequireUsername)
+            {
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text"
+                           id="username"
+                           name="Input.Username"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("username") ? "is-invalid" : "")"
+                           value="@Model.Input.Username"
+                           autocomplete="username"
+                           required />
+                    @if (Model.ValidationErrors.TryGetValue("username", out var usernameError))
+                    {
+                        <div class="invalid-feedback">@usernameError</div>
+                    }
+                </div>
+            }
+
+            <div class="form-row">
+                <div class="form-group form-group-half">
+                    <label for="firstName">First Name</label>
+                    <input type="text"
+                           id="firstName"
+                           name="Input.FirstName"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("firstName") ? "is-invalid" : "")"
+                           value="@Model.Input.FirstName"
+                           autocomplete="given-name" />
+                    @if (Model.ValidationErrors.TryGetValue("firstName", out var firstNameError))
+                    {
+                        <div class="invalid-feedback">@firstNameError</div>
+                    }
+                </div>
+
+                <div class="form-group form-group-half">
+                    <label for="lastName">Last Name</label>
+                    <input type="text"
+                           id="lastName"
+                           name="Input.LastName"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("lastName") ? "is-invalid" : "")"
+                           value="@Model.Input.LastName"
+                           autocomplete="family-name" />
+                    @if (Model.ValidationErrors.TryGetValue("lastName", out var lastNameError))
+                    {
+                        <div class="invalid-feedback">@lastNameError</div>
+                    }
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password"
+                       id="password"
+                       name="Input.Password"
+                       class="form-control @(Model.ValidationErrors.ContainsKey("password") ? "is-invalid" : "")"
+                       autocomplete="new-password"
+                       required />
+                @if (Model.ValidationErrors.TryGetValue("password", out var passwordError))
+                {
+                    <div class="invalid-feedback">@passwordError</div>
+                }
+                <div class="password-requirements">
+                    <small>Password must be at least 8 characters with uppercase, lowercase, number, and special character</small>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="confirmPassword">Confirm Password</label>
+                <input type="password"
+                       id="confirmPassword"
+                       name="Input.ConfirmPassword"
+                       class="form-control @(Model.ValidationErrors.ContainsKey("confirmPassword") ? "is-invalid" : "")"
+                       autocomplete="new-password"
+                       required />
+                @if (Model.ValidationErrors.TryGetValue("confirmPassword", out var confirmPasswordError))
+                {
+                    <div class="invalid-feedback">@confirmPasswordError</div>
+                }
+            </div>
+
+            @if (Model.RequireTermsAcceptance)
+            {
+                <div class="form-check">
+                    <input type="checkbox"
+                           id="acceptTerms"
+                           name="Input.AcceptTerms"
+                           class="form-check-input @(Model.ValidationErrors.ContainsKey("acceptTerms") ? "is-invalid" : "")"
+                           value="true"
+                           @(Model.Input.AcceptTerms ? "checked" : "") />
+                    <label class="form-check-label" for="acceptTerms">
+                        I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>
+                    </label>
+                    @if (Model.ValidationErrors.TryGetValue("acceptTerms", out var termsError))
+                    {
+                        <div class="invalid-feedback d-block">@termsError</div>
+                    }
+                </div>
+            }
+
+            <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+        </form>
+
+        <hr class="auth-divider" />
+        <p class="text-center">
+            Already have an account? <a href="/account/login?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Sign in</a>
+        </p>
+
+        @if (Model.ExternalProviders?.Any() == true)
+        {
+            <div class="divider">
+                <span>or sign up with</span>
+            </div>
+
+            <div class="external-providers">
+                @foreach (var provider in Model.ExternalProviders)
+                {
+                    <form method="post" asp-page-handler="ExternalLogin" class="external-form">
+                        <input type="hidden" name="provider" value="@provider.AuthenticationScheme" />
+                        <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                        <input type="hidden" name="providerType" value="@provider.ProviderType" />
+                        <button type="submit" class="btn btn-outline btn-block btn-external">
+                            @if (!string.IsNullOrEmpty(provider.IconUrl))
+                            {
+                                <img src="@provider.IconUrl" alt="" class="provider-icon" />
+                            }
+                            @provider.DisplayName
+                        </button>
+                    </form>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+/* Oluṣọ Brand Colors */
+:root {
+    --oluso-primary: #f97316;
+    --oluso-primary-hover: #ea580c;
+    --oluso-primary-dark: #c2410c;
+    --oluso-primary-light: rgba(249, 115, 22, 0.1);
+    --oluso-accent: #14b8a6;
+}
+
+.auth-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: linear-gradient(135deg, var(--background-start, #0f172a) 0%, var(--background-end, #1e293b) 100%);
+}
+
+.auth-container::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.auth-logo {
+    margin-bottom: 2rem;
+    position: relative;
+    z-index: 1;
+}
+
+.auth-logo img {
+    max-height: 60px;
+    width: auto;
+}
+
+.auth-card {
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    position: relative;
+    z-index: 1;
+    animation: cardSlideUp 0.5s ease-out;
+}
+
+@@keyframes cardSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.auth-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #1a1a2e;
+}
+
+.auth-subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-group-half {
+    flex: 1;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #374151;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #1a1a2e;
+    background-color: #f9fafb;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary-color, var(--oluso-primary));
+    box-shadow: 0 0 0 3px var(--primary-light, var(--oluso-primary-light));
+}
+
+.form-control.is-invalid {
+    border-color: #dc3545;
+}
+
+.invalid-feedback {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+.d-block {
+    display: block;
+}
+
+.password-requirements {
+    margin-top: 0.5rem;
+    color: #6c757d;
+}
+
+.form-check {
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.form-check-input {
+    width: 1.125rem;
+    height: 1.125rem;
+    margin-top: 0.25rem;
+    accent-color: var(--primary-color, var(--oluso-primary));
+}
+
+.form-check-label a {
+    color: var(--primary-color, var(--oluso-primary));
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    border: none;
+}
+
+.btn-block {
+    display: flex;
+    width: 100%;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary-color, var(--oluso-primary)) 0%, var(--oluso-primary-dark) 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, var(--primary-hover, var(--oluso-primary-hover)) 0%, var(--oluso-primary-dark) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
+}
+
+.btn-outline {
+    background: white;
+    border: 1px solid #d1d5db;
+    color: #374151;
+}
+
+.btn-outline:hover {
+    background: #f9fafb;
+    border-color: #9ca3af;
+}
+
+.auth-divider {
+    margin: 1.5rem 0;
+    border: none;
+    border-top: 1px solid #e5e7eb;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    margin: 1.5rem 0;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.divider span {
+    padding: 0 1rem;
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+
+.external-providers {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.external-form {
+    margin: 0;
+}
+
+.btn-external {
+    gap: 0.5rem;
+}
+
+.provider-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.alert-danger {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.alert-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+@@media (max-width: 480px) {
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+}
+</style>
+
+@section Scripts {
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var firstInput = document.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([disabled])');
+            if (firstInput) {
+                firstInput.focus();
+            }
+
+            var form = document.getElementById('registerForm');
+            if (form) {
+                form.addEventListener('submit', function() {
+                    var submitBtn = form.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.innerHTML = '<span class="spinner"></span> Creating account...';
+                    }
+                });
+            }
+        });
+    </script>
+}

@@ -1,0 +1,230 @@
+@using Oluso.Enterprise.Fido2
+@model Fido2LoginViewModel
+
+<div class="fido2-login-card">
+    <h1 class="title">Sign In</h1>
+    <p class="subtitle">Use your passkey or security key to sign in</p>
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    @if (Model?.AllowPasskeyOnly == true)
+    {
+        <!-- Passkey-only flow: just show the button -->
+        <div class="passkey-section">
+            <button type="button" id="passkeyButton" class="btn btn-primary btn-block btn-passkey">
+                <svg class="passkey-icon" viewBox="0 0 24 24" width="24" height="24">
+                    <path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
+                </svg>
+                Sign in with Passkey
+            </button>
+            <p class="passkey-hint">Your device will prompt you to use your fingerprint, face, or PIN</p>
+        </div>
+    }
+    else
+    {
+        <!-- Username-first flow -->
+        <form method="post" id="usernameForm">
+            <div class="form-group">
+                <label for="username">Username or Email</label>
+                <input type="text"
+                       id="username"
+                       name="username"
+                       class="form-control"
+                       value="@Model?.Username"
+                       autofocus
+                       autocomplete="username webauthn"
+                       required />
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">Continue</button>
+        </form>
+
+        <div class="divider">
+            <span>or</span>
+        </div>
+
+        <button type="button" id="passkeyButton" class="btn btn-outline-primary btn-block btn-passkey">
+            <svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20">
+                <path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
+            </svg>
+            Use a Passkey
+        </button>
+    }
+
+    @if (Model?.ShowFallback == true || Model?.AllowFallback == true)
+    {
+        <hr />
+        <p class="text-center text-muted">
+            <a href="?fallback=password">Sign in with password instead</a>
+        </p>
+    }
+</div>
+
+<!-- Hidden form for FIDO2 response submission -->
+<form method="post" id="fido2Form" style="display: none;">
+    <input type="hidden" name="fido2_response" id="fido2Response" />
+    <input type="hidden" name="fido2_challenge" id="fido2Challenge" />
+</form>
+
+<script>
+(function() {
+    // Check WebAuthn support
+    if (!window.PublicKeyCredential) {
+        document.querySelectorAll('.btn-passkey').forEach(function(btn) {
+            btn.disabled = true;
+            btn.title = 'Passkeys are not supported on this browser';
+        });
+        return;
+    }
+
+    // Passkey button click handler
+    document.getElementById('passkeyButton')?.addEventListener('click', async function() {
+        try {
+            this.disabled = true;
+            this.textContent = 'Waiting for authenticator...';
+
+            // Get assertion options from server
+            const optionsResponse = await fetch('/api/fido2/assert/options', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+
+            if (!optionsResponse.ok) {
+                throw new Error('Failed to get authentication options');
+            }
+
+            const options = await optionsResponse.json();
+
+            // Convert base64url to ArrayBuffer
+            options.challenge = base64UrlToArrayBuffer(options.challenge);
+            if (options.allowCredentials && options.allowCredentials.length > 0) {
+                options.allowCredentials = options.allowCredentials.map(function(cred) {
+                    var descriptor = {
+                        type: cred.type || 'public-key',
+                        id: base64UrlToArrayBuffer(cred.id)
+                    };
+                    // Only include transports if it's a valid array
+                    if (Array.isArray(cred.transports) && cred.transports.length > 0) {
+                        descriptor.transports = cred.transports;
+                    }
+                    return descriptor;
+                });
+            }
+
+            // Call WebAuthn API
+            const credential = await navigator.credentials.get({
+                publicKey: options
+            });
+
+            // Prepare response
+            const response = {
+                id: credential.id,
+                rawId: arrayBufferToBase64Url(credential.rawId),
+                type: credential.type,
+                response: {
+                    clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                    authenticatorData: arrayBufferToBase64Url(credential.response.authenticatorData),
+                    signature: arrayBufferToBase64Url(credential.response.signature),
+                    userHandle: credential.response.userHandle
+                        ? arrayBufferToBase64Url(credential.response.userHandle)
+                        : null
+                },
+                authenticatorAttachment: credential.authenticatorAttachment
+            };
+
+            // Submit to journey
+            document.getElementById('fido2Response').value = JSON.stringify(response);
+            document.getElementById('fido2Challenge').value = arrayBufferToBase64Url(options.challenge);
+            document.getElementById('fido2Form').submit();
+
+        } catch (error) {
+            console.error('WebAuthn error:', error);
+            this.disabled = false;
+            this.innerHTML = '<svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/></svg> Use a Passkey';
+
+            if (error.name === 'NotAllowedError') {
+                alert('Authentication was cancelled or not allowed.');
+            } else if (error.name === 'SecurityError') {
+                alert('Security error. Make sure you are on a secure connection (HTTPS).');
+            } else {
+                alert('Authentication failed: ' + error.message);
+            }
+        }
+    });
+
+    // Helper functions
+    function base64UrlToArrayBuffer(base64url) {
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        const padding = '='.repeat((4 - base64.length % 4) % 4);
+        const binary = atob(base64 + padding);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function arrayBufferToBase64Url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+})();
+</script>
+
+<style>
+.fido2-login-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.btn-passkey {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.passkey-icon {
+    flex-shrink: 0;
+}
+
+.passkey-section {
+    text-align: center;
+    padding: 2rem 0;
+}
+
+.passkey-hint {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-top: 1rem;
+}
+
+.divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    margin: 1.5rem 0;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.divider span {
+    padding: 0 1rem;
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+</style>

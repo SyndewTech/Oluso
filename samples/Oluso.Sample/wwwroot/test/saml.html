@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SAML IdP Test</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; }
+        h1 { color: #333; }
+        .card { background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        button { background: #0066cc; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0052a3; }
+        button.secondary { background: #6c757d; }
+        button.secondary:hover { background: #5a6268; }
+        pre { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; max-height: 400px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px; margin: 20px 0; }
+        .info { background: #e7f3ff; border: 1px solid #b6d4fe; padding: 15px; border-radius: 4px; margin: 20px 0; }
+        code { background: #e9ecef; padding: 2px 6px; border-radius: 3px; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }
+        th { background: #f8f9fa; }
+        a { color: #0066cc; }
+    </style>
+</head>
+<body>
+    <h1>SAML Identity Provider Test</h1>
+    <p><a href="/test/ldap.html">LDAP Test</a> | <a href="/test/oidc.html">OIDC Test</a></p>
+
+    <div class="info">
+        <strong>SAML IdP Configuration:</strong><br>
+        Entity ID: <code id="idpEntityId">http://localhost:5050</code><br>
+        SSO Endpoint: <code id="ssoEndpoint">http://localhost:5050/saml/idp/sso</code><br>
+        Metadata: <code><a href="/saml/idp/metadata" target="_blank">/saml/idp/metadata</a></code>
+    </div>
+
+    <div class="card">
+        <h3>Test SP Entity ID</h3>
+        <p>This test SP is registered with Entity ID: <code>http://localhost:5050/test/saml</code></p>
+    </div>
+
+    <div class="card">
+        <h3>1. Initiate SAML SSO</h3>
+        <p>Click to initiate a SAML authentication request to the IdP:</p>
+        <button onclick="initiateSso()">Start SAML Login</button>
+        <button class="secondary" onclick="viewMetadata()">View IdP Metadata</button>
+    </div>
+
+    <div id="assertionResult" style="display: none;">
+        <div class="success">
+            <h3>SAML Assertion Received!</h3>
+            <table id="assertionTable"></table>
+        </div>
+        <h4>Raw SAML Response:</h4>
+        <pre id="samlResponse"></pre>
+    </div>
+
+    <div class="card">
+        <h3>How SAML SSO Works</h3>
+        <ol>
+            <li><strong>SP sends AuthnRequest</strong> - This page creates a SAML AuthnRequest and redirects to the IdP</li>
+            <li><strong>User authenticates</strong> - The IdP shows a login page (if not already logged in)</li>
+            <li><strong>IdP sends Response</strong> - After authentication, IdP POSTs a SAML Response back here</li>
+            <li><strong>SP validates</strong> - This page decodes and displays the SAML assertion</li>
+        </ol>
+    </div>
+
+    <script src="saml.js"></script>
+</body>
+</html>

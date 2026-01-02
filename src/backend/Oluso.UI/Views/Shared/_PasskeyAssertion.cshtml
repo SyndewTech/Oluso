@@ -1,0 +1,260 @@
+@using System.Text.Json
+@using Oluso.Core.Services
+@model Fido2AssertionViewModel
+@{
+    // This partial can be customized via ViewData
+    var formAction = ViewData["FormAction"] as string ?? "";
+    var formHandler = ViewData["FormHandler"] as string;
+    var returnUrl = ViewData["ReturnUrl"] as string ?? "";
+    var cancelUrl = ViewData["CancelUrl"] as string ?? "?";
+}
+
+<div class="fido2-assert-card">
+    <h1 class="title">Sign In with Passkey</h1>
+
+    <div class="passkey-prompt" id="passkeyPrompt">
+        <div class="prompt-icon">
+            <svg viewBox="0 0 64 64" width="64" height="64">
+                <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" stroke-width="2"/>
+                <path fill="currentColor" d="M32 16c-5.52 0-10 4.48-10 10 0 3.4 1.7 6.38 4.29 8.19V40c0 .83.67 1.5 1.5 1.5h1.5v3c0 .83.67 1.5 1.5 1.5h2.21c.83 0 1.5-.67 1.5-1.5v-3h1.5c.83 0 1.5-.67 1.5-1.5v-5.81C39.3 32.38 42 29.4 42 26c0-5.52-4.48-10-10-10zm0 14c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
+            </svg>
+        </div>
+        <h3>Use your passkey</h3>
+        <p>Your browser will prompt you to use your fingerprint, face, or security key</p>
+        <div class="spinner" id="spinner" style="display: none;">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Waiting...</span>
+            </div>
+        </div>
+        <div class="error-message" id="errorMessage" style="display: none;"></div>
+    </div>
+
+    <button type="button" id="retryButton" class="btn btn-primary btn-block" style="display: none;">
+        Try Again
+    </button>
+
+    <hr />
+    <p class="text-center text-muted">
+        <a href="@cancelUrl" id="cancelLink">Use a different method</a>
+    </p>
+</div>
+
+<!-- Hidden form for FIDO2 response submission -->
+@if (!string.IsNullOrEmpty(formHandler))
+{
+    <form method="post" asp-page-handler="@formHandler" id="fido2Form" style="display: none;">
+        <input type="hidden" name="ReturnUrl" value="@returnUrl" />
+        <input type="hidden" name="assertionResponse" id="assertionResponse" />
+        <input type="hidden" name="assertionId" value="@Model?.AssertionId" />
+    </form>
+}
+else
+{
+    <form method="post" action="@formAction" id="fido2Form" style="display: none;">
+        <input type="hidden" name="assertionResponse" id="assertionResponse" />
+        <input type="hidden" name="assertionId" value="@Model?.AssertionId" />
+    </form>
+}
+
+<script>
+(function() {
+    var optionsJson = '@Html.Raw(JsonSerializer.Serialize(Model?.Options, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))';
+    var options = JSON.parse(optionsJson);
+
+    if (!options || !window.PublicKeyCredential) {
+        document.getElementById('passkeyPrompt').innerHTML =
+            '<div class="alert alert-warning">Passkeys are not supported on this browser.</div>';
+        return;
+    }
+
+    async function authenticate() {
+        var spinner = document.getElementById('spinner');
+        var retryButton = document.getElementById('retryButton');
+        var errorMessage = document.getElementById('errorMessage');
+
+        try {
+            spinner.style.display = 'block';
+            retryButton.style.display = 'none';
+            errorMessage.style.display = 'none';
+
+            // Convert base64url to ArrayBuffer
+            var publicKeyOptions = {
+                challenge: base64UrlToArrayBuffer(options.challenge),
+                timeout: options.timeout || 60000,
+                rpId: options.rpId,
+                userVerification: options.userVerification || 'preferred'
+            };
+
+            if (options.allowCredentials && options.allowCredentials.length > 0) {
+                publicKeyOptions.allowCredentials = options.allowCredentials.map(function(cred) {
+                    return {
+                        type: cred.type,
+                        id: base64UrlToArrayBuffer(cred.id),
+                        transports: cred.transports
+                    };
+                });
+            }
+
+            // Call WebAuthn API
+            var credential = await navigator.credentials.get({
+                publicKey: publicKeyOptions
+            });
+
+            // Prepare response
+            var response = {
+                id: credential.id,
+                rawId: arrayBufferToBase64Url(credential.rawId),
+                type: credential.type,
+                response: {
+                    clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                    authenticatorData: arrayBufferToBase64Url(credential.response.authenticatorData),
+                    signature: arrayBufferToBase64Url(credential.response.signature),
+                    userHandle: credential.response.userHandle
+                        ? arrayBufferToBase64Url(credential.response.userHandle)
+                        : null
+                },
+                authenticatorAttachment: credential.authenticatorAttachment
+            };
+
+            // Submit to server
+            document.getElementById('assertionResponse').value = JSON.stringify(response);
+            document.getElementById('fido2Form').submit();
+
+        } catch (error) {
+            console.error('WebAuthn error:', error);
+            spinner.style.display = 'none';
+            retryButton.style.display = 'block';
+
+            var message = 'Authentication failed';
+            if (error.name === 'NotAllowedError') {
+                message = 'Authentication was cancelled. Click "Try Again" to retry.';
+            } else if (error.name === 'SecurityError') {
+                message = 'Security error. Make sure you are on a secure connection.';
+            } else if (error.name === 'InvalidStateError') {
+                message = 'No matching credentials found.';
+            }
+
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            errorMessage.className = 'alert alert-warning mt-3';
+        }
+    }
+
+    // Helper functions
+    function base64UrlToArrayBuffer(base64url) {
+        var base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        var padding = '='.repeat((4 - base64.length % 4) % 4);
+        var binary = atob(base64 + padding);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function arrayBufferToBase64Url(buffer) {
+        var bytes = new Uint8Array(buffer);
+        var binary = '';
+        for (var i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+
+    // Retry button handler
+    document.getElementById('retryButton').addEventListener('click', authenticate);
+
+    // Auto-start authentication
+    setTimeout(authenticate, 500);
+})();
+</script>
+
+<style>
+.fido2-assert-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.title {
+    margin-bottom: 1.5rem;
+}
+
+.passkey-prompt {
+    padding: 2rem;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.prompt-icon {
+    color: var(--primary-color, #667eea);
+    margin-bottom: 1rem;
+}
+
+.passkey-prompt h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.125rem;
+}
+
+.passkey-prompt p {
+    color: #6c757d;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.spinner {
+    margin-top: 1.5rem;
+}
+
+.spinner-border {
+    display: inline-block;
+    width: 2rem;
+    height: 2rem;
+    border: 0.2rem solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spinner-border 0.75s linear infinite;
+}
+
+@@keyframes spinner-border {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+}
+
+.btn-primary {
+    padding: 0.5rem 1rem;
+    background-color: var(--primary-color, #007bff);
+    border-color: var(--primary-color, #007bff);
+    color: white;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    border: none;
+}
+
+.alert {
+    padding: 0.75rem 1rem;
+    border-radius: 0.25rem;
+}
+
+.alert-warning {
+    background-color: #fff3cd;
+    border-color: #ffeeba;
+    color: #856404;
+}
+
+.mt-3 {
+    margin-top: 1rem;
+}
+
+.text-muted {
+    color: #6c757d;
+}
+</style>

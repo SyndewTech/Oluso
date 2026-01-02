@@ -1,0 +1,387 @@
+@using Oluso.Enterprise.Fido2.Steps
+@using System.Text.Json
+@model Fido2RegistrationViewModel
+
+@{
+    var optionsJson = JsonSerializer.Serialize(Model.Options, new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    });
+}
+
+<div class="fido2-registration">
+    <div class="registration-header">
+        <div class="authenticator-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48">
+                <path fill="currentColor" d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
+            </svg>
+        </div>
+        <h2 class="title">Register Your Passkey</h2>
+        <p class="subtitle">Follow the prompts from your browser or device</p>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" id="errorMessage">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    <div id="registrationStatus" class="status-container">
+        <div class="status-icon">
+            <div class="spinner"></div>
+        </div>
+        <p id="statusMessage" class="status-message">Waiting for authenticator...</p>
+        <p class="status-hint">You may need to use your fingerprint, face, or security key.</p>
+    </div>
+
+    <div id="registrationSuccess" class="success-container" style="display: none;">
+        <div class="success-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48">
+                <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+            </svg>
+        </div>
+        <h3>Passkey Registered!</h3>
+        <p>You can now use this passkey to sign in.</p>
+    </div>
+
+    <div id="registrationError" class="error-container" style="display: none;">
+        <div class="error-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48">
+                <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+        </div>
+        <h3>Registration Failed</h3>
+        <p id="errorDetails"></p>
+        <button type="button" id="retryButton" class="btn btn-primary">Try Again</button>
+    </div>
+
+    <form id="registrationForm" method="post" style="display: none;">
+        <input type="hidden" name="registrationId" value="@Model.RegistrationId" />
+        <input type="hidden" name="attestationResponse" id="attestationResponse" />
+        <input type="hidden" name="credentialDisplayName" id="credentialDisplayName" />
+    </form>
+
+    @if (Model.AllowSkip)
+    {
+        <form method="post" class="skip-form">
+            <input type="hidden" name="action" value="skip" />
+            <button type="submit" class="btn btn-link" id="skipButton">Cancel</button>
+        </form>
+    }
+</div>
+
+<script>
+(function() {
+    const options = @Html.Raw(optionsJson);
+
+    // Immediate debug - log before any processing
+    console.log('Raw options object:', options);
+    console.log('Options keys:', Object.keys(options));
+    console.log('RelyingParty:', options.relyingParty);
+    console.log('User:', options.user);
+
+    const statusEl = document.getElementById('registrationStatus');
+    const successEl = document.getElementById('registrationSuccess');
+    const errorEl = document.getElementById('registrationError');
+    const statusMsg = document.getElementById('statusMessage');
+    const errorDetails = document.getElementById('errorDetails');
+    const skipButton = document.getElementById('skipButton');
+
+    async function startRegistration() {
+        try {
+            // Check WebAuthn support
+            if (!window.PublicKeyCredential) {
+                throw new Error('Passkeys are not supported on this browser.');
+            }
+
+            statusMsg.textContent = 'Preparing registration...';
+
+            // Debug: log the options to see the structure
+            console.log('FIDO2 registration options:', JSON.stringify(options, null, 2));
+
+            // Build public key options
+            // Model uses RelyingParty/User which serialize to camelCase
+            const rp = options.relyingParty || options.rp;
+            if (!rp) {
+                throw new Error('Missing relying party configuration. Options: ' + JSON.stringify(Object.keys(options)));
+            }
+            const user = options.user;
+            const pubKeyCredParams = options.publicKeyCredentialParameters || options.pubKeyCredParams || [
+                { type: 'public-key', alg: -7 },  // ES256
+                { type: 'public-key', alg: -257 } // RS256
+            ];
+
+            // Map algorithm property if needed
+            const mappedParams = pubKeyCredParams.map(p => ({
+                type: p.type,
+                alg: p.alg ?? p.algorithm
+            }));
+
+            const publicKeyOptions = {
+                challenge: base64UrlToArrayBuffer(options.challenge),
+                rp: {
+                    id: rp.id,
+                    name: rp.name
+                },
+                user: {
+                    id: base64UrlToArrayBuffer(user.id),
+                    name: user.name,
+                    displayName: user.displayName
+                },
+                pubKeyCredParams: mappedParams,
+                timeout: options.timeout || 60000,
+                attestation: options.attestationConveyance || options.attestation || 'none',
+                authenticatorSelection: options.authenticatorSelection || {}
+            };
+
+            if (options.excludeCredentials && options.excludeCredentials.length > 0) {
+                publicKeyOptions.excludeCredentials = options.excludeCredentials.map(cred => {
+                    const descriptor = {
+                        type: cred.type,
+                        id: base64UrlToArrayBuffer(cred.id)
+                    };
+                    // Only include transports if it's a valid array
+                    if (Array.isArray(cred.transports) && cred.transports.length > 0) {
+                        descriptor.transports = cred.transports;
+                    }
+                    return descriptor;
+                });
+            }
+
+            statusMsg.textContent = 'Waiting for authenticator...';
+
+            // Call WebAuthn API
+            const credential = await navigator.credentials.create({
+                publicKey: publicKeyOptions
+            });
+
+            statusMsg.textContent = 'Completing registration...';
+
+            // Prepare response for server
+            const response = {
+                id: credential.id,
+                rawId: arrayBufferToBase64Url(credential.rawId),
+                type: credential.type,
+                response: {
+                    clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                    attestationObject: arrayBufferToBase64Url(credential.response.attestationObject)
+                },
+                authenticatorAttachment: credential.authenticatorAttachment
+            };
+
+            if (credential.response.getTransports) {
+                response.response.transports = credential.response.getTransports();
+            }
+
+            // Determine display name based on authenticator type
+            let displayName = 'Passkey';
+            if (credential.authenticatorAttachment === 'platform') {
+                displayName = 'This Device';
+            } else if (credential.authenticatorAttachment === 'cross-platform') {
+                displayName = 'Security Key';
+            }
+
+            // Submit to server
+            document.getElementById('attestationResponse').value = JSON.stringify(response);
+            document.getElementById('credentialDisplayName').value = displayName;
+            document.getElementById('registrationForm').submit();
+
+        } catch (error) {
+            console.error('Registration error:', error);
+            showError(error);
+        }
+    }
+
+    function showError(error) {
+        statusEl.style.display = 'none';
+        errorEl.style.display = 'block';
+
+        let message = 'Registration failed. Please try again.';
+
+        if (error.name === 'NotAllowedError') {
+            message = 'Registration was cancelled or not allowed. Please try again.';
+        } else if (error.name === 'InvalidStateError') {
+            message = 'This authenticator is already registered for your account.';
+        } else if (error.name === 'SecurityError') {
+            message = 'Security error. Make sure you are on a secure (HTTPS) connection.';
+        } else if (error.name === 'NotSupportedError') {
+            message = 'Your device does not support the required authentication method.';
+        } else if (error.message) {
+            message = error.message;
+        }
+
+        errorDetails.textContent = message;
+    }
+
+    document.getElementById('retryButton').addEventListener('click', function() {
+        errorEl.style.display = 'none';
+        statusEl.style.display = 'block';
+        startRegistration();
+    });
+
+    // Helper functions
+    function base64UrlToArrayBuffer(base64url) {
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        const padding = '='.repeat((4 - base64.length % 4) % 4);
+        const binary = atob(base64 + padding);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function arrayBufferToBase64Url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+
+    // Start registration automatically
+    startRegistration();
+})();
+</script>
+
+<style>
+.fido2-registration {
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.registration-header {
+    margin-bottom: 2rem;
+}
+
+.authenticator-icon {
+    color: #667eea;
+    margin-bottom: 1rem;
+}
+
+.title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #1a202c;
+}
+
+.subtitle {
+    color: #718096;
+}
+
+.status-container {
+    padding: 2rem;
+}
+
+.status-icon {
+    margin-bottom: 1rem;
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #e2e8f0;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto;
+}
+
+@@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.status-message {
+    font-size: 1.125rem;
+    font-weight: 500;
+    color: #4a5568;
+    margin-bottom: 0.5rem;
+}
+
+.status-hint {
+    font-size: 0.875rem;
+    color: #a0aec0;
+}
+
+.success-container {
+    padding: 2rem;
+}
+
+.success-icon {
+    color: #48bb78;
+    margin-bottom: 1rem;
+}
+
+.success-container h3 {
+    color: #276749;
+    margin-bottom: 0.5rem;
+}
+
+.success-container p {
+    color: #68d391;
+}
+
+.error-container {
+    padding: 2rem;
+}
+
+.error-icon {
+    color: #f56565;
+    margin-bottom: 1rem;
+}
+
+.error-container h3 {
+    color: #c53030;
+    margin-bottom: 0.5rem;
+}
+
+.error-container p {
+    color: #718096;
+    margin-bottom: 1rem;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    color: white;
+    border-radius: 0.375rem;
+    cursor: pointer;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+}
+
+.skip-form {
+    margin-top: 1.5rem;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #718096;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.btn-link:hover {
+    color: #4a5568;
+    text-decoration: underline;
+}
+
+.alert-danger {
+    background: #fed7d7;
+    color: #c53030;
+    padding: 0.75rem 1rem;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+}
+</style>

@@ -1,0 +1,540 @@
+@page "/account/security"
+@using System.Text.Json
+@using Oluso.Core.Services
+@model Oluso.UI.Pages.Account.SecurityModel
+@{
+    ViewData["Title"] = "Security Settings";
+}
+
+<div class="security-container">
+    <div class="security-card">
+        <h1 class="page-title">Security Settings</h1>
+        <p class="page-subtitle">Manage your account security options</p>
+
+        @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+        {
+            <div class="alert alert-success">@Model.SuccessMessage</div>
+        }
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger">@Model.ErrorMessage</div>
+        }
+
+        @if (Model.PasskeysEnabled)
+        {
+            <section class="security-section">
+                <h2>Passkeys</h2>
+                <p class="section-description">
+                    Passkeys let you sign in quickly and securely using your fingerprint, face, or device PIN.
+                </p>
+
+                @if (Model.RegistrationViewModel != null)
+                {
+                    @* Show registration UI *@
+                    <div class="registration-container" id="registrationContainer">
+                        <h3>Register New Passkey</h3>
+
+                        <div class="passkey-prompt" id="passkeyPrompt">
+                            <div class="prompt-icon">
+                                <svg viewBox="0 0 64 64" width="64" height="64">
+                                    <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" stroke-width="2"/>
+                                    <path fill="currentColor" d="M32 16c-5.52 0-10 4.48-10 10 0 3.4 1.7 6.38 4.29 8.19V40c0 .83.67 1.5 1.5 1.5h1.5v3c0 .83.67 1.5 1.5 1.5h2.21c.83 0 1.5-.67 1.5-1.5v-3h1.5c.83 0 1.5-.67 1.5-1.5v-5.81C39.3 32.38 42 29.4 42 26c0-5.52-4.48-10-10-10zm0 14c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
+                                </svg>
+                            </div>
+                            <p>Your browser will prompt you to use your fingerprint, face, or security key</p>
+                            <div class="spinner" id="spinner">
+                                <div class="spinner-border"></div>
+                            </div>
+                        </div>
+
+                        <div id="registrationError" class="alert alert-danger" style="display: none;"></div>
+
+                        <form method="post" asp-page-handler="CompleteRegistration" id="registrationForm" style="display: none;">
+                            <input type="hidden" name="registrationId" value="@Model.RegistrationViewModel.RegistrationId" />
+                            <input type="hidden" name="attestationResponse" id="attestationResponse" />
+                        </form>
+
+                        <p class="text-center mt-3">
+                            <a href="/account/security">Cancel</a>
+                        </p>
+                    </div>
+
+                    <script>
+                    (function() {
+                        var optionsJson = '@Html.Raw(JsonSerializer.Serialize(Model.RegistrationViewModel.Options, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }))';
+                        var options = JSON.parse(optionsJson);
+
+                        async function register() {
+                            try {
+                                // Convert base64url to ArrayBuffer
+                                var publicKeyOptions = {
+                                    challenge: base64UrlToArrayBuffer(options.challenge),
+                                    rp: {
+                                        id: options.rp.id,
+                                        name: options.rp.name
+                                    },
+                                    user: {
+                                        id: base64UrlToArrayBuffer(options.user.id),
+                                        name: options.user.name,
+                                        displayName: options.user.displayName
+                                    },
+                                    pubKeyCredParams: options.pubKeyCredParams || [
+                                        { type: 'public-key', alg: -7 },
+                                        { type: 'public-key', alg: -257 }
+                                    ],
+                                    timeout: options.timeout || 60000,
+                                    attestation: options.attestation || 'none',
+                                    authenticatorSelection: options.authenticatorSelection || {
+                                        residentKey: 'required',
+                                        userVerification: 'preferred'
+                                    }
+                                };
+
+                                if (options.excludeCredentials && options.excludeCredentials.length > 0) {
+                                    publicKeyOptions.excludeCredentials = options.excludeCredentials.map(function(cred) {
+                                        var descriptor = {
+                                            type: cred.type,
+                                            id: base64UrlToArrayBuffer(cred.id)
+                                        };
+                                        // Only include transports if it's a valid array
+                                        if (Array.isArray(cred.transports) && cred.transports.length > 0) {
+                                            descriptor.transports = cred.transports;
+                                        }
+                                        return descriptor;
+                                    });
+                                }
+
+                                // Call WebAuthn API
+                                var credential = await navigator.credentials.create({
+                                    publicKey: publicKeyOptions
+                                });
+
+                                // Prepare response
+                                var response = {
+                                    id: credential.id,
+                                    rawId: arrayBufferToBase64Url(credential.rawId),
+                                    type: credential.type,
+                                    response: {
+                                        clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                                        attestationObject: arrayBufferToBase64Url(credential.response.attestationObject),
+                                        transports: credential.response.getTransports ? credential.response.getTransports() : null
+                                    },
+                                    authenticatorAttachment: credential.authenticatorAttachment
+                                };
+
+                                // Submit to server
+                                document.getElementById('attestationResponse').value = JSON.stringify(response);
+                                document.getElementById('registrationForm').submit();
+
+                            } catch (error) {
+                                console.error('Registration error:', error);
+                                document.getElementById('spinner').style.display = 'none';
+
+                                var message = 'Registration failed';
+                                if (error.name === 'NotAllowedError') {
+                                    message = 'Registration was cancelled or not allowed.';
+                                } else if (error.name === 'InvalidStateError') {
+                                    message = 'This authenticator is already registered.';
+                                } else if (error.name === 'SecurityError') {
+                                    message = 'Security error. Make sure you are on a secure connection.';
+                                } else {
+                                    message = error.message || 'Registration failed';
+                                }
+
+                                var errorEl = document.getElementById('registrationError');
+                                errorEl.textContent = message;
+                                errorEl.style.display = 'block';
+                            }
+                        }
+
+                        function base64UrlToArrayBuffer(base64url) {
+                            var base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+                            var padding = '='.repeat((4 - base64.length % 4) % 4);
+                            var binary = atob(base64 + padding);
+                            var bytes = new Uint8Array(binary.length);
+                            for (var i = 0; i < binary.length; i++) {
+                                bytes[i] = binary.charCodeAt(i);
+                            }
+                            return bytes.buffer;
+                        }
+
+                        function arrayBufferToBase64Url(buffer) {
+                            var bytes = new Uint8Array(buffer);
+                            var binary = '';
+                            for (var i = 0; i < bytes.length; i++) {
+                                binary += String.fromCharCode(bytes[i]);
+                            }
+                            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+                        }
+
+                        // Start registration automatically
+                        setTimeout(register, 500);
+                    })();
+                    </script>
+                }
+                else
+                {
+                    @* Show list of passkeys and register button *@
+                    @if (Model.Passkeys.Any())
+                    {
+                        <div class="passkey-list">
+                            @foreach (var passkey in Model.Passkeys)
+                            {
+                                <div class="passkey-item">
+                                    <div class="passkey-info">
+                                        <div class="passkey-icon">
+                                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                                            </svg>
+                                        </div>
+                                        <div class="passkey-details">
+                                            <strong>@(passkey.Name ?? "Passkey")</strong>
+                                            <span class="passkey-meta">
+                                                Created @passkey.CreatedAt.ToString("MMM d, yyyy")
+                                                @if (passkey.LastUsedAt.HasValue)
+                                                {
+                                                    <text> · Last used @passkey.LastUsedAt.Value.ToString("MMM d, yyyy")</text>
+                                                }
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <form method="post" asp-page-handler="DeletePasskey" class="delete-form">
+                                        <input type="hidden" name="credentialId" value="@passkey.Id" />
+                                        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this passkey?')">
+                                            Delete
+                                        </button>
+                                    </form>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="empty-state">
+                            <p>You haven't registered any passkeys yet.</p>
+                        </div>
+                    }
+
+                    <div class="register-options">
+                        <h4>Add a new passkey</h4>
+                        <div class="authenticator-buttons">
+                            <form method="post" asp-page-handler="RegisterPasskey" class="inline-form">
+                                <input type="hidden" name="authenticatorType" value="platform" />
+                                <button type="submit" class="authenticator-btn">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                        <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
+                                    </svg>
+                                    <span>
+                                        <strong>This Device</strong>
+                                        <small>Touch ID, Face ID, Windows Hello</small>
+                                    </span>
+                                </button>
+                            </form>
+
+                            <form method="post" asp-page-handler="RegisterPasskey" class="inline-form">
+                                <input type="hidden" name="authenticatorType" value="cross-platform" />
+                                <button type="submit" class="authenticator-btn">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                        <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+                                    </svg>
+                                    <span>
+                                        <strong>Security Key</strong>
+                                        <small>USB or NFC security key</small>
+                                    </span>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                }
+            </section>
+        }
+        else
+        {
+            <div class="alert alert-info">
+                Passkey support is not enabled for this installation.
+            </div>
+        }
+
+        <div class="back-link">
+            <a href="/">&larr; Back to home</a>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Oluṣọ Brand Colors */
+:root {
+    --oluso-primary: #f97316;
+    --oluso-primary-hover: #ea580c;
+    --oluso-primary-dark: #c2410c;
+    --oluso-primary-light: rgba(249, 115, 22, 0.1);
+    --oluso-accent: #14b8a6;
+}
+
+.security-container {
+    min-height: 100vh;
+    padding: 2rem;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+}
+
+.security-container::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.security-card {
+    max-width: 600px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 2rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    position: relative;
+    z-index: 1;
+    animation: cardSlideUp 0.5s ease-out;
+}
+
+@@keyframes cardSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.page-title {
+    font-size: 1.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.page-subtitle {
+    color: #6c757d;
+    margin-bottom: 2rem;
+}
+
+.security-section {
+    margin-bottom: 2rem;
+}
+
+.security-section h2 {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.section-description {
+    color: #6c757d;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+}
+
+.passkey-list {
+    margin-bottom: 1.5rem;
+}
+
+.passkey-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+}
+
+.passkey-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.passkey-icon {
+    color: var(--oluso-primary);
+}
+
+.passkey-details {
+    display: flex;
+    flex-direction: column;
+}
+
+.passkey-meta {
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.empty-state {
+    padding: 2rem;
+    text-align: center;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.register-options h4 {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+}
+
+.authenticator-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.inline-form {
+    margin: 0;
+}
+
+.authenticator-btn {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    padding: 1rem;
+    border: 2px solid #dee2e6;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.authenticator-btn:hover {
+    border-color: var(--oluso-primary);
+    box-shadow: 0 0 0 3px var(--oluso-primary-light);
+}
+
+.authenticator-btn svg {
+    color: var(--oluso-primary);
+    flex-shrink: 0;
+}
+
+.authenticator-btn span {
+    display: flex;
+    flex-direction: column;
+}
+
+.authenticator-btn small {
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.registration-container {
+    text-align: center;
+    padding: 2rem;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.passkey-prompt {
+    padding: 2rem;
+}
+
+.prompt-icon {
+    color: var(--oluso-primary);
+    margin-bottom: 1rem;
+}
+
+.spinner {
+    margin-top: 1rem;
+}
+
+.spinner-border {
+    display: inline-block;
+    width: 2rem;
+    height: 2rem;
+    border: 0.2rem solid var(--oluso-primary);
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spinner-border 0.75s linear infinite;
+}
+
+@@keyframes spinner-border {
+    to { transform: rotate(360deg); }
+}
+
+.alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.alert-success {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.alert-danger {
+    background: #f8d7da;
+    color: #842029;
+}
+
+.alert-info {
+    background: #cff4fc;
+    color: #055160;
+}
+
+.btn {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+    border: none;
+}
+
+.btn-danger:hover {
+    background: #bb2d3b;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+}
+
+.back-link {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.back-link a {
+    color: var(--oluso-primary);
+    text-decoration: none;
+}
+
+.back-link a:hover {
+    text-decoration: underline;
+}
+
+.mt-3 {
+    margin-top: 1rem;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.delete-form {
+    margin: 0;
+}
+</style>

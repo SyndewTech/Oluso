@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@oluso/admin-ui": ["../../AdminUI/src"],
+      "@oluso/admin-ui/*": ["../../AdminUI/src/*"],
+      "@oluso/ui-core": ["../../ui-core/src"],
+      "@oluso/ui-core/*": ["../../ui-core/src/*"],
+      "@oluso/fido2-ui": ["../../libs/fido2-ui"],
+      "@oluso/fido2-ui/*": ["../../libs/fido2-ui/*"],
+      "@oluso/saml-ui": ["../../libs/saml-ui"],
+      "@oluso/saml-ui/*": ["../../libs/saml-ui/*"],
+      "@oluso/scim-ui": ["../../libs/scim-ui"],
+      "@oluso/scim-ui/*": ["../../libs/scim-ui/*"],
+      "@oluso/telemetry-ui": ["../../libs/telemetry-ui"],
+      "@oluso/telemetry-ui/*": ["../../libs/telemetry-ui/*"]
+    }
+  },
+  "include": [
+    "src",
+    "../../AdminUI/src",
+    "../../ui-core/src",
+    "../../libs/fido2-ui",
+    "../../libs/saml-ui",
+    "../../libs/scim-ui",
+    "../../libs/telemetry-ui"
+  ],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

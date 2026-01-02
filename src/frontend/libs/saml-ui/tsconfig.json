@@ -1,0 +1,12 @@
+{
+  "extends": "../../AdminUI/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@oluso/ui-core": ["../../ui-core/src"],
+      "@oluso/ui-core/*": ["../../ui-core/src/*"]
+    }
+  },
+  "include": ["./**/*.ts", "./**/*.tsx", "../../ui-core/src/**/*.ts", "../../ui-core/src/**/*.tsx"],
+  "exclude": ["node_modules", "dist"]
+}

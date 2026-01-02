@@ -1,0 +1,175 @@
+@page "/journey/{journeyId}/{handler?}"
+@using Oluso.Core.UserJourneys
+@model Oluso.UI.Pages.Journey.IndexModel
+@{
+    Layout = null;
+    ViewData["Title"] = Model.Title ?? "Authentication";
+    var partialName = !string.IsNullOrEmpty(Model.CurrentStepView) ? Model.CurrentStepView : null;
+    var layoutClass = Model.UiConfig?.Layout?.ToLowerInvariant() switch
+    {
+        "medium" => "layout-medium",
+        "wide" => "layout-wide",
+        "full" => "layout-full",
+        _ => "layout-narrow"
+    };
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - Oluso</title>
+    <link rel="stylesheet" href="/css/journey.css" />
+    @if (Model.UiConfig != null)
+    {
+        <style>
+            :root {
+                @if (!string.IsNullOrEmpty(Model.UiConfig.PrimaryColor))
+                {
+                    @:--primary-color: @Model.UiConfig.PrimaryColor;
+                    @:--primary-hover: color-mix(in srgb, @Model.UiConfig.PrimaryColor 85%, black);
+                    @:--primary-light: color-mix(in srgb, @Model.UiConfig.PrimaryColor 15%, transparent);
+                    @:--primary-glow: color-mix(in srgb, @Model.UiConfig.PrimaryColor 40%, transparent);
+                }
+                @if (!string.IsNullOrEmpty(Model.UiConfig.BackgroundColor))
+                {
+                    @:--background-start: @Model.UiConfig.BackgroundColor;
+                    @:--background-end: color-mix(in srgb, @Model.UiConfig.BackgroundColor 80%, black);
+                }
+            }
+        </style>
+
+        @if (!string.IsNullOrEmpty(Model.UiConfig.CustomCss))
+        {
+            <style>@Html.Raw(Model.UiConfig.CustomCss)</style>
+        }
+    }
+</head>
+<body class="journey-page">
+    <div class="journey-wrapper">
+        <div class="journey-container @layoutClass" role="region" aria-label="Authentication">
+            @* Logo or Brand *@
+            @if (!string.IsNullOrEmpty(Model.UiConfig?.LogoUrl))
+            {
+                <div class="journey-logo">
+                    <img src="@Model.UiConfig.LogoUrl" alt="@(Model.Title ?? "Logo")" class="logo" />
+                </div>
+            }
+            else
+            {
+                <div class="journey-brand">
+                    <div class="journey-brand-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                        </svg>
+                    </div>
+                    <span class="journey-brand-text">Oluso</span>
+                </div>
+            }
+
+            @* Progress Indicator *@
+            @if (Model.Progress?.ShowProgress == true)
+            {
+                <div class="journey-progress" role="progressbar" aria-valuenow="@Model.Progress.CurrentStepIndex" aria-valuemin="0" aria-valuemax="@Model.Progress.TotalSteps">
+                    <div class="journey-progress-bar">
+                        @for (int i = 0; i < Model.Progress.TotalSteps; i++)
+                        {
+                            @if (i > 0)
+                            {
+                                <div class="journey-progress-line @(i <= Model.Progress.CurrentStepIndex ? "completed" : "")"></div>
+                            }
+                            <div class="journey-progress-dot @(i < Model.Progress.CurrentStepIndex ? "completed" : "") @(i == Model.Progress.CurrentStepIndex ? "active" : "")"></div>
+                        }
+                    </div>
+                    <p class="journey-progress-text">
+                        Step @(Model.Progress.CurrentStepIndex + 1) of @Model.Progress.TotalSteps: @Model.Progress.CurrentStepName
+                    </p>
+                </div>
+            }
+
+            @* Error Message *@
+            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+            {
+                <div class="alert alert-danger" role="alert">
+                    <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                    <span>@Model.ErrorMessage</span>
+                </div>
+            }
+
+            @* Journey Card *@
+            <div class="journey-card">
+                @if (!string.IsNullOrEmpty(partialName))
+                {
+                    @await Html.PartialAsync(partialName, Model.StepViewModel)
+                }
+                else if (Model.State?.Status == JourneyStatus.InProgress)
+                {
+                    <div class="loading-card">
+                        <div class="loading-spinner">
+                            <svg class="spinner" viewBox="0 0 50 50">
+                                <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
+                            </svg>
+                        </div>
+                        <p class="loading-text">Please wait...</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="loading-card">
+                        <div class="loading-spinner">
+                            <svg class="spinner" viewBox="0 0 50 50">
+                                <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
+                            </svg>
+                        </div>
+                        <p class="loading-text">Loading authentication...</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Auto-focus first visible input
+            var firstInput = document.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([disabled])');
+            if (firstInput) {
+                firstInput.focus();
+            }
+
+            // Add loading state to forms on submit
+            var forms = document.querySelectorAll('form');
+            forms.forEach(function(form) {
+                form.addEventListener('submit', function() {
+                    var submitBtn = form.querySelector('button[type="submit"]');
+                    if (submitBtn && !submitBtn.classList.contains('btn-loading')) {
+                        submitBtn.classList.add('btn-loading');
+                        submitBtn.disabled = true;
+                    }
+                });
+            });
+
+            // Auto-advance for code inputs (6 digits)
+            var codeInput = document.querySelector('.code-input');
+            if (codeInput) {
+                codeInput.addEventListener('input', function(e) {
+                    // Remove non-digits
+                    this.value = this.value.replace(/\D/g, '');
+
+                    // Auto-submit when 6 digits entered
+                    if (this.value.length === 6) {
+                        var form = this.closest('form');
+                        if (form) {
+                            // Small delay for UX
+                            setTimeout(function() {
+                                form.submit();
+                            }, 150);
+                        }
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+@model object?
+
+<div class="lockout-card">
+    <div class="lockout-icon">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+    </div>
+
+    <h1 class="title">Account Locked</h1>
+
+    <p class="message">
+        Your account has been temporarily locked due to too many failed login attempts.
+    </p>
+
+    <p class="instructions">
+        Please wait a few minutes and try again, or contact support if you need immediate assistance.
+    </p>
+
+    <div class="actions">
+        <a href="/" class="btn btn-outline-primary">Return to Home</a>
+    </div>
+</div>
+
+<style>
+.lockout-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.lockout-icon {
+    color: #dc3545;
+    margin-bottom: 1.5rem;
+}
+
+.title {
+    margin-bottom: 1rem;
+    color: #dc3545;
+}
+
+.message {
+    font-size: 1.1rem;
+    color: #495057;
+    margin-bottom: 1rem;
+}
+
+.instructions {
+    color: #6c757d;
+    margin-bottom: 2rem;
+}
+
+.actions {
+    margin-top: 1.5rem;
+}
+</style>

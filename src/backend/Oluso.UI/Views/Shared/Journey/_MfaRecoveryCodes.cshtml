@@ -1,0 +1,134 @@
+@using Oluso.UserJourneys.Steps
+@model MfaRecoveryCodesViewModel
+
+<div class="mfa-card">
+    <div class="success-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+    </div>
+
+    <h1 class="title">Two-Factor Authentication Enabled</h1>
+    <p class="subtitle">
+        Save these recovery codes in a safe place. You can use them to access your account if you lose your @Model?.Provider.
+    </p>
+
+    <div class="recovery-codes">
+        @if (Model?.RecoveryCodes != null)
+        {
+            @foreach (var code in Model.RecoveryCodes)
+            {
+                <code class="recovery-code">@code</code>
+            }
+        }
+    </div>
+
+    <div class="warning-box">
+        <strong>Important:</strong>
+        <ul>
+            <li>Each code can only be used once</li>
+            <li>Store these codes securely - they won't be shown again</li>
+            <li>If you lose these codes and your authentication device, you may be locked out</li>
+        </ul>
+    </div>
+
+    <div class="actions">
+        <button type="button" class="btn btn-outline-secondary" onclick="downloadCodes()">
+            Download Codes
+        </button>
+        <form method="post" style="display: inline;">
+            <input type="hidden" name="recovery_codes_confirmed" value="true" />
+            <button type="submit" class="btn btn-primary">I've Saved My Codes</button>
+        </form>
+    </div>
+</div>
+
+<script>
+function downloadCodes() {
+    var codes = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model?.RecoveryCodes ?? new List<string>()));
+    var content = 'Recovery Codes\n';
+    content += '==============\n\n';
+    content += 'Keep these codes safe. Each code can only be used once.\n\n';
+    codes.forEach(function(code, index) {
+        content += (index + 1) + '. ' + code + '\n';
+    });
+    content += '\nGenerated: ' + new Date().toISOString();
+
+    var blob = new Blob([content], { type: 'text/plain' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'recovery-codes.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+</script>
+
+<style>
+.mfa-card {
+    max-width: 500px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.success-icon {
+    margin-bottom: 1rem;
+}
+
+.title {
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.recovery-codes {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.recovery-code {
+    display: block;
+    padding: 0.5rem;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 0.25rem;
+    font-family: monospace;
+    font-size: 0.9rem;
+    user-select: all;
+}
+
+.warning-box {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.warning-box ul {
+    margin: 0.5rem 0 0 1.25rem;
+    padding: 0;
+}
+
+.warning-box li {
+    font-size: 0.875rem;
+}
+
+.actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+}
+
+.btn {
+    padding: 0.5rem 1rem;
+}
+</style>

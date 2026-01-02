@@ -1,0 +1,265 @@
+@using Oluso.UserJourneys.Steps
+@model CompositeLoginViewModel
+
+<div class="login-card">
+    @if (!string.IsNullOrEmpty(Model?.TenantLogo))
+    {
+        <div class="tenant-logo">
+            <img src="@Model.TenantLogo" alt="@Model.TenantName" />
+        </div>
+    }
+
+    <h1 class="title">@(Model?.TenantName ?? "Sign In")</h1>
+    <p class="subtitle">Enter your credentials to continue</p>
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    @if (Model?.ShowLocalLogin == true)
+    {
+        <form method="post" id="loginForm">
+            <div class="form-group">
+                <label for="username">Username or Email</label>
+                <input type="text"
+                       id="username"
+                       name="username"
+                       class="form-control"
+                       value="@Model?.Username"
+                       autofocus
+                       autocomplete="username"
+                       required />
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password"
+                       id="password"
+                       name="password"
+                       class="form-control"
+                       autocomplete="current-password"
+                       required />
+            </div>
+
+            @if (Model?.AllowRememberMe == true)
+            {
+                <div class="form-check">
+                    <input type="checkbox"
+                           id="rememberMe"
+                           name="rememberMe"
+                           class="form-check-input"
+                           value="true"
+                           @(Model?.RememberMe == true ? "checked" : "") />
+                    <label class="form-check-label" for="rememberMe">Remember me</label>
+                </div>
+            }
+
+            <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+        </form>
+    }
+
+    @if (Model?.ShowPasskey == true)
+    {
+        <div class="passkey-section">
+            @if (Model?.ShowLocalLogin == true)
+            {
+                <div class="divider">
+                    <span>or</span>
+                </div>
+            }
+            <form method="post" id="passkeyForm">
+                <input type="hidden" name="action" value="passkey_login" />
+                @if (!Model.PasskeyUsernameless)
+                {
+                    <input type="hidden" name="username" id="passkeyUsername" />
+                }
+                <button type="submit" class="btn btn-outline-primary btn-block btn-passkey" id="passkeyButton">
+                    <svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                        <path d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v2c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-2h1c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
+                    </svg>
+                    Sign in with Passkey
+                </button>
+            </form>
+        </div>
+    }
+
+    @if (Model?.ShowExternalLogin == true && Model?.ExternalProviders?.Any() == true)
+    {
+        <div class="external-section">
+            <div class="divider">
+                <span>or continue with</span>
+            </div>
+            <div class="external-providers">
+                @foreach (var provider in Model.ExternalProviders)
+                {
+                    <form method="post" style="display: inline;">
+                        <input type="hidden" name="provider" value="@provider.Scheme" />
+                        <button type="submit" class="btn btn-outline-secondary btn-block btn-external">
+                            @if (!string.IsNullOrEmpty(provider.IconUrl))
+                            {
+                                <img src="@provider.IconUrl" alt="" class="provider-icon" />
+                            }
+                            @provider.DisplayName
+                        </button>
+                    </form>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="footer-links">
+        @if (Model?.AllowForgotPassword == true)
+        {
+            <a href="@(Model?.ForgotPasswordUrl ?? "?action=forgot_password")">Forgot your password?</a>
+        }
+
+        @if (Model?.AllowRegistration == true)
+        {
+            <span class="separator">|</span>
+            <a href="@(Model?.RegistrationUrl ?? "?action=register")">Create an account</a>
+        }
+    </div>
+</div>
+
+@if (Model?.ShowPasskey == true && !Model.PasskeyUsernameless)
+{
+<script>
+document.getElementById('passkeyForm').addEventListener('submit', function(e) {
+    var username = document.getElementById('username')?.value;
+    if (username) {
+        document.getElementById('passkeyUsername').value = username;
+    }
+});
+</script>
+}
+
+<style>
+.login-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.tenant-logo {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.tenant-logo img {
+    max-height: 48px;
+    max-width: 200px;
+}
+
+.title {
+    margin-bottom: 0.5rem;
+    text-align: center;
+}
+
+.subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+}
+
+.form-check {
+    margin-bottom: 1rem;
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+}
+
+.divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    margin: 1.5rem 0;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.divider span {
+    padding: 0 1rem;
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+
+.btn-passkey {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.passkey-icon {
+    flex-shrink: 0;
+}
+
+.external-providers {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.btn-external {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.provider-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.footer-links {
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 0.875rem;
+}
+
+.footer-links .separator {
+    margin: 0 0.5rem;
+    color: #6c757d;
+}
+
+.alert {
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0.25rem;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+    color: #721c24;
+}
+</style>

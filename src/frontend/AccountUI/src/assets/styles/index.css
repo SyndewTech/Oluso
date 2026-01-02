@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
+
+/* Form input styles */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="tel"],
+input[type="number"],
+select,
+textarea {
+  @apply block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  @apply bg-gray-50 text-gray-500 cursor-not-allowed;
+}
+
+/* Button base styles */
+button {
+  @apply transition-colors duration-150;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

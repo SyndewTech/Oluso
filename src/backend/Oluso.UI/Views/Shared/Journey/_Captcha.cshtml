@@ -1,0 +1,77 @@
+@model Oluso.UserJourneys.Steps.CaptchaViewModel
+
+<div class="captcha-form">
+    <h2>Security Check</h2>
+    <p class="description">Please complete the security verification below to continue.</p>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    <form method="post" id="captcha-form">
+        <div class="captcha-container mb-4">
+            @switch (Model.Provider.ToLowerInvariant())
+            {
+                case "recaptcha":
+                case "recaptcha_v2":
+                    <div class="g-recaptcha"
+                         data-sitekey="@Model.SiteKey"
+                         data-theme="@Model.Theme"
+                         data-size="@Model.Size"></div>
+                    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+                    break;
+
+                case "recaptcha_v3":
+                    <input type="hidden" id="g-recaptcha-response" name="g-recaptcha-response" />
+                    <script src="https://www.google.com/recaptcha/api.js?render=@Model.SiteKey"></script>
+                    <script>
+                        grecaptcha.ready(function() {
+                            grecaptcha.execute('@Model.SiteKey', {action: '@(Model.Action ?? "submit")'}).then(function(token) {
+                                document.getElementById('g-recaptcha-response').value = token;
+                            });
+                        });
+                    </script>
+                    <p class="text-muted small">
+                        This site is protected by reCAPTCHA and the Google
+                        <a href="https://policies.google.com/privacy" target="_blank">Privacy Policy</a> and
+                        <a href="https://policies.google.com/terms" target="_blank">Terms of Service</a> apply.
+                    </p>
+                    break;
+
+                case "hcaptcha":
+                    <div class="h-captcha"
+                         data-sitekey="@Model.SiteKey"
+                         data-theme="@Model.Theme"
+                         data-size="@Model.Size"></div>
+                    <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+                    break;
+
+                case "turnstile":
+                    <div class="cf-turnstile"
+                         data-sitekey="@Model.SiteKey"
+                         data-theme="@Model.Theme"
+                         data-size="@Model.Size"
+                         data-language="@Model.Language"></div>
+                    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+                    break;
+            }
+        </div>
+
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-primary" id="submit-btn">Continue</button>
+        </div>
+    </form>
+</div>
+
+<style>
+    .captcha-container {
+        display: flex;
+        justify-content: center;
+    }
+    .g-recaptcha, .h-captcha, .cf-turnstile {
+        margin: 0 auto;
+    }
+</style>

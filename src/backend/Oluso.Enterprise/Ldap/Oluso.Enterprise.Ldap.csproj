@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Oluso.Enterprise.Ldap</RootNamespace>
+    <PackageId>Oluso.Enterprise.Ldap</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Oluso</Authors>
+    <Description>LDAP/Active Directory authentication and user sync for Oluso. Enterprise tier.</Description>
+    <PackageTags>oluso;identity;ldap;openldap;activedirectory;authentication;directory</PackageTags>
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+
+    <!-- Oluso Feature Metadata -->
+    <OlusoFeature>ldap</OlusoFeature>
+    <OlusoTier>enterprise</OlusoTier>
+    <OlusoCategory>authentication</OlusoCategory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.DirectoryServices.Protocols" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Oluso\Oluso.csproj" />
+  </ItemGroup>
+
+</Project>

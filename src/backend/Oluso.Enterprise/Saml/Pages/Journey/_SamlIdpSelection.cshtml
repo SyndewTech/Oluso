@@ -1,0 +1,140 @@
+@using Oluso.Enterprise.Saml.Integration
+@model SamlIdpSelectionViewModel
+
+<div class="saml-idp-selection-card">
+    <h1 class="title">Choose Your Organization</h1>
+    @if (!string.IsNullOrEmpty(Model?.TenantName))
+    {
+        <p class="subtitle">Sign in to @Model.TenantName</p>
+    }
+    else
+    {
+        <p class="subtitle">Select your identity provider to continue</p>
+    }
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    <form method="post">
+        <div class="idp-list">
+            @foreach (var idp in Model?.IdentityProviders ?? new List<SamlIdpDisplayInfo>())
+            {
+                <button type="submit" name="saml_idp" value="@idp.Name" class="idp-button">
+                    <div class="idp-icon">
+                        @if (!string.IsNullOrEmpty(idp.IconUrl))
+                        {
+                            <img src="@idp.IconUrl" alt="@idp.DisplayName" />
+                        }
+                        else
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z" />
+                            </svg>
+                        }
+                    </div>
+                    <div class="idp-info">
+                        <span class="idp-name">@idp.DisplayName</span>
+                        <span class="idp-type">SAML Single Sign-On</span>
+                    </div>
+                    <div class="idp-arrow">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                    </div>
+                </button>
+            }
+        </div>
+    </form>
+
+    <div class="saml-help">
+        <p class="text-muted text-center mt-3">
+            <small>Don't see your organization? <a href="?useLocalLogin=true">Sign in with username and password</a></small>
+        </p>
+    </div>
+</div>
+
+<style>
+    .saml-idp-selection-card {
+        max-width: 400px;
+        margin: 0 auto;
+        padding: 2rem;
+    }
+
+    .idp-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin-top: 1.5rem;
+    }
+
+    .idp-button {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 1rem;
+        background: var(--bg-secondary, #f8f9fa);
+        border: 1px solid var(--border-color, #dee2e6);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-align: left;
+    }
+
+    .idp-button:hover {
+        background: var(--bg-hover, #e9ecef);
+        border-color: var(--primary-color, #0d6efd);
+        transform: translateY(-1px);
+    }
+
+    .idp-icon {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary, #fff);
+        border-radius: 8px;
+        margin-right: 1rem;
+    }
+
+    .idp-icon img {
+        max-width: 24px;
+        max-height: 24px;
+    }
+
+    .idp-icon svg {
+        width: 24px;
+        height: 24px;
+        color: var(--text-muted, #6c757d);
+    }
+
+    .idp-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .idp-name {
+        font-weight: 600;
+        color: var(--text-primary, #212529);
+    }
+
+    .idp-type {
+        font-size: 0.85rem;
+        color: var(--text-muted, #6c757d);
+    }
+
+    .idp-arrow svg {
+        width: 20px;
+        height: 20px;
+        color: var(--text-muted, #6c757d);
+    }
+
+    .saml-help {
+        margin-top: 2rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color, #dee2e6);
+    }
+</style>

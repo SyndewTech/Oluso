@@ -1,0 +1,257 @@
+@page "/account/direct-login"
+@model Oluso.UI.Pages.Account.DirectLoginModel
+@{
+    ViewData["Title"] = Model.ProviderDisplayName ?? "Sign In";
+}
+
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="provider-header">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="provider-icon">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z" />
+            </svg>
+            <h1 class="auth-title">@(Model.ProviderDisplayName ?? "Sign In")</h1>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Model.TenantName))
+        {
+            <p class="auth-subtitle">Sign in to @Model.TenantName</p>
+        }
+        else
+        {
+            <p class="auth-subtitle">Enter your credentials to continue</p>
+        }
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Model.ErrorMessage</span>
+            </div>
+        }
+
+        <form method="post">
+            <input type="hidden" name="Scheme" value="@Model.Scheme" />
+            <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text"
+                       id="username"
+                       name="Input.Username"
+                       class="form-control"
+                       value="@Model.Input.Username"
+                       placeholder="Enter your username"
+                       autofocus
+                       autocomplete="username"
+                       required />
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password"
+                       id="password"
+                       name="Input.Password"
+                       class="form-control"
+                       placeholder="Enter your password"
+                       autocomplete="current-password"
+                       required />
+            </div>
+
+            <div class="form-check">
+                <input type="checkbox"
+                       id="rememberMe"
+                       name="Input.RememberMe"
+                       class="form-check-input"
+                       value="true"
+                       @(Model.Input.RememberMe ? "checked" : "") />
+                <label class="form-check-label" for="rememberMe">Remember me on this device</label>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">
+                Sign In
+            </button>
+        </form>
+
+        <div class="auth-links">
+            <a href="/account/login?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Back to login options</a>
+        </div>
+
+        <div class="provider-help">
+            <p class="text-muted text-center">
+                <small>Having trouble signing in? Contact your administrator.</small>
+            </p>
+        </div>
+    </div>
+</div>
+
+<style>
+.auth-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+}
+
+.auth-card {
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.provider-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.provider-icon {
+    width: 2rem;
+    height: 2rem;
+    color: #f97316;
+}
+
+.auth-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1a1a2e;
+    margin: 0;
+}
+
+.auth-subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #374151;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #1a1a2e;
+    background-color: #f9fafb;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #f97316;
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
+}
+
+.form-check {
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.form-check-input {
+    width: 1.125rem;
+    height: 1.125rem;
+    accent-color: #f97316;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    border: none;
+}
+
+.btn-block {
+    display: flex;
+    width: 100%;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #f97316 0%, #c2410c 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
+}
+
+.auth-links {
+    text-align: center;
+    margin-top: 1.5rem;
+}
+
+.auth-links a {
+    color: #f97316;
+    text-decoration: none;
+}
+
+.auth-links a:hover {
+    text-decoration: underline;
+}
+
+.provider-help {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.alert-danger {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.alert-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.text-muted {
+    color: #6b7280;
+}
+
+.text-center {
+    text-align: center;
+}
+</style>

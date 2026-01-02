@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oluṣọ - The Guardian of Identity</title>
+    <style>
+        :root {
+            /* Oluṣọ Brand Colors - Orange Primary */
+            --primary: #f97316;
+            --primary-dark: #ea580c;
+            --primary-darker: #c2410c;
+            --accent: #14b8a6;
+            --accent-light: rgba(20, 184, 166, 0.1);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+            color: var(--gray-800);
+        }
+
+        /* Subtle background glow */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+                radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .brand-logo {
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #fb923c 0%, #f97316 50%, #ea580c 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tagline {
+            font-size: 1.2rem;
+            color: rgba(255,255,255,0.8);
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        header p {
+            font-size: 1rem;
+            opacity: 0.7;
+        }
+
+        .version-badge {
+            display: inline-block;
+            background: rgba(249, 115, 22, 0.3);
+            border: 1px solid rgba(249, 115, 22, 0.5);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-top: 10px;
+            color: #fdba74;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.08);
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 20px rgba(0,0,0,0.15);
+        }
+
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--gray-100);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .card-header .icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .card-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--gray-900);
+        }
+
+        .card-body {
+            padding: 20px 24px;
+        }
+
+        .card-body p {
+            color: var(--gray-600);
+            margin-bottom: 16px;
+            line-height: 1.6;
+        }
+
+        .link-list {
+            list-style: none;
+        }
+
+        .link-list li {
+            margin-bottom: 8px;
+        }
+
+        .link-list a {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            background: var(--gray-50);
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--gray-700);
+            transition: background 0.15s, color 0.15s;
+            gap: 10px;
+        }
+
+        .link-list a:hover {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+
+        .link-list a .arrow {
+            margin-left: auto;
+            opacity: 0.5;
+        }
+
+        .link-list a:hover .arrow {
+            opacity: 1;
+        }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-enterprise {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .badge-api {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .badge-test {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        /* Icon colors - Oluṣọ orange theme */
+        .icon-oidc { background: #ffedd5; color: #ea580c; }
+        .icon-saml { background: #fef3c7; color: #d97706; }
+        .icon-ldap { background: #d1fae5; color: #059669; }
+        .icon-fido2 { background: #ffedd5; color: #c2410c; }
+        .icon-scim { background: #fff7ed; color: #9a3412; }
+        .icon-admin { background: #fef3c7; color: #b45309; }
+        .icon-test { background: #fee2e2; color: #dc2626; }
+
+        .quick-start {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 24px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .quick-start h3 {
+            font-size: 1.1rem;
+            margin-bottom: 16px;
+            color: var(--gray-800);
+        }
+
+        .credentials {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .credential-item {
+            background: var(--gray-50);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--gray-200);
+        }
+
+        .credential-item label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--gray-600);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .credential-item code {
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: var(--gray-900);
+            background: none;
+            padding: 0;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #f97316;
+            box-shadow: 0 0 8px rgba(249, 115, 22, 0.6);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
+        }
+
+        .btn:hover {
+            background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary-darker) 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--gray-600);
+        }
+
+        .btn-secondary:hover {
+            background: var(--gray-700);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            color: rgba(255,255,255,0.7);
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: #fdba74;
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+
+        footer a:hover {
+            color: #fed7aa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="brand-logo">Oluṣọ</div>
+            <p class="tagline">The Guardian of Identity</p>
+            <p>Open-source, customizable identity management platform</p>
+            <span class="version-badge">v1.0.0 - Sample Instance</span>
+        </header>
+
+        <div class="grid">
+            <!-- OIDC -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-oidc">&#128274;</div>
+                    <h2>OpenID Connect</h2>
+                </div>
+                <div class="card-body">
+                    <p>OAuth 2.0 and OpenID Connect authentication with support for authorization code flow, PKCE, and refresh tokens.</p>
+                    <ul class="link-list">
+                        <li><a href="/.well-known/openid-configuration" target="_blank">
+                            Discovery Document
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/connect/authorize">
+                            Authorization Endpoint
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/test/oidc.html">
+                            OIDC Test Harness
+                            <span class="badge badge-test">TEST</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- SAML -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-saml">&#128737;</div>
+                    <h2>SAML 2.0</h2>
+                    <span class="badge badge-enterprise">Enterprise</span>
+                </div>
+                <div class="card-body">
+                    <p>SAML 2.0 Identity Provider (IdP) and Service Provider (SP) capabilities for enterprise SSO integration.</p>
+                    <ul class="link-list">
+                        <li><a href="/saml/idp/metadata" target="_blank">
+                            IdP Metadata
+                            <span class="badge badge-api">XML</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/saml/metadata" target="_blank">
+                            SP Metadata
+                            <span class="badge badge-api">XML</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/test/saml.html">
+                            SAML Test Harness
+                            <span class="badge badge-test">TEST</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- LDAP -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-ldap">&#128451;</div>
+                    <h2>LDAP Server</h2>
+                    <span class="badge badge-enterprise">Enterprise</span>
+                </div>
+                <div class="card-body">
+                    <p>LDAP server exposing identity users via LDAP protocol. Connect legacy applications with modern identity.</p>
+                    <ul class="link-list">
+                        <li><a href="/test/ldap.html">
+                            LDAP Test Harness
+                            <span class="badge badge-test">TEST</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                    <div id="ldapInfo" style="margin-top: 12px; padding: 12px; background: var(--gray-50); border-radius: 8px; font-size: 0.85rem;">
+                        <strong>Connection:</strong> <span id="ldapConnection">ldap://localhost:10389</span><br>
+                        <strong>Base DN:</strong> <span id="ldapBaseDn">dc=oluso,dc=local</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FIDO2/Passkeys -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-fido2">&#128272;</div>
+                    <h2>Passkeys / FIDO2</h2>
+                    <span class="badge badge-enterprise">Enterprise</span>
+                </div>
+                <div class="card-body">
+                    <p>Passwordless authentication with WebAuthn/FIDO2 passkeys. Support for platform authenticators and security keys.</p>
+                    <ul class="link-list">
+                        <li><a href="/account/login">
+                            Try Passkey Login
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/account/security">
+                            Manage Passkeys
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- SCIM -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-scim">&#128101;</div>
+                    <h2>SCIM 2.0</h2>
+                    <span class="badge badge-enterprise">Enterprise</span>
+                </div>
+                <div class="card-body">
+                    <p>System for Cross-domain Identity Management. Automate user provisioning and deprovisioning.</p>
+                    <ul class="link-list">
+                        <li><a href="/scim/v2/ServiceProviderConfig" target="_blank">
+                            Service Provider Config
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/scim/v2/Schemas" target="_blank">
+                            SCIM Schemas
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/scim/v2/Users" target="_blank">
+                            Users Endpoint
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/scim/v2/Groups" target="_blank">
+                            Groups Endpoint
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Admin API -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-admin">&#9881;</div>
+                    <h2>Admin API</h2>
+                </div>
+                <div class="card-body">
+                    <p>RESTful API for managing users, clients, tenants, and configuration programmatically.</p>
+                    <ul class="link-list">
+                        <li><a href="/api/users" target="_blank">
+                            Users API
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/api/clients" target="_blank">
+                            Clients API
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/api/tenants" target="_blank">
+                            Tenants API
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="/api/roles" target="_blank">
+                            Roles API
+                            <span class="badge badge-api">API</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Start -->
+        <div class="quick-start">
+            <h3>&#128640; Quick Start - Test Credentials</h3>
+            <h4 style="font-size: 0.9rem; color: var(--gray-600); margin-bottom: 12px; margin-top: 8px;">User Accounts</h4>
+            <div class="credentials" style="margin-bottom: 20px;">
+                <div class="credential-item">
+                    <label>Super Admin <span class="badge badge-enterprise" style="margin-left: 4px;">System</span></label>
+                    <code>superadmin@localhost</code>
+                    <div style="margin-top: 4px; font-size: 0.8rem; color: var(--gray-600);">Password: <code>SuperAdmin123!</code></div>
+                </div>
+                <div class="credential-item">
+                    <label>Tenant Admin <span class="badge badge-api" style="margin-left: 4px;">Default</span></label>
+                    <code>admin@default.local</code>
+                    <div style="margin-top: 4px; font-size: 0.8rem; color: var(--gray-600);">Password: <code>TenantAdmin123!</code></div>
+                </div>
+                <div class="credential-item">
+                    <label>Test User <span class="badge badge-test" style="margin-left: 4px;">Default</span></label>
+                    <code>testuser@example.com</code>
+                    <div style="margin-top: 4px; font-size: 0.8rem; color: var(--gray-600);">Password: <code>Password123!</code></div>
+                </div>
+            </div>
+            <h4 style="font-size: 0.9rem; color: var(--gray-600); margin-bottom: 12px;">OAuth Client</h4>
+            <div class="credentials">
+                <div class="credential-item">
+                    <label>Client ID</label>
+                    <code>test-client</code>
+                </div>
+                <div class="credential-item">
+                    <label>Client Secret</label>
+                    <code>test-secret</code>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="status-dot"></span>
+                OIDC Server
+            </div>
+            <div class="status-item">
+                <span class="status-dot"></span>
+                SAML IdP
+            </div>
+            <div class="status-item">
+                <span class="status-dot"></span>
+                LDAP Server (port 10389)
+            </div>
+            <div class="status-item">
+                <span class="status-dot"></span>
+                SCIM API
+            </div>
+        </div>
+
+        <footer>
+            <p><strong style="color: #fdba74;">Oluṣọ</strong> Identity Server &bull; <a href="/health">Health Check</a> &bull; <a href="/.well-known/openid-configuration">Discovery</a></p>
+            <p style="margin-top: 8px; font-size: 0.75rem; opacity: 0.6;">Built with care in Yoruba tradition</p>
+        </footer>
+    </div>
+    <script>
+        // Load LDAP config dynamically
+        fetch('/test/ldap/config')
+            .then(r => r.json())
+            .then(config => {
+                document.getElementById('ldapConnection').textContent = 'ldap://' + config.host + ':' + config.port;
+                document.getElementById('ldapBaseDn').textContent = config.baseDn;
+            })
+            .catch(() => { /* Use defaults */ });
+    </script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+@using Oluso.Enterprise.Ldap.Integration
+@model LdapLoginViewModel
+
+<div class="login-card">
+    <h1 class="title">@(Model?.ProviderDisplayName ?? "Corporate Login")</h1>
+    @if (!string.IsNullOrEmpty(Model?.TenantName))
+    {
+        <p class="subtitle">Sign in to @Model.TenantName</p>
+    }
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    <form method="post">
+        <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text"
+                   id="username"
+                   name="username"
+                   class="form-control"
+                   value="@Model?.Username"
+                   placeholder="Enter your corporate username"
+                   autofocus
+                   autocomplete="username"
+                   required />
+            <small class="form-text text-muted">Use your Active Directory or LDAP username</small>
+        </div>
+
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password"
+                   id="password"
+                   name="password"
+                   class="form-control"
+                   placeholder="Enter your password"
+                   autocomplete="current-password"
+                   required />
+        </div>
+
+        @if (Model?.ShowRememberMe == true)
+        {
+            <div class="form-check">
+                <input type="checkbox" id="rememberMe" name="rememberMe" value="true" class="form-check-input" />
+                <label for="rememberMe" class="form-check-label">Remember me on this device</label>
+            </div>
+        }
+
+        <button type="submit" class="btn btn-primary btn-block">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 1.25rem; height: 1.25rem; margin-right: 0.5rem; vertical-align: text-bottom;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z" />
+            </svg>
+            Sign In with Corporate Directory
+        </button>
+    </form>
+
+    <div class="ldap-help">
+        <p class="text-muted text-center mt-3">
+            <small>Having trouble signing in? Contact your IT administrator.</small>
+        </p>
+    </div>
+</div>

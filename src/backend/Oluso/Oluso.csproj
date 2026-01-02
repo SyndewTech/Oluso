@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>Oluso</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Akin Odeyale</Authors>
+    <Company>Syndew Technology Ltd</Company>
+    <Description>Modern OAuth 2.0 and OpenID Connect identity server for ASP.NET Core. Multi-tenant, extensible, with User Journey Engine for customizable authentication flows.</Description>
+    <PackageTags>oauth;oidc;openidconnect;identity;authentication;authorization;multi-tenant</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/your-org/oluso</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/your-org/oluso</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Generate XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core authentication -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.22" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.22" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
+
+    <!-- Social login providers (Microsoft built-in) -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Facebook" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Twitter" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.MicrosoftAccount" Version="8.0.22" />
+
+    <!-- Social login providers (community packages) -->
+    <PackageReference Include="AspNet.Security.OAuth.GitHub" Version="8.2.0" />
+    <PackageReference Include="AspNet.Security.OAuth.LinkedIn" Version="8.2.0" />
+    <PackageReference Include="AspNet.Security.OAuth.Apple" Version="8.2.0" />
+
+    <!-- WASM plugin runtime -->
+    <PackageReference Include="Extism.Sdk" Version="1.9.1" />
+  </ItemGroup>
+
+  <!-- Include README in package -->
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Reference the Oluso packages -->
+  <ItemGroup>
+    <ProjectReference Include="..\Oluso.Core\Oluso.Core.csproj" />
+    <ProjectReference Include="..\Oluso.EntityFramework\Oluso.EntityFramework.csproj" />
+  </ItemGroup>
+
+</Project>

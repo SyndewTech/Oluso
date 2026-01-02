@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"],
+      "@pages/*": ["src/pages/*"],
+      "@hooks/*": ["src/hooks/*"],
+      "@services/*": ["src/services/*"],
+      "@store/*": ["src/store/*"],
+      "@types/*": ["src/types/*"],
+      "@utils/*": ["src/utils/*"],
+      "@oluso/ui-core": ["../ui-core/src"],
+      "@oluso/ui-core/*": ["../ui-core/src/*"],
+      "@oluso/fido2-ui": ["../libs/fido2-ui"],
+      "@oluso/fido2-ui/*": ["../libs/fido2-ui/*"],
+      "@oluso/saml-ui": ["../libs/saml-ui"],
+      "@oluso/saml-ui/*": ["../libs/saml-ui/*"]
+    }
+  },
+  "include": ["src", "../ui-core/src"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

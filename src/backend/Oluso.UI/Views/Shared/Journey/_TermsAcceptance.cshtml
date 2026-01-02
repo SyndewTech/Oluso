@@ -1,0 +1,168 @@
+@using Oluso.UserJourneys.Steps
+@model TermsAcceptanceViewModel
+
+<div class="terms-card">
+    <h1 class="title">@Model?.TermsTitle</h1>
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    <div class="terms-content">
+        @if (Model?.ShowTermsInline == true && !string.IsNullOrEmpty(Model?.TermsContent))
+        {
+            <div class="terms-box">
+                <h3>@Model.TermsTitle</h3>
+                <div class="terms-text">@Html.Raw(Model.TermsContent)</div>
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(Model?.TermsUrl))
+        {
+            <p>
+                Please review our <a href="@Model.TermsUrl" target="_blank">@Model.TermsTitle</a>
+                (Version @Model?.TermsVersion).
+            </p>
+        }
+
+        @if (Model?.RequireBoth == true)
+        {
+            @if (Model?.ShowPrivacyInline == true && !string.IsNullOrEmpty(Model?.PrivacyContent))
+            {
+                <div class="terms-box">
+                    <h3>@Model?.PrivacyTitle</h3>
+                    <div class="terms-text">@Html.Raw(Model.PrivacyContent)</div>
+                </div>
+            }
+            else if (!string.IsNullOrEmpty(Model?.PrivacyUrl))
+            {
+                <p>
+                    Please also review our <a href="@Model.PrivacyUrl" target="_blank">@Model?.PrivacyTitle</a>
+                    (Version @Model?.PrivacyVersion).
+                </p>
+            }
+        }
+    </div>
+
+    <form method="post" id="termsForm">
+        <div class="form-check">
+            <input type="checkbox"
+                   id="acceptTerms"
+                   name="acceptTerms"
+                   class="form-check-input"
+                   value="true"
+                   required />
+            <label class="form-check-label" for="acceptTerms">
+                I have read and agree to the <strong>@Model?.TermsTitle</strong>
+            </label>
+        </div>
+
+        @if (Model?.RequireBoth == true)
+        {
+            <div class="form-check">
+                <input type="checkbox"
+                       id="acceptPrivacy"
+                       name="acceptPrivacy"
+                       class="form-check-input"
+                       value="true"
+                       required />
+                <label class="form-check-label" for="acceptPrivacy">
+                    I have read and agree to the <strong>@Model?.PrivacyTitle</strong>
+                </label>
+            </div>
+        }
+
+        <div class="button-group">
+            <button type="submit" class="btn btn-primary">@(Model?.AcceptButtonText ?? "I Accept")</button>
+
+            @if (Model?.CanDecline == true && !string.IsNullOrEmpty(Model?.DeclineButtonText))
+            {
+                <button type="button" class="btn btn-outline-secondary" onclick="window.history.back()">
+                    @Model.DeclineButtonText
+                </button>
+            }
+        </div>
+    </form>
+</div>
+
+<style>
+.terms-card {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.title {
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.terms-content {
+    margin-bottom: 1.5rem;
+}
+
+.terms-box {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    background: #f8f9fa;
+    margin-bottom: 1rem;
+}
+
+.terms-box h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.terms-text {
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.form-check {
+    margin-bottom: 1rem;
+}
+
+.form-check-input {
+    margin-right: 0.5rem;
+}
+
+.button-group {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.btn {
+    padding: 0.5rem 1.5rem;
+    font-size: 1rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    border-color: #007bff;
+    color: white;
+}
+
+.btn-outline-secondary {
+    background: transparent;
+    border: 1px solid #6c757d;
+    color: #6c757d;
+}
+
+.alert {
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0.25rem;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+    color: #721c24;
+}
+</style>

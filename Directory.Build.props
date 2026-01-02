@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <Authors>Akin Odeyale</Authors>
+    <Company>Syndew Technology Ltd</Company>
+    <Copyright>Copyright (c) 2025-2026 Syndew Technology Ltd. All rights reserved.</Copyright>
+    <Product>Oluso: The Guardian of Identity</Product>
+    <PackageProjectUrl>https://oluso.io</PackageProjectUrl>
+    <PackageLicenseExpression></PackageLicenseExpression>
+    <PackageLicenseFile></PackageLicenseFile>
+    <RepositoryUrl>https://github.com/syndewtech/oluso</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+  </PropertyGroup>
+</Project>

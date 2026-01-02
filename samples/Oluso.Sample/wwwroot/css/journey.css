@@ -1,0 +1,648 @@
+/* Oluso Journey UI Styles */
+
+/* Brand Colors */
+:root {
+    --primary-color: #f97316;
+    --primary-hover: #ea580c;
+    --primary-dark: #c2410c;
+    --primary-light: rgba(249, 115, 22, 0.1);
+    --primary-glow: rgba(249, 115, 22, 0.35);
+    --accent-color: #14b8a6;
+    --background-start: #0f172a;
+    --background-end: #1e293b;
+    --text-primary: #1a1a2e;
+    --text-secondary: #6c757d;
+    --text-muted: #9ca3af;
+    --border-color: #e5e7eb;
+    --error-color: #dc2626;
+    --success-color: #16a34a;
+    --warning-color: #f59e0b;
+}
+
+/* Reset & Base */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+body.journey-page {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: linear-gradient(135deg, var(--background-start) 0%, var(--background-end) 100%);
+    min-height: 100vh;
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+body.journey-page::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Journey Container */
+.journey-wrapper {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    position: relative;
+    z-index: 1;
+}
+
+.journey-container {
+    width: 100%;
+    max-width: 460px;
+    position: relative;
+}
+
+/* Logo */
+.journey-logo {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.journey-logo .logo {
+    max-height: 48px;
+    max-width: 200px;
+}
+
+.journey-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+}
+
+.journey-brand-icon {
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 14px var(--primary-glow);
+}
+
+.journey-brand-icon svg {
+    width: 24px;
+    height: 24px;
+    color: white;
+}
+
+.journey-brand-text {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: -0.02em;
+}
+
+/* Progress Indicator */
+.journey-progress {
+    margin-bottom: 1.5rem;
+}
+
+.journey-progress-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.journey-progress-step {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.journey-progress-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transition: all 0.3s ease;
+}
+
+.journey-progress-dot.active {
+    background: var(--primary-color);
+    box-shadow: 0 0 12px var(--primary-glow);
+    transform: scale(1.2);
+}
+
+.journey-progress-dot.completed {
+    background: var(--success-color);
+}
+
+.journey-progress-line {
+    width: 24px;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 1px;
+}
+
+.journey-progress-line.completed {
+    background: var(--success-color);
+}
+
+.journey-progress-text {
+    text-align: center;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Journey Card */
+.journey-card {
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 2.5rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    animation: cardSlideUp 0.4s ease-out;
+}
+
+@keyframes cardSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Typography */
+.journey-card h1,
+.journey-card .title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.5rem 0;
+}
+
+.journey-card .subtitle {
+    color: var(--text-secondary);
+    margin: 0 0 1.5rem 0;
+    font-size: 1rem;
+}
+
+/* Form Elements */
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: #fff;
+    background-clip: padding-box;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-control:focus {
+    border-color: var(--primary-color);
+    outline: 0;
+    box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.form-control::placeholder {
+    color: var(--text-muted);
+}
+
+.form-control[readonly] {
+    background-color: #f9fafb;
+}
+
+.form-text {
+    display: block;
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
+/* Checkbox */
+.form-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.form-check-input {
+    width: 1.125rem;
+    height: 1.125rem;
+    margin-top: 0.125rem;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+}
+
+.form-check-label {
+    font-size: 0.9375rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.form-check-label a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.form-check-label a:hover {
+    text-decoration: underline;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1.5;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    border: none;
+    text-decoration: none;
+}
+
+.btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+    color: white;
+    box-shadow: 0 4px 14px var(--primary-glow);
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary-dark) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px var(--primary-glow);
+}
+
+.btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn-secondary {
+    background: white;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #f9fafb;
+    border-color: #d1d5db;
+}
+
+.btn-outline {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-outline:hover:not(:disabled) {
+    background: #f9fafb;
+    border-color: #9ca3af;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    cursor: pointer;
+    padding: 0;
+    font-size: inherit;
+    text-decoration: underline;
+}
+
+.btn-link:hover {
+    color: var(--primary-hover);
+}
+
+.btn-block {
+    display: flex;
+    width: 100%;
+}
+
+.btn-loading {
+    position: relative;
+    color: transparent !important;
+}
+
+.btn-loading::after {
+    content: '';
+    position: absolute;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+.btn-primary.btn-loading::after {
+    border-top-color: white;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Passkey Button */
+.btn-passkey {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+    color: white;
+    border: 1px solid #475569;
+}
+
+.btn-passkey:hover:not(:disabled) {
+    background: linear-gradient(135deg, #334155 0%, #475569 100%);
+    transform: translateY(-1px);
+}
+
+.btn-passkey svg {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+/* Divider */
+.divider {
+    display: flex;
+    align-items: center;
+    margin: 1.5rem 0;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-color);
+}
+
+.divider span {
+    padding: 0 1rem;
+}
+
+/* Alerts */
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.25rem;
+    font-size: 0.9375rem;
+}
+
+.alert-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+    margin-top: 0.125rem;
+}
+
+.alert-danger {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
+.alert-danger .alert-icon {
+    color: var(--error-color);
+}
+
+.alert-success {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+}
+
+.alert-success .alert-icon {
+    color: var(--success-color);
+}
+
+.alert-warning {
+    background: #fffbeb;
+    color: #92400e;
+    border: 1px solid #fde68a;
+}
+
+.alert-warning .alert-icon {
+    color: var(--warning-color);
+}
+
+/* Code Input (MFA) */
+.code-input {
+    font-size: 1.75rem;
+    letter-spacing: 0.75rem;
+    text-align: center;
+    font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+    padding: 1rem;
+}
+
+/* Loading */
+.loading-card {
+    text-align: center;
+    padding: 3rem 2rem;
+}
+
+.loading-spinner {
+    margin-bottom: 1rem;
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    animation: rotate 2s linear infinite;
+}
+
+.spinner .path {
+    stroke: var(--primary-color);
+    stroke-linecap: round;
+    animation: dash 1.5s ease-in-out infinite;
+}
+
+@keyframes rotate {
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes dash {
+    0% {
+        stroke-dasharray: 1, 150;
+        stroke-dashoffset: 0;
+    }
+    50% {
+        stroke-dasharray: 90, 150;
+        stroke-dashoffset: -35;
+    }
+    100% {
+        stroke-dasharray: 90, 150;
+        stroke-dashoffset: -124;
+    }
+}
+
+.loading-text {
+    color: var(--text-secondary);
+    font-size: 1rem;
+    margin: 0;
+}
+
+/* Footer Links */
+.journey-footer {
+    text-align: center;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.journey-footer p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+}
+
+.journey-footer a,
+.journey-footer .link-button {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+
+.journey-footer a:hover,
+.journey-footer .link-button:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+/* Link Button - styled to look like a link */
+.link-button {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+
+.link-button:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+/* External Providers */
+.external-providers {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.btn-external {
+    background: white;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    justify-content: center;
+}
+
+.btn-external:hover:not(:disabled) {
+    background: #f9fafb;
+    border-color: #d1d5db;
+}
+
+.btn-external img {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+/* Form Row (side by side fields) */
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+    .journey-wrapper {
+        padding: 1rem;
+    }
+
+    .journey-card {
+        padding: 1.5rem;
+        border-radius: 12px;
+    }
+
+    .journey-card h1,
+    .journey-card .title {
+        font-size: 1.5rem;
+    }
+
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .journey-progress-line {
+        width: 16px;
+    }
+}
+
+/* Utilities */
+.text-center {
+    text-align: center;
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }

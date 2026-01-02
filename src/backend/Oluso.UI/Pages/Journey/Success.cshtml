@@ -1,0 +1,103 @@
+@page "/journey/success/{journeyId?}"
+@model Oluso.UI.Pages.Journey.SuccessModel
+@{
+    Layout = null;
+    ViewData["Title"] = Model.Title ?? "Success";
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - Oluso</title>
+    <link rel="stylesheet" href="/css/journey.css" />
+    @if (Model.UiConfig != null)
+    {
+        <style>
+            :root {
+                @if (!string.IsNullOrEmpty(Model.UiConfig.PrimaryColor))
+                {
+                    @:--primary-color: @Model.UiConfig.PrimaryColor;
+                    @:--primary-hover: color-mix(in srgb, @Model.UiConfig.PrimaryColor 85%, black);
+                    @:--primary-light: color-mix(in srgb, @Model.UiConfig.PrimaryColor 15%, transparent);
+                    @:--primary-glow: color-mix(in srgb, @Model.UiConfig.PrimaryColor 40%, transparent);
+                }
+                @if (!string.IsNullOrEmpty(Model.UiConfig.BackgroundColor))
+                {
+                    @:--background-start: @Model.UiConfig.BackgroundColor;
+                    @:--background-end: color-mix(in srgb, @Model.UiConfig.BackgroundColor 80%, black);
+                }
+            }
+        </style>
+
+        @if (!string.IsNullOrEmpty(Model.UiConfig.CustomCss))
+        {
+            <style>@Html.Raw(Model.UiConfig.CustomCss)</style>
+        }
+    }
+</head>
+<body class="journey-page">
+    <div class="journey-wrapper">
+        <div class="journey-container">
+            @* Logo or Brand *@
+            @if (!string.IsNullOrEmpty(Model.UiConfig?.LogoUrl))
+            {
+                <div class="journey-logo">
+                    <img src="@Model.UiConfig.LogoUrl" alt="@(Model.Title ?? "Logo")" class="logo" />
+                </div>
+            }
+            else
+            {
+                <div class="journey-brand">
+                    <div class="journey-brand-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                        </svg>
+                    </div>
+                    <span class="journey-brand-text">Oluso</span>
+                </div>
+            }
+
+            <div class="journey-card">
+                <div class="success-content">
+                    <div class="success-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <h1 class="success-title">Success!</h1>
+                    <p class="success-message">@Model.SuccessMessage</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .success-content {
+            text-align: center;
+            padding: 2rem;
+        }
+        .success-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1.5rem;
+            color: #22c55e;
+        }
+        .success-icon svg {
+            width: 100%;
+            height: 100%;
+        }
+        .success-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #111827;
+            margin-bottom: 0.75rem;
+        }
+        .success-message {
+            color: #6b7280;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+    </style>
+</body>
+</html>

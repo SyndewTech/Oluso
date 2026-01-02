@@ -1,0 +1,120 @@
+@using Oluso.UserJourneys.Steps
+@model SignUpViewModel
+
+<h1 class="title">Create Account</h1>
+<p class="subtitle">Sign up to get started</p>
+
+@if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        <span>@Model.ErrorMessage</span>
+    </div>
+}
+
+<form method="post" id="signupForm">
+    <div class="form-row">
+        <div class="form-group">
+            <label for="firstName">First Name</label>
+            <input type="text"
+                   id="firstName"
+                   name="firstName"
+                   class="form-control"
+                   value="@Model?.FirstName"
+                   placeholder="John"
+                   autocomplete="given-name" />
+        </div>
+        <div class="form-group">
+            <label for="lastName">Last Name</label>
+            <input type="text"
+                   id="lastName"
+                   name="lastName"
+                   class="form-control"
+                   value="@Model?.LastName"
+                   placeholder="Doe"
+                   autocomplete="family-name" />
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email"
+               id="email"
+               name="email"
+               class="form-control"
+               value="@Model?.Email"
+               placeholder="john@example.com"
+               @(Model?.IsEmailDisabled == true ? "readonly" : "")
+               autocomplete="email"
+               required />
+    </div>
+
+    <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password"
+               id="password"
+               name="password"
+               class="form-control"
+               placeholder="Create a strong password"
+               autocomplete="new-password"
+               required />
+        <span class="form-text">At least 8 characters with uppercase, lowercase, and a number</span>
+    </div>
+
+    <div class="form-group">
+        <label for="confirmPassword">Confirm Password</label>
+        <input type="password"
+               id="confirmPassword"
+               name="confirmPassword"
+               class="form-control"
+               placeholder="Confirm your password"
+               autocomplete="new-password"
+               required />
+    </div>
+
+    @if (Model?.RequireTermsAcceptance == true)
+    {
+        <div class="form-check">
+            <input type="checkbox"
+                   id="acceptTerms"
+                   name="acceptTerms"
+                   class="form-check-input"
+                   value="true"
+                   required />
+            <label class="form-check-label" for="acceptTerms">
+                I agree to the
+                @if (!string.IsNullOrEmpty(Model.TermsUrl))
+                {
+                    <a href="@Model.TermsUrl" target="_blank">Terms of Service</a>
+                }
+                else
+                {
+                    <span>Terms of Service</span>
+                }
+                @if (!string.IsNullOrEmpty(Model.PrivacyUrl))
+                {
+                    <text> and </text>
+                    <a href="@Model.PrivacyUrl" target="_blank">Privacy Policy</a>
+                }
+            </label>
+        </div>
+    }
+
+    <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+</form>
+
+<div class="journey-footer">
+    <p>Already have an account? <button type="button" class="btn-link" onclick="switchToLogin()">Sign in</button></p>
+</div>
+
+<form method="post" id="switchForm" style="display: none;">
+    <input type="hidden" name="action_type" value="login" />
+</form>
+
+<script>
+function switchToLogin() {
+    document.getElementById('switchForm').submit();
+}
+</script>

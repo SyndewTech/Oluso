@@ -1,0 +1,98 @@
+@using Oluso.Enterprise.Fido2.Steps
+@model Fido2RegistrationSuccessViewModel
+
+<div class="fido2-registration-success">
+    <div class="success-icon">
+        <svg viewBox="0 0 24 24" width="72" height="72">
+            <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+    </div>
+
+    <h2 class="title">Passkey Registered!</h2>
+    <p class="description">Your passkey "@(Model.DisplayName ?? "New Passkey")" has been successfully set up.</p>
+
+    <div class="info-box">
+        <h4>What's next?</h4>
+        <p>Next time you sign in, you can use this passkey instead of your password. It's faster and more secure!</p>
+    </div>
+
+    <form method="post" class="continue-form">
+        <input type="hidden" name="action" value="continue" />
+        <button type="submit" class="btn btn-primary btn-block">Continue</button>
+    </form>
+</div>
+
+<style>
+.fido2-registration-success {
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.success-icon {
+    color: #48bb78;
+    margin-bottom: 1.5rem;
+    animation: pop 0.3s ease-out;
+}
+
+@@keyframes pop {
+    0% { transform: scale(0.8); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #276749;
+    margin-bottom: 0.5rem;
+}
+
+.description {
+    color: #4a5568;
+    margin-bottom: 1.5rem;
+}
+
+.info-box {
+    background: #c6f6d5;
+    border: 1px solid #9ae6b4;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.info-box h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #276749;
+    margin: 0 0 0.5rem;
+}
+
+.info-box p {
+    font-size: 0.875rem;
+    color: #22543d;
+    margin: 0;
+}
+
+.continue-form {
+    margin-top: 1.5rem;
+}
+
+.btn-primary {
+    display: block;
+    width: 100%;
+    background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+    border: none;
+    padding: 0.875rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    color: white;
+    border-radius: 0.375rem;
+    cursor: pointer;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #38a169 0%, #2f855a 100%);
+}
+</style>

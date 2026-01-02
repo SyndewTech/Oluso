@@ -1,0 +1,343 @@
+@using Oluso.Enterprise.Fido2
+@using Oluso.Enterprise.Fido2.Services
+@model Fido2RegisterViewModel
+
+<div class="fido2-register-card">
+    <h1 class="title">Register a Passkey</h1>
+    <p class="subtitle">Add a passkey for quick and secure sign-in</p>
+
+    <div class="info-box">
+        <h4>What is a passkey?</h4>
+        <p>Passkeys are a more secure replacement for passwords. They use your device's biometrics (fingerprint or face) or a security key to verify your identity.</p>
+    </div>
+
+    <div class="authenticator-options">
+        <button type="button" class="authenticator-option" id="platformAuth" data-type="platform">
+            <div class="option-icon">
+                <svg viewBox="0 0 24 24" width="32" height="32">
+                    <path fill="currentColor" d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
+                </svg>
+            </div>
+            <div class="option-text">
+                <strong>This Device</strong>
+                <span>Use Touch ID, Face ID, or Windows Hello</span>
+            </div>
+        </button>
+
+        <button type="button" class="authenticator-option" id="crossPlatformAuth" data-type="cross-platform">
+            <div class="option-icon">
+                <svg viewBox="0 0 24 24" width="32" height="32">
+                    <path fill="currentColor" d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+                </svg>
+            </div>
+            <div class="option-text">
+                <strong>Security Key</strong>
+                <span>Use a USB or NFC security key</span>
+            </div>
+        </button>
+    </div>
+
+    <div id="registrationStatus" style="display: none;">
+        <div class="status-icon">
+            <div class="spinner-border" role="status"></div>
+        </div>
+        <p id="statusMessage">Waiting for authenticator...</p>
+    </div>
+
+    <div id="registrationSuccess" class="alert alert-success" style="display: none;">
+        <strong>Success!</strong> Your passkey has been registered.
+    </div>
+
+    <div id="registrationError" class="alert alert-danger" style="display: none;"></div>
+
+    <form id="displayNameForm" style="display: none;">
+        <div class="form-group">
+            <label for="displayName">Name this passkey (optional)</label>
+            <input type="text"
+                   id="displayName"
+                   class="form-control"
+                   placeholder="e.g., MacBook Pro, YubiKey 5"
+                   maxlength="50" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Save</button>
+    </form>
+</div>
+
+<script>
+(function() {
+    if (!window.PublicKeyCredential) {
+        document.querySelector('.authenticator-options').innerHTML =
+            '<div class="alert alert-warning">Passkeys are not supported on this browser.</div>';
+        return;
+    }
+
+    // Check platform authenticator availability
+    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(function(available) {
+        if (!available) {
+            document.getElementById('platformAuth').classList.add('disabled');
+            document.getElementById('platformAuth').querySelector('span').textContent =
+                'Not available on this device';
+        }
+    });
+
+    // Authenticator option click handlers
+    document.querySelectorAll('.authenticator-option').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            if (this.classList.contains('disabled')) return;
+            startRegistration(this.dataset.type);
+        });
+    });
+
+    async function startRegistration(authenticatorType) {
+        const statusEl = document.getElementById('registrationStatus');
+        const statusMsg = document.getElementById('statusMessage');
+        const successEl = document.getElementById('registrationSuccess');
+        const errorEl = document.getElementById('registrationError');
+        const optionsEl = document.querySelector('.authenticator-options');
+
+        try {
+            optionsEl.style.display = 'none';
+            statusEl.style.display = 'block';
+            successEl.style.display = 'none';
+            errorEl.style.display = 'none';
+
+            // Get registration options from server
+            statusMsg.textContent = 'Getting registration options...';
+            const optionsResponse = await fetch('/api/fido2/register/options', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    authenticatorType: authenticatorType
+                })
+            });
+
+            if (!optionsResponse.ok) {
+                throw new Error('Failed to get registration options');
+            }
+
+            const options = await optionsResponse.json();
+
+            // Map from C# model names (camelCase) to WebAuthn API names
+            const rp = options.relyingParty || options.rp;
+            const user = options.user;
+            const pubKeyCredParams = options.publicKeyCredentialParameters || options.pubKeyCredParams || [
+                { type: 'public-key', alg: -7 },  // ES256
+                { type: 'public-key', alg: -257 } // RS256
+            ];
+
+            // Map algorithm property if needed (C# uses 'algorithm', WebAuthn uses 'alg')
+            const mappedParams = pubKeyCredParams.map(p => ({
+                type: p.type,
+                alg: p.alg ?? p.algorithm
+            }));
+
+            // Build WebAuthn options
+            const publicKeyOptions = {
+                challenge: base64UrlToArrayBuffer(options.challenge),
+                rp: {
+                    id: rp.id,
+                    name: rp.name
+                },
+                user: {
+                    id: base64UrlToArrayBuffer(user.id),
+                    name: user.name,
+                    displayName: user.displayName
+                },
+                pubKeyCredParams: mappedParams,
+                timeout: options.timeout || 60000,
+                attestation: options.attestationConveyance || options.attestation || 'none',
+                authenticatorSelection: options.authenticatorSelection || {}
+            };
+
+            if (options.excludeCredentials && options.excludeCredentials.length > 0) {
+                publicKeyOptions.excludeCredentials = options.excludeCredentials.map(function(cred) {
+                    var descriptor = {
+                        type: cred.type || 'public-key',
+                        id: base64UrlToArrayBuffer(cred.id)
+                    };
+                    // Only include transports if it's a valid array
+                    if (Array.isArray(cred.transports) && cred.transports.length > 0) {
+                        descriptor.transports = cred.transports;
+                    }
+                    return descriptor;
+                });
+            }
+
+            // Call WebAuthn API
+            statusMsg.textContent = 'Waiting for authenticator...';
+            const credential = await navigator.credentials.create({
+                publicKey: publicKeyOptions
+            });
+
+            // Prepare response
+            statusMsg.textContent = 'Registering credential...';
+            const response = {
+                id: credential.id,
+                rawId: arrayBufferToBase64Url(credential.rawId),
+                type: credential.type,
+                response: {
+                    clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                    attestationObject: arrayBufferToBase64Url(credential.response.attestationObject),
+                    transports: credential.response.getTransports ? credential.response.getTransports() : null
+                },
+                authenticatorAttachment: credential.authenticatorAttachment
+            };
+
+            // Complete registration
+            const completeResponse = await fetch('/api/fido2/register/complete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    response: response,
+                    displayName: authenticatorType === 'platform' ? 'This device' : 'Security key'
+                })
+            });
+
+            if (!completeResponse.ok) {
+                const error = await completeResponse.json();
+                throw new Error(error.error || 'Registration failed');
+            }
+
+            // Success!
+            statusEl.style.display = 'none';
+            successEl.style.display = 'block';
+
+            // Refresh page after a moment
+            setTimeout(function() {
+                window.location.reload();
+            }, 2000);
+
+        } catch (error) {
+            console.error('Registration error:', error);
+            statusEl.style.display = 'none';
+            optionsEl.style.display = 'block';
+
+            let message = 'Registration failed';
+            if (error.name === 'NotAllowedError') {
+                message = 'Registration was cancelled or not allowed.';
+            } else if (error.name === 'InvalidStateError') {
+                message = 'This authenticator is already registered.';
+            } else if (error.name === 'SecurityError') {
+                message = 'Security error. Make sure you are on a secure connection.';
+            } else {
+                message = error.message || 'Registration failed';
+            }
+
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+        }
+    }
+
+    // Helper functions
+    function base64UrlToArrayBuffer(base64url) {
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        const padding = '='.repeat((4 - base64.length % 4) % 4);
+        const binary = atob(base64 + padding);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function arrayBufferToBase64Url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+})();
+</script>
+
+<style>
+.fido2-register-card {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.info-box {
+    background: #e7f3ff;
+    border: 1px solid #b6d4fe;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.info-box h4 {
+    font-size: 1rem;
+    margin: 0 0 0.5rem;
+    color: #0a58ca;
+}
+
+.info-box p {
+    font-size: 0.875rem;
+    margin: 0;
+    color: #084298;
+}
+
+.authenticator-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.authenticator-option {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    border: 2px solid #dee2e6;
+    border-radius: 0.5rem;
+    background: white;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    text-align: left;
+}
+
+.authenticator-option:hover:not(.disabled) {
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.authenticator-option.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.option-icon {
+    flex-shrink: 0;
+    color: #667eea;
+}
+
+.option-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.option-text strong {
+    font-size: 1rem;
+}
+
+.option-text span {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+#registrationStatus {
+    text-align: center;
+    padding: 2rem;
+}
+
+.status-icon {
+    margin-bottom: 1rem;
+}
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+    color: #667eea;
+}
+</style>

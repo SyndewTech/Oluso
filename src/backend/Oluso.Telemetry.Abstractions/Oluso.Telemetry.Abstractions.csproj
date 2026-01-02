@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Oluso.Telemetry</RootNamespace>
+
+    <!-- NuGet Package Properties -->
+    <PackageId>Oluso.Telemetry.Abstractions</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Oluso</Authors>
+    <Description>Telemetry abstractions for Oluso. Vendor-neutral interfaces for metrics, tracing, and logging.</Description>
+    <PackageTags>oluso;telemetry;observability;metrics;tracing</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

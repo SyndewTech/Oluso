@@ -1,0 +1,98 @@
+@model Oluso.UserJourneys.Steps.LinkAccountViewModel
+
+<div class="link-account-form">
+    <h2>Linked Accounts</h2>
+    <p class="description">Manage your linked login methods. Link additional accounts for more convenient sign-in options.</p>
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="alert alert-success" role="alert">
+            @Model.SuccessMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    <div class="mb-4">
+        <h3 class="h5">Currently Linked</h3>
+        @if (Model.LinkedLogins.Count > 0)
+        {
+            <ul class="list-group">
+                @foreach (var login in Model.LinkedLogins)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="me-2 provider-icon provider-@login.Provider.ToLowerInvariant()"></i>
+                            <span class="fw-medium">@login.ProviderDisplayName</span>
+                        </div>
+                        @if (Model.AllowUnlink)
+                        {
+                            <form method="post" class="d-inline">
+                                <input type="hidden" name="unlink_provider" value="@login.Provider" />
+                                <input type="hidden" name="unlink_key" value="@login.ProviderKey" />
+                                <button type="submit" class="btn btn-sm btn-outline-danger"
+                                        onclick="return confirm('Are you sure you want to unlink this account?')">
+                                    Unlink
+                                </button>
+                            </form>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p class="text-muted">No external accounts linked.</p>
+        }
+    </div>
+
+    <div class="mb-4">
+        <h3 class="h5">Link New Account</h3>
+        <p class="text-muted small">Click a provider below to link your account.</p>
+        <div class="d-flex flex-wrap gap-2">
+            @{
+                var availableProviders = new[] { "Google", "Microsoft", "GitHub", "Apple", "Facebook", "Twitter" };
+                foreach (var provider in availableProviders)
+                {
+                    if (Model.AllowedProviders == null || Model.AllowedProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var isLinked = Model.LinkedLogins.Any(l => l.Provider.Equals(provider, StringComparison.OrdinalIgnoreCase));
+                        if (!isLinked)
+                        {
+                            <a href="?link_provider=@provider" class="btn btn-outline-secondary">
+                                <i class="me-1 provider-icon provider-@provider.ToLowerInvariant()"></i>
+                                @provider
+                            </a>
+                        }
+                    }
+                }
+            }
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <form method="post">
+            <input type="hidden" name="done" value="true" />
+            <button type="submit" class="btn btn-primary">Continue</button>
+        </form>
+    </div>
+</div>
+
+<style>
+    .provider-icon {
+        width: 1em;
+        height: 1em;
+        display: inline-block;
+    }
+    .provider-google::before { content: "G"; color: #4285F4; font-weight: bold; }
+    .provider-microsoft::before { content: "M"; color: #00A4EF; font-weight: bold; }
+    .provider-github::before { content: "G"; color: #333; font-weight: bold; }
+    .provider-apple::before { content: "A"; color: #000; font-weight: bold; }
+    .provider-facebook::before { content: "f"; color: #1877F2; font-weight: bold; }
+    .provider-twitter::before { content: "X"; color: #1DA1F2; font-weight: bold; }
+</style>

@@ -1,0 +1,113 @@
+@using Oluso.UserJourneys.Steps
+@model MfaEmailSetupViewModel
+
+<div class="mfa-card">
+    <h1 class="title">Verify Your Email</h1>
+    <p class="subtitle">
+        We sent a verification code to <strong>@Model?.Email</strong>.
+        Enter the code below to enable email-based two-factor authentication.
+    </p>
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    <form method="post" id="verifyForm">
+        <div class="form-group">
+            <label for="setup_email_code">Verification Code</label>
+            <input type="text"
+                   id="setup_email_code"
+                   name="setup_email_code"
+                   class="form-control code-input"
+                   pattern="[0-9]{6}"
+                   maxlength="6"
+                   autocomplete="one-time-code"
+                   inputmode="numeric"
+                   autofocus
+                   required />
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">Verify and Enable</button>
+    </form>
+
+    <form method="post" id="resendForm" class="resend-form">
+        <input type="hidden" name="setup_email" value="resend" />
+        <p class="text-center">
+            Didn't receive the code?
+            <button type="submit" class="btn-link">Resend</button>
+        </p>
+    </form>
+</div>
+
+<style>
+.mfa-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.title {
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    box-sizing: border-box;
+}
+
+.code-input {
+    font-size: 1.5rem;
+    letter-spacing: 0.5rem;
+    text-align: center;
+    font-family: monospace;
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+}
+
+.resend-form {
+    margin-top: 1.5rem;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #007bff;
+    cursor: pointer;
+    padding: 0;
+    font-size: inherit;
+    text-decoration: underline;
+}
+
+.btn-link:hover {
+    color: #0056b3;
+}
+
+.text-center {
+    text-align: center;
+}
+</style>

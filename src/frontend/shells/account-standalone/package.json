@@ -1,0 +1,45 @@
+{
+  "name": "@oluso/account-standalone",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Account UI for Oluso Identity Server",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@headlessui/react": "^1.7.18",
+    "@heroicons/react": "^2.1.1",
+    "@hookform/resolvers": "^3.3.4",
+    "@oluso/account-ui": "*",
+    "@oluso/fido2-ui": "*",
+    "@oluso/ui-core": "*",
+    "@tanstack/react-query": "^5.17.19",
+    "axios": "^1.6.5",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.3.1",
+    "oidc-client-ts": "^3.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hook-form": "^7.49.3",
+    "react-hot-toast": "^2.4.1",
+    "react-oidc-context": "^3.1.0",
+    "react-router-dom": "^6.21.3",
+    "tailwind-merge": "^2.2.1",
+    "zod": "^3.22.4",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}

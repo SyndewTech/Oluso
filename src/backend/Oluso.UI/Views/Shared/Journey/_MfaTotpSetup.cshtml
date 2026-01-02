@@ -1,0 +1,147 @@
+@using Oluso.UserJourneys.Steps
+@model MfaTotpSetupViewModel
+
+<div class="mfa-card">
+    <h1 class="title">Set Up Authenticator</h1>
+    <p class="subtitle">Scan the QR code with your authenticator app</p>
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    <div class="qr-section">
+        <div class="qr-code" id="qrcode"></div>
+        <p class="qr-instructions">
+            Scan this QR code with Google Authenticator, Authy, 1Password, or any TOTP-compatible app.
+        </p>
+    </div>
+
+    <div class="manual-entry">
+        <p class="manual-label">Can't scan? Enter this code manually:</p>
+        <code class="secret-key">@Model?.SharedKey</code>
+    </div>
+
+    <form method="post" id="verifyForm">
+        <div class="form-group">
+            <label for="setup_totp_code">Enter the 6-digit code from your app</label>
+            <input type="text"
+                   id="setup_totp_code"
+                   name="setup_totp_code"
+                   class="form-control code-input"
+                   pattern="[0-9]{6}"
+                   maxlength="6"
+                   inputmode="numeric"
+                   autocomplete="off"
+                   required />
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">Verify and Enable</button>
+    </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script>
+(function() {
+    var qr = qrcode(0, 'M');
+    qr.addData('@Html.Raw(Model?.AuthenticatorUri ?? "")');
+    qr.make();
+    document.getElementById('qrcode').innerHTML = qr.createSvgTag(5, 0);
+})();
+</script>
+
+<style>
+.mfa-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.title {
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: #6c757d;
+    margin-bottom: 1.5rem;
+}
+
+.qr-section {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.qr-code {
+    display: inline-block;
+    padding: 1rem;
+    background: white;
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+}
+
+.qr-code svg {
+    display: block;
+}
+
+.qr-instructions {
+    margin-top: 1rem;
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.manual-entry {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.manual-label {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+}
+
+.secret-key {
+    display: block;
+    font-size: 1rem;
+    font-family: monospace;
+    letter-spacing: 0.1rem;
+    word-break: break-all;
+    user-select: all;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.form-control {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    box-sizing: border-box;
+}
+
+.code-input {
+    font-size: 1.5rem;
+    letter-spacing: 0.5rem;
+    text-align: center;
+    font-family: monospace;
+}
+
+.btn-block {
+    display: block;
+    width: 100%;
+}
+</style>

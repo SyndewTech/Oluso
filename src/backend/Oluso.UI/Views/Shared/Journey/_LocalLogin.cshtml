@@ -1,0 +1,103 @@
+@using Oluso.UserJourneys.Steps
+@model LocalLoginViewModel
+
+<h1 class="title">Sign In</h1>
+<p class="subtitle">Enter your credentials to continue</p>
+
+@if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        <span>@Model.ErrorMessage</span>
+    </div>
+}
+
+<form method="post" id="loginForm">
+    <div class="form-group">
+        <label for="username">Username or Email</label>
+        <input type="text"
+               id="username"
+               name="username"
+               class="form-control"
+               value="@Model?.Username"
+               placeholder="Enter your username or email"
+               autofocus
+               autocomplete="username"
+               required />
+    </div>
+
+    <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password"
+               id="password"
+               name="password"
+               class="form-control"
+               placeholder="Enter your password"
+               autocomplete="current-password"
+               required />
+    </div>
+
+    @if (Model?.ShowRememberMe == true)
+    {
+        <div class="form-check">
+            <input type="checkbox"
+                   id="rememberMe"
+                   name="rememberMe"
+                   class="form-check-input"
+                   value="true"
+                   @(Model?.RememberMe == true ? "checked" : "") />
+            <label class="form-check-label" for="rememberMe">Remember me on this device</label>
+        </div>
+    }
+
+    <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+</form>
+
+@if (Model?.ShowPasskey == true)
+{
+    <div class="divider"><span>or</span></div>
+    <form method="post" id="passkeyForm">
+        <input type="hidden" name="action" value="passkey_login" />
+        @if (Model?.PasskeyUsernameless != true)
+        {
+            <input type="hidden" name="username" id="passkeyUsername" />
+        }
+        <button type="submit" class="btn btn-passkey btn-block">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+            </svg>
+            Sign in with Passkey
+        </button>
+    </form>
+    <p class="form-text text-center mt-1">Use your fingerprint, face, or security key</p>
+}
+
+@if (Model?.AllowForgotPassword == true)
+{
+    <div class="journey-footer">
+        <form method="post" style="display: inline;">
+            <input type="hidden" name="action" value="forgot_password" />
+            <button type="submit" class="link-button">Forgot your password?</button>
+        </form>
+    </div>
+}
+
+@if (Model?.AllowRegistration == true)
+{
+    <div class="journey-footer">
+        <p>Don't have an account? <a href="@(Model?.RegistrationUrl ?? "#")">Sign up</a></p>
+    </div>
+}
+
+<script>
+    // Copy username to passkey form when passkey is clicked
+    document.getElementById('passkeyForm')?.addEventListener('submit', function() {
+        var usernameInput = document.getElementById('username');
+        var passkeyUsernameInput = document.getElementById('passkeyUsername');
+        if (usernameInput && passkeyUsernameInput) {
+            passkeyUsernameInput.value = usernameInput.value;
+        }
+    });
+</script>

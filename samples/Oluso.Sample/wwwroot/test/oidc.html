@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OIDC Test</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; }
+        .card { background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        button { background: #0066cc; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0052a3; }
+        button.secondary { background: #6c757d; }
+        button.journey { background: #28a745; }
+        button.journey:hover { background: #218838; }
+        pre { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; overflow-x: auto; }
+        code { background: #e9ecef; padding: 2px 6px; border-radius: 3px; }
+        .info { background: #e7f3ff; border: 1px solid #b6d4fe; padding: 15px; border-radius: 4px; }
+        a { color: #0066cc; }
+        select { padding: 10px; border: 1px solid #ddd; border-radius: 4px; margin: 5px 0; }
+        .form-group { margin: 10px 0; }
+        label { display: block; margin-bottom: 5px; font-weight: 500; }
+        .button-group { margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <h1>OIDC Test</h1>
+    <p><a href="/test/ldap.html">LDAP Test</a> | <a href="/test/saml.html">SAML Test</a></p>
+
+    <div class="info">
+        <strong>OIDC Configuration:</strong><br>
+        Issuer: <code id="issuer">http://localhost:5050</code><br>
+        Discovery: <code><a href="/.well-known/openid-configuration" target="_blank">/.well-known/openid-configuration</a></code>
+    </div>
+
+    <div class="card">
+        <h3>Test Client Credentials</h3>
+        <p>Client ID: <code>test-client</code></p>
+        <p>Client Secret: <code>test-secret</code></p>
+    </div>
+
+    <div class="card">
+        <h3>Standalone Login (Default)</h3>
+        <p>Uses the standalone login page without journey flow.</p>
+        <button onclick="startAuth('standalone')">Start Standalone Login</button>
+    </div>
+
+    <div class="card">
+        <h3>Journey Flow Login</h3>
+        <p>Uses the journey-based login with configurable policies.</p>
+
+        <div class="form-group">
+            <label for="policySelect">Policy:</label>
+            <select id="policySelect">
+                <option value="">Auto-detect (default)</option>
+                <option value="signin">signin - Sign In</option>
+                <option value="signup-signin">signup-signin - Sign Up or Sign In</option>
+                <option value="signup">signup - Sign Up</option>
+                <option value="signin-mfa">signin-mfa - Sign In with MFA</option>
+                <option value="password-reset">password-reset - Password Reset</option>
+                <option value="profile-edit">profile-edit - Edit Profile</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="promptSelect">Prompt:</label>
+            <select id="promptSelect">
+                <option value="">None (use existing session if valid)</option>
+                <option value="login">login (force re-authentication)</option>
+                <option value="consent">consent (force consent screen)</option>
+                <option value="create">create (force sign-up flow)</option>
+                <option value="none">none (fail if not authenticated)</option>
+            </select>
+        </div>
+
+        <div class="button-group">
+            <button class="journey" onclick="startAuth('journey')">Start Journey Login</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Discovery Document</h3>
+        <button onclick="fetchDiscovery()">Fetch Discovery</button>
+        <pre id="discoveryResult"></pre>
+    </div>
+
+    <div class="card">
+        <h3>Available Policies</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr style="background: #e9ecef;">
+                <th style="padding: 8px; text-align: left;">Policy ID</th>
+                <th style="padding: 8px; text-align: left;">Name</th>
+                <th style="padding: 8px; text-align: left;">Type</th>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><code>signin</code></td>
+                <td style="padding: 8px;">Sign In</td>
+                <td style="padding: 8px;">SignIn</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><code>signup-signin</code></td>
+                <td style="padding: 8px;">Sign Up or Sign In</td>
+                <td style="padding: 8px;">SignInSignUp</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><code>signup</code></td>
+                <td style="padding: 8px;">Sign Up</td>
+                <td style="padding: 8px;">SignUp</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><code>signin-mfa</code></td>
+                <td style="padding: 8px;">Sign In with MFA</td>
+                <td style="padding: 8px;">SignIn (MFA required)</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><code>password-reset</code></td>
+                <td style="padding: 8px;">Password Reset</td>
+                <td style="padding: 8px;">PasswordReset</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><code>profile-edit</code></td>
+                <td style="padding: 8px;">Edit Profile</td>
+                <td style="padding: 8px;">ProfileEdit</td>
+            </tr>
+        </table>
+    </div>
+
+    <script src="oidc.js"></script>
+</body>
+</html>

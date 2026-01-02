@@ -1,0 +1,263 @@
+@using System.Text.Json
+@using Oluso.Enterprise.Fido2
+@model Fido2AssertViewModel
+
+<div class="fido2-assert-card">
+    @if (!Model?.IsPasskeyOnly == true && !string.IsNullOrEmpty(Model?.DisplayName))
+    {
+        <div class="user-info">
+            <div class="avatar">
+                @(Model.DisplayName?.Substring(0, 1).ToUpper())
+            </div>
+            <h2 class="username">@Model.DisplayName</h2>
+            <p class="email">@Model.Username</p>
+        </div>
+    }
+    else
+    {
+        <h1 class="title">Sign In with Passkey</h1>
+    }
+
+    @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+    {
+        <div class="alert alert-danger">@Model.ErrorMessage</div>
+    }
+
+    <div class="passkey-prompt" id="passkeyPrompt">
+        <div class="prompt-icon">
+            <svg viewBox="0 0 64 64" width="64" height="64">
+                <circle cx="32" cy="32" r="30" fill="none" stroke="currentColor" stroke-width="2"/>
+                <path fill="currentColor" d="M32 16c-5.52 0-10 4.48-10 10 0 3.4 1.7 6.38 4.29 8.19V40c0 .83.67 1.5 1.5 1.5h1.5v3c0 .83.67 1.5 1.5 1.5h2.21c.83 0 1.5-.67 1.5-1.5v-3h1.5c.83 0 1.5-.67 1.5-1.5v-5.81C39.3 32.38 42 29.4 42 26c0-5.52-4.48-10-10-10zm0 14c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
+            </svg>
+        </div>
+        <h3>Use your passkey</h3>
+        <p>Your browser will prompt you to use your fingerprint, face, or security key</p>
+        <div class="spinner" id="spinner" style="display: none;">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Waiting...</span>
+            </div>
+        </div>
+    </div>
+
+    <button type="button" id="retryButton" class="btn btn-primary btn-block" style="display: none;">
+        Try Again
+    </button>
+
+    @if (Model?.AllowFallback == true)
+    {
+        <hr />
+        <p class="text-center text-muted">
+            <a href="?fallback=password">Use password instead</a>
+        </p>
+    }
+</div>
+
+<!-- Hidden form for FIDO2 response submission -->
+<form method="post" id="fido2Form" style="display: none;">
+    <input type="hidden" name="fido2_response" id="fido2Response" />
+    <input type="hidden" name="fido2_challenge" id="fido2Challenge" />
+</form>
+
+<script>
+(function() {
+    const options = @Html.Raw(JsonSerializer.Serialize(Model?.Options));
+
+    if (!options || !window.PublicKeyCredential) {
+        document.getElementById('passkeyPrompt').innerHTML =
+            '<div class="alert alert-warning">Passkeys are not supported on this browser.</div>';
+        return;
+    }
+
+    async function authenticate() {
+        const spinner = document.getElementById('spinner');
+        const retryButton = document.getElementById('retryButton');
+
+        try {
+            spinner.style.display = 'block';
+            retryButton.style.display = 'none';
+
+            // Convert base64url to ArrayBuffer
+            const publicKeyOptions = {
+                ...options,
+                challenge: base64UrlToArrayBuffer(options.challenge)
+            };
+
+            if (options.allowCredentials && options.allowCredentials.length > 0) {
+                publicKeyOptions.allowCredentials = options.allowCredentials.map(function(cred) {
+                    var descriptor = {
+                        type: cred.type || 'public-key',
+                        id: base64UrlToArrayBuffer(cred.id)
+                    };
+                    // Only include transports if it's a valid array
+                    if (Array.isArray(cred.transports) && cred.transports.length > 0) {
+                        descriptor.transports = cred.transports;
+                    }
+                    return descriptor;
+                });
+            }
+
+            // Call WebAuthn API
+            const credential = await navigator.credentials.get({
+                publicKey: publicKeyOptions
+            });
+
+            // Prepare response
+            const response = {
+                id: credential.id,
+                rawId: arrayBufferToBase64Url(credential.rawId),
+                type: credential.type,
+                response: {
+                    clientDataJSON: arrayBufferToBase64Url(credential.response.clientDataJSON),
+                    authenticatorData: arrayBufferToBase64Url(credential.response.authenticatorData),
+                    signature: arrayBufferToBase64Url(credential.response.signature),
+                    userHandle: credential.response.userHandle
+                        ? arrayBufferToBase64Url(credential.response.userHandle)
+                        : null
+                },
+                authenticatorAttachment: credential.authenticatorAttachment
+            };
+
+            // Submit to journey
+            document.getElementById('fido2Response').value = JSON.stringify(response);
+            document.getElementById('fido2Challenge').value = options.challenge;
+            document.getElementById('fido2Form').submit();
+
+        } catch (error) {
+            console.error('WebAuthn error:', error);
+            spinner.style.display = 'none';
+            retryButton.style.display = 'block';
+
+            let message = 'Authentication failed';
+            if (error.name === 'NotAllowedError') {
+                message = 'Authentication was cancelled. Click "Try Again" to retry.';
+            } else if (error.name === 'SecurityError') {
+                message = 'Security error. Make sure you are on a secure connection.';
+            } else if (error.name === 'InvalidStateError') {
+                message = 'No matching credentials found.';
+            }
+
+            const promptEl = document.getElementById('passkeyPrompt');
+            const alertEl = promptEl.querySelector('.alert');
+            if (alertEl) {
+                alertEl.textContent = message;
+            } else {
+                const newAlert = document.createElement('div');
+                newAlert.className = 'alert alert-warning mt-3';
+                newAlert.textContent = message;
+                promptEl.appendChild(newAlert);
+            }
+        }
+    }
+
+    // Helper functions
+    function base64UrlToArrayBuffer(base64url) {
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        const padding = '='.repeat((4 - base64.length % 4) % 4);
+        const binary = atob(base64 + padding);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function arrayBufferToBase64Url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+
+    // Retry button handler
+    document.getElementById('retryButton').addEventListener('click', authenticate);
+
+    // Auto-start authentication
+    setTimeout(authenticate, 500);
+})();
+</script>
+
+<style>
+.fido2-assert-card {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 2rem;
+    text-align: center;
+}
+
+.user-info {
+    margin-bottom: 2rem;
+}
+
+.avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1rem;
+}
+
+.username {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.email {
+    color: #6c757d;
+    margin: 0.25rem 0 0;
+}
+
+.passkey-prompt {
+    padding: 2rem;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.prompt-icon {
+    color: #667eea;
+    margin-bottom: 1rem;
+}
+
+.passkey-prompt h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.125rem;
+}
+
+.passkey-prompt p {
+    color: #6c757d;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.spinner {
+    margin-top: 1.5rem;
+}
+
+.spinner-border {
+    width: 2rem;
+    height: 2rem;
+    border-width: 0.2rem;
+}
+
+@@keyframes spinner-border {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.spinner-border {
+    display: inline-block;
+    border: 0.2rem solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spinner-border 0.75s linear infinite;
+}
+</style>

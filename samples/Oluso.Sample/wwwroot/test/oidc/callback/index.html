@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OIDC Callback - Processing...</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            color: #fff;
+        }
+        .container {
+            background: rgba(255,255,255,0.98);
+            border-radius: 16px;
+            padding: 2.5rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+            color: #1a1a2e;
+        }
+        h2 { margin-top: 0; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 1rem; border-radius: 8px; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; padding: 1rem; border-radius: 8px; }
+        code {
+            display: block;
+            background: #f1f5f9;
+            padding: 0.75rem;
+            border-radius: 6px;
+            word-break: break-all;
+            font-size: 0.875rem;
+            margin: 0.5rem 0;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, #f97316 0%, #c2410c 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 500;
+            margin-top: 1rem;
+        }
+        .btn:hover { opacity: 0.9; }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e5e7eb;
+            border-top-color: #f97316;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading { text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Processing authorization response...</p>
+        </div>
+        <div id="result" style="display: none;"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var urlParams = new URLSearchParams(window.location.search);
+            var code = urlParams.get('code');
+            var state = urlParams.get('state');
+            var error = urlParams.get('error');
+            var errorDesc = urlParams.get('error_description');
+
+            var loading = document.getElementById('loading');
+            var result = document.getElementById('result');
+
+            setTimeout(function() {
+                loading.style.display = 'none';
+                result.style.display = 'block';
+
+                if (error) {
+                    result.innerHTML = '<div class="error">' +
+                        '<h2>Authorization Failed</h2>' +
+                        '<p><strong>Error:</strong> ' + error + '</p>' +
+                        '<p><strong>Description:</strong> ' + (errorDesc || 'Unknown error') + '</p>' +
+                        '</div>' +
+                        '<a href="/test/oidc.html" class="btn">Try Again</a>';
+                    return;
+                }
+
+                if (code) {
+                    // Validate state
+                    var savedState = sessionStorage.getItem('oidc_state');
+                    if (state !== savedState) {
+                        result.innerHTML = '<div class="error">' +
+                            '<h2>State Mismatch</h2>' +
+                            '<p>The state parameter does not match. This could indicate a CSRF attack.</p>' +
+                            '<p><strong>Expected:</strong> ' + (savedState || 'none') + '</p>' +
+                            '<p><strong>Received:</strong> ' + state + '</p>' +
+                            '</div>' +
+                            '<a href="/test/oidc.html" class="btn">Try Again</a>';
+                        return;
+                    }
+
+                    result.innerHTML = '<div class="success">' +
+                        '<h2>Authorization Successful!</h2>' +
+                        '<p><strong>Authorization Code:</strong></p>' +
+                        '<code>' + code + '</code>' +
+                        '<p><strong>State:</strong> ' + state + '</p>' +
+                        '<p style="color: #666; margin-top: 1rem;">Next step: Exchange this code for tokens at the token endpoint.</p>' +
+                        '</div>' +
+                        '<a href="/test/oidc.html" class="btn">Start Over</a>';
+                } else {
+                    result.innerHTML = '<div class="error">' +
+                        '<h2>No Authorization Code</h2>' +
+                        '<p>No authorization code was received in the callback.</p>' +
+                        '</div>' +
+                        '<a href="/test/oidc.html" class="btn">Try Again</a>';
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>

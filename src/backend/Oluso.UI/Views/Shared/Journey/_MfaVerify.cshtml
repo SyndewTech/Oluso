@@ -1,0 +1,57 @@
+@using Oluso.UserJourneys.Steps
+@model MfaVerifyViewModel
+
+<h1 class="title">Two-Factor Authentication</h1>
+<p class="subtitle">
+    @if (Model?.Provider?.ToLower() == "totp" || Model?.Provider?.ToLower() == "authenticator")
+    {
+        <text>Enter the 6-digit code from your authenticator app</text>
+    }
+    else if (Model?.Provider?.ToLower() == "email")
+    {
+        <text>Enter the code we sent to your email</text>
+    }
+    else if (Model?.Provider?.ToLower() == "sms" || Model?.Provider?.ToLower() == "phone")
+    {
+        <text>Enter the code we sent to your phone</text>
+    }
+    else
+    {
+        <text>Enter your verification code</text>
+    }
+</p>
+
+@if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        <span>@Model.ErrorMessage</span>
+    </div>
+}
+
+<form method="post" id="mfaForm">
+    <input type="hidden" name="provider" value="@Model?.Provider" />
+
+    <div class="form-group">
+        <label for="code">Verification Code</label>
+        <input type="text"
+               id="code"
+               name="code"
+               class="form-control code-input"
+               pattern="[0-9]{6}"
+               maxlength="6"
+               placeholder="000000"
+               autocomplete="one-time-code"
+               inputmode="numeric"
+               autofocus
+               required />
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">Verify Code</button>
+</form>
+
+<div class="journey-footer">
+    <p>Having trouble? <a href="?use_recovery=true">Use a recovery code</a></p>
+</div>

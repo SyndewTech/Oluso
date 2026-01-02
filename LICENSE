@@ -1,0 +1,76 @@
+Oluso Community License v1.0
+Copyright (c) 2025-2026 Syndew Technology Ltd. All rights reserved.
+
+TERMS AND CONDITIONS
+
+1. GRANT OF LICENSE
+
+   Subject to the terms of this license, Syndew Technology Ltd ("Licensor")
+   grants you a non-exclusive, worldwide, royalty-free license to use, copy,
+   modify, and distribute this software, provided that:
+
+   a) You include this license and copyright notice in all copies
+   b) You comply with the Commercial Use restrictions below
+
+2. COMMUNITY USE (FREE)
+
+   The core identity server is FREE for:
+
+   - Personal projects and learning
+   - Open source projects
+   - Non-profit organizations
+   - Educational and academic use
+   - Evaluation and testing
+   - Small businesses and startups (see eligibility at https://oluso.io/license)
+
+3. ENTERPRISE ADD-ONS (LICENSED)
+
+   The following features require a separate license:
+
+   - SAML 2.0 (Identity Provider and Service Provider)
+   - SCIM 2.0 (User and group provisioning)
+   - LDAP Server (Legacy application support)
+
+   Enterprise add-on pricing: https://oluso.io/pricing
+
+4. COMMERCIAL LICENSE REQUIRED
+
+   A commercial license is REQUIRED if:
+
+   - Your organization exceeds the community use thresholds (varies by region)
+   - You offer this software as a hosted/managed service to third parties
+   - You want to remove attribution requirements
+
+   To check eligibility or obtain a commercial license:
+   Visit: https://oluso.io/license
+   Contact: license@oluso.io
+
+5. CONTRIBUTIONS
+
+   We welcome community contributions! By submitting a pull request or issue,
+   you agree that your contribution will be licensed under the same terms as
+   this license, and you grant Syndew Technology Ltd the right to use your
+   contribution in both open source and commercial versions.
+
+6. ATTRIBUTION
+
+   If you use this software, you must:
+
+   - Retain all copyright notices
+   - Include a visible attribution to "Powered by Oluso" in your application
+     (this requirement is waived for commercial license holders)
+
+7. NO WARRANTY
+
+   THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.
+
+8. TERMINATION
+
+   This license terminates automatically if you violate any of its terms.
+
+---
+
+Full license terms and FAQs: https://oluso.io/license
+Questions: license@oluso.io

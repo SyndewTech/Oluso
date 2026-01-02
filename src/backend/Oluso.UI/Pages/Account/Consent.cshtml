@@ -1,0 +1,328 @@
+@page "/account/consent"
+@model Oluso.UI.Pages.Account.ConsentModel
+@{
+    ViewData["Title"] = "Authorize Application";
+}
+
+<div class="auth-container">
+    @if (!string.IsNullOrEmpty(Model.UiConfig?.LogoUrl))
+    {
+        <div class="auth-logo">
+            <img src="@Model.UiConfig.LogoUrl" alt="Logo" />
+        </div>
+    }
+
+    <div class="consent-card">
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Model.ErrorMessage</span>
+            </div>
+        }
+        else
+        {
+            <div class="consent-header">
+                @if (!string.IsNullOrEmpty(Model.ClientLogoUrl))
+                {
+                    <img src="@Model.ClientLogoUrl" alt="@Model.ClientName" class="client-logo" />
+                }
+                <h1 class="consent-title">@Model.ClientName</h1>
+                <p class="consent-subtitle">wants to access your account</p>
+            </div>
+
+            <form method="post" id="consentForm">
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+
+                @if (Model.RequestedScopes?.Any() == true)
+                {
+                    <div class="scopes-section">
+                        <h2 class="scopes-title">This will allow the application to:</h2>
+                        <ul class="scopes-list">
+                            @foreach (var scope in Model.RequestedScopes)
+                            {
+                                <li class="scope-item">
+                                    <div class="scope-checkbox">
+                                        <input type="checkbox"
+                                               id="scope_@scope.Name"
+                                               name="grantedScopes"
+                                               value="@scope.Name"
+                                               class="scope-input"
+                                               @(scope.Required ? "checked disabled" : (scope.Checked ? "checked" : ""))
+                                               @(scope.Required ? "readonly" : "") />
+                                        @if (scope.Required)
+                                        {
+                                            <input type="hidden" name="grantedScopes" value="@scope.Name" />
+                                        }
+                                    </div>
+                                    <div class="scope-details">
+                                        <label for="scope_@scope.Name" class="scope-name">@scope.DisplayName</label>
+                                        @if (!string.IsNullOrEmpty(scope.Description))
+                                        {
+                                            <p class="scope-description">@scope.Description</p>
+                                        }
+                                        @if (scope.Required)
+                                        {
+                                            <span class="scope-required">Required</span>
+                                        }
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+
+                @if (Model.ShowRememberConsent)
+                {
+                    <div class="remember-consent">
+                        <input type="checkbox"
+                               id="rememberConsent"
+                               name="rememberConsent"
+                               value="true"
+                               checked
+                               class="form-check-input" />
+                        <label for="rememberConsent" class="form-check-label">
+                            Remember my decision
+                        </label>
+                    </div>
+                }
+
+                <div class="consent-actions">
+                    <button type="submit" name="button" value="deny" class="btn btn-outline btn-deny">
+                        Deny
+                    </button>
+                    <button type="submit" name="button" value="allow" class="btn btn-primary btn-allow">
+                        Allow Access
+                    </button>
+                </div>
+            </form>
+
+            <div class="consent-footer">
+                <p>
+                    Signed in as <strong>@Model.UserEmail</strong>.
+                    <a href="/account/logout?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Not you?</a>
+                </p>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+.auth-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: linear-gradient(135deg, var(--background-start, #667eea) 0%, var(--background-end, #764ba2) 100%);
+}
+
+.auth-logo {
+    margin-bottom: 2rem;
+}
+
+.auth-logo img {
+    max-height: 60px;
+    width: auto;
+}
+
+.consent-card {
+    background: white;
+    border-radius: 12px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 500px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+}
+
+.consent-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.client-logo {
+    width: 64px;
+    height: 64px;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    object-fit: contain;
+}
+
+.consent-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #1a1a2e;
+}
+
+.consent-subtitle {
+    color: #6c757d;
+    margin: 0;
+}
+
+.scopes-section {
+    margin-bottom: 1.5rem;
+}
+
+.scopes-title {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 1rem;
+}
+
+.scopes-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.scope-item {
+    display: flex;
+    padding: 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+.scope-item:last-child {
+    border-bottom: none;
+}
+
+.scope-checkbox {
+    padding-top: 0.125rem;
+}
+
+.scope-input {
+    width: 1.25rem;
+    height: 1.25rem;
+    accent-color: var(--primary-color, #667eea);
+}
+
+.scope-details {
+    flex: 1;
+}
+
+.scope-name {
+    font-weight: 500;
+    color: #1a1a2e;
+    display: block;
+    cursor: pointer;
+}
+
+.scope-description {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin: 0.25rem 0 0 0;
+}
+
+.scope-required {
+    display: inline-block;
+    font-size: 0.75rem;
+    color: #6c757d;
+    background: #f3f4f6;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    margin-top: 0.25rem;
+}
+
+.remember-consent {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.75rem;
+    background: #f9fafb;
+    border-radius: 8px;
+}
+
+.form-check-input {
+    width: 1.125rem;
+    height: 1.125rem;
+    accent-color: var(--primary-color, #667eea);
+}
+
+.consent-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.875rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    border: none;
+}
+
+.btn-primary {
+    background-color: var(--primary-color, #667eea);
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-hover, #5a67d8);
+}
+
+.btn-outline {
+    background: white;
+    border: 1px solid #d1d5db;
+    color: #374151;
+}
+
+.btn-outline:hover {
+    background: #f9fafb;
+    border-color: #9ca3af;
+}
+
+.consent-footer {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e5e7eb;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.consent-footer a {
+    color: var(--primary-color, #667eea);
+    text-decoration: none;
+}
+
+.consent-footer a:hover {
+    text-decoration: underline;
+}
+
+.alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.alert-danger {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.alert-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+</style>

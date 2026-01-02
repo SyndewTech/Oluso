@@ -1,0 +1,16 @@
+{
+  "name": "oluso-ui",
+  "private": true,
+  "workspaces": [
+    "AdminUI",
+    "AccountUI",
+    "ui-core",
+    "libs/fido2-ui",
+    "libs/saml-ui",
+    "libs/scim-ui",
+    "libs/ldap-ui",
+    "libs/telemetry-ui",
+    "shells/admin-standalone",
+    "shells/account-standalone"
+  ]
+}
