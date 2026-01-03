@@ -1,10 +1,14 @@
 #!/bin/bash
 # Oluso EF Core Migration Helper
 # Usage: ./scripts/migrations.sh <command> [context] <provider> [migration-name]
+#
+# Uses provider-specific DbContext types per Microsoft's recommended approach:
+# https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/providers
 
 set -e
 
 # Get context configuration (public contexts only)
+# Returns: project|startup|base-context-name
 get_context_config() {
     local ctx="$1"
     local ctx_lower=$(echo "$ctx" | tr '[:upper:]' '[:lower:]')
@@ -55,6 +59,14 @@ get_provider() {
     esac
 }
 
+# Get the provider-specific context name
+# e.g., OlusoDbContext + Sqlite = OlusoDbContextSqlite
+get_provider_context() {
+    local base_ctx="$1"
+    local provider="$2"
+    echo "${base_ctx}${provider}"
+}
+
 get_output_dir() {
     local prov="$1"
     case "$prov" in
@@ -100,7 +112,7 @@ if [ -z "$config" ]; then
     exit 1
 fi
 
-IFS='|' read -r PROJECT STARTUP CONTEXT <<< "$config"
+IFS='|' read -r PROJECT STARTUP BASE_CONTEXT <<< "$config"
 
 if [ -z "$provider" ] && [ "$command" != "help" ]; then
     provider="Sqlite"
@@ -112,6 +124,8 @@ if [ -n "$provider" ] && [ -z "$(get_provider "$provider")" ]; then
     exit 1
 fi
 
+# Get provider-specific context name (e.g., OlusoDbContextSqlite)
+CONTEXT=$(get_provider_context "$BASE_CONTEXT" "$provider")
 output_dir=$(get_output_dir "$provider")
 
 case "$command" in
@@ -121,13 +135,15 @@ case "$command" in
             echo "       $0 add <provider> <migration-name>  (uses oluso context)"
             exit 1
         fi
+
         echo "[$context_name] Adding migration '$migration_name' for $provider..."
+        echo "  Context: $CONTEXT"
+        echo "  Output:  $output_dir"
         dotnet ef migrations add "$migration_name" \
             --context "$CONTEXT" \
             --project "$PROJECT" \
             --startup-project "$STARTUP" \
-            --output-dir "$output_dir" \
-            -- --provider "$provider"
+            --output-dir "$output_dir"
         ;;
 
     remove)
@@ -135,8 +151,7 @@ case "$command" in
         dotnet ef migrations remove \
             --context "$CONTEXT" \
             --project "$PROJECT" \
-            --startup-project "$STARTUP" \
-            -- --provider "$provider"
+            --startup-project "$STARTUP"
         ;;
 
     list)
@@ -144,8 +159,7 @@ case "$command" in
         dotnet ef migrations list \
             --context "$CONTEXT" \
             --project "$PROJECT" \
-            --startup-project "$STARTUP" \
-            -- --provider "$provider"
+            --startup-project "$STARTUP"
         ;;
 
     script)
@@ -155,8 +169,7 @@ case "$command" in
             --context "$CONTEXT" \
             --project "$PROJECT" \
             --startup-project "$STARTUP" \
-            --output "$output_file" \
-            -- --provider "$provider"
+            --output "$output_file"
         ;;
 
     add-all)
@@ -167,13 +180,13 @@ case "$command" in
         echo "[$context_name] Adding migration '$migration_name' for all providers..."
         for p in Sqlite SqlServer Postgres; do
             echo "--- $p ---"
+            ctx=$(get_provider_context "$BASE_CONTEXT" "$p")
             dir=$(get_output_dir "$p")
             dotnet ef migrations add "$migration_name" \
-                --context "$CONTEXT" \
+                --context "$ctx" \
                 --project "$PROJECT" \
                 --startup-project "$STARTUP" \
-                --output-dir "$dir" \
-                -- --provider "$p"
+                --output-dir "$dir"
         done
         ;;
 
@@ -196,19 +209,24 @@ case "$command" in
         echo "Adding migration '$migration_name' for all public contexts ($prov)..."
         for ctx in oluso scim ldap saml; do
             cfg=$(get_context_config "$ctx")
-            IFS='|' read -r proj start ctxname <<< "$cfg"
-            echo "--- $ctx ($ctxname) ---"
+            IFS='|' read -r proj start base_ctx <<< "$cfg"
+            provider_ctx=$(get_provider_context "$base_ctx" "$prov")
+            dir=$(get_output_dir "$prov")
+            echo "--- $ctx ($provider_ctx) ---"
             dotnet ef migrations add "$migration_name" \
-                --context "$ctxname" \
+                --context "$provider_ctx" \
                 --project "$proj" \
                 --startup-project "$start" \
-                --output-dir "Migrations/$prov" \
-                -- --provider "$prov" || echo "Skipped $ctx (may not exist)"
+                --output-dir "$dir" || { echo "Skipped $ctx (may not exist)"; continue; }
         done
         ;;
 
     help|*)
         echo "Oluso Migration Helper (Public Contexts)"
+        echo ""
+        echo "Uses provider-specific DbContext types (Microsoft recommended approach):"
+        echo "  - OlusoDbContextSqlite, OlusoDbContextSqlServer, OlusoDbContextPostgres"
+        echo "  - Each provider has its own migrations folder and snapshot"
         echo ""
         echo "Usage: $0 <command> [context] [provider] [migration-name]"
         echo ""
@@ -224,13 +242,12 @@ case "$command" in
         echo "Providers: Sqlite (default), SqlServer, Postgres"
         echo ""
         echo "Examples:"
-        echo "  $0 add Sqlite AddUserFields              # OlusoDbContext"
-        echo "  $0 add scim Sqlite Initial               # ScimDbContext"
-        echo "  $0 add ldap Sqlite Initial               # LdapDbContext"
-        echo "  $0 add saml SqlServer Initial            # SamlDbContext"
-        echo "  $0 add-all oluso AddNewFeature           # All providers for OlusoDbContext"
-        echo "  $0 add-all-contexts SqlServer Initial    # All contexts for SqlServer"
-        echo "  $0 list scim Sqlite                      # List SCIM migrations"
+        echo "  $0 add Sqlite Initial              # OlusoDbContextSqlite -> Migrations/Sqlite"
+        echo "  $0 add SqlServer Initial           # OlusoDbContextSqlServer -> Migrations/SqlServer"
+        echo "  $0 add scim Sqlite Initial         # ScimDbContextSqlite -> Migrations/Sqlite"
+        echo "  $0 add-all oluso Initial           # All providers for OlusoDbContext"
+        echo "  $0 add-all-contexts Sqlite Initial # All contexts with SQLite"
+        echo "  $0 list scim Sqlite                # List SCIM Sqlite migrations"
         echo ""
         echo "For private contexts (billing, workflows), use:"
         echo "  ./private/scripts/migrations.sh"

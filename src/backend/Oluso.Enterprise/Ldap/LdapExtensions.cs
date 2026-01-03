@@ -147,125 +147,87 @@ public static class LdapExtensions
         builder.Services.AddSingleton<ILdapServer, LdapServer>();
         builder.Services.AddHostedService<LdapServerHostedService>();
 
-        // Note: ILdapServiceAccountStore is registered by AddLdapDbContext/AddLdapSqlite
-        // which should be called alongside AddLdapServer
-
         return builder;
     }
 
     /// <summary>
-    /// Add LDAP DbContext using the same connection as the host application.
-    /// Uses a separate migrations history table.
-    /// </summary>
-    /// <typeparam name="THostContext">The host application's DbContext type</typeparam>
-    /// <param name="services">Service collection</param>
-    public static IServiceCollection AddLdapDbContext<THostContext>(this IServiceCollection services)
-        where THostContext : DbContext
-    {
-        var migrationsTable = PluginDbContextExtensions.GetMigrationsTableName(LdapDbContext.PluginIdentifier);
-
-        services.AddDbContext<LdapDbContext>((serviceProvider, options) =>
-        {
-            // Get the host context's connection
-            var hostContext = serviceProvider.GetRequiredService<THostContext>();
-            var connection = hostContext.Database.GetDbConnection();
-
-            // Use the same connection with separate migrations table
-            // Detect provider and configure appropriately
-            var providerName = hostContext.Database.ProviderName ?? "";
-
-            if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-            {
-                options.UseSqlServer(connection, sql =>
-                    sql.MigrationsHistoryTable(migrationsTable));
-            }
-            else if (providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) ||
-                     providerName.Contains("PostgreSQL", StringComparison.OrdinalIgnoreCase))
-            {
-                var pgTable = PluginDbContextExtensions.GetMigrationsTableNamePostgres(LdapDbContext.PluginIdentifier);
-                options.UseNpgsql(connection, npg =>
-                    npg.MigrationsHistoryTable(pgTable));
-            }
-            else if (providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-            {
-                options.UseSqlite(connection, sqlite =>
-                    sqlite.MigrationsHistoryTable(migrationsTable));
-            }
-            else
-            {
-                // Fallback - try to use the same options builder pattern
-                throw new InvalidOperationException(
-                    $"Unsupported database provider: {providerName}. " +
-                    "Use AddLdapDbContext with explicit configuration instead.");
-            }
-        });
-
-        // Register for automatic migration discovery
-        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<LdapDbContext>());
-
-        // Register service account store and password hasher for REST API management
-        services.AddScoped<ILdapServiceAccountStore, LdapServiceAccountStore>();
-        services.AddSingleton<IPasswordHasher<LdapServiceAccount>, PasswordHasher<LdapServiceAccount>>();
-
-        return services;
-    }
-
-    /// <summary>
-    /// Add LDAP DbContext with a custom connection string (separate database).
-    /// Uses a separate migrations history table.
-    /// </summary>
-    /// <param name="services">Service collection</param>
-    /// <param name="configureDb">DbContext options configuration</param>
-    public static IServiceCollection AddLdapDbContext(
-        this IServiceCollection services,
-        Action<DbContextOptionsBuilder> configureDb)
-    {
-        services.AddDbContext<LdapDbContext>(configureDb);
-
-        // Register for automatic migration discovery
-        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<LdapDbContext>());
-
-        // Register service account store and password hasher for REST API management
-        services.AddScoped<ILdapServiceAccountStore, LdapServiceAccountStore>();
-        services.AddSingleton<IPasswordHasher<LdapServiceAccount>, PasswordHasher<LdapServiceAccount>>();
-
-        return services;
-    }
-
-    /// <summary>
     /// Add LDAP DbContext with SQLite.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddLdapSqlite(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddLdapDbContext(options =>
+        services.AddDbContext<LdapDbContextSqlite>(options =>
             options.UseSqlite(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(LdapDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<LdapDbContext>(sp => sp.GetRequiredService<LdapDbContextSqlite>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<LdapDbContextSqlite>());
+        services.AddScoped<ILdapServiceAccountStore, LdapServiceAccountStore>();
+        services.AddSingleton<IPasswordHasher<LdapServiceAccount>, PasswordHasher<LdapServiceAccount>>();
+
+        return services;
     }
 
     /// <summary>
     /// Add LDAP DbContext with SQL Server.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddLdapSqlServer(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddLdapDbContext(options =>
+        services.AddDbContext<LdapDbContextSqlServer>(options =>
             options.UseSqlServer(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(LdapDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<LdapDbContext>(sp => sp.GetRequiredService<LdapDbContextSqlServer>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<LdapDbContextSqlServer>());
+        services.AddScoped<ILdapServiceAccountStore, LdapServiceAccountStore>();
+        services.AddSingleton<IPasswordHasher<LdapServiceAccount>, PasswordHasher<LdapServiceAccount>>();
+
+        return services;
     }
 
     /// <summary>
     /// Add LDAP DbContext with PostgreSQL.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddLdapNpgsql(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddLdapDbContext(options =>
+        services.AddDbContext<LdapDbContextPostgres>(options =>
             options.UseNpgsql(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableNamePostgres(LdapDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<LdapDbContext>(sp => sp.GetRequiredService<LdapDbContextPostgres>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<LdapDbContextPostgres>());
+        services.AddScoped<ILdapServiceAccountStore, LdapServiceAccountStore>();
+        services.AddSingleton<IPasswordHasher<LdapServiceAccount>, PasswordHasher<LdapServiceAccount>>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add LDAP DbContext using the specified database provider.
+    /// Convenience method that selects the appropriate provider-specific context.
+    /// </summary>
+    public static IServiceCollection AddLdapForProvider(
+        this IServiceCollection services,
+        string provider,
+        string connectionString)
+    {
+        return provider.ToLowerInvariant() switch
+        {
+            "sqlserver" or "mssql" => services.AddLdapSqlServer(connectionString),
+            "postgresql" or "postgres" or "npgsql" => services.AddLdapNpgsql(connectionString),
+            _ => services.AddLdapSqlite(connectionString)
+        };
     }
 }
 

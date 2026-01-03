@@ -11,9 +11,9 @@ using Oluso.Enterprise.Scim.EntityFramework;
 
 namespace Oluso.Enterprise.Scim.Migrations.SqlServer
 {
-    [DbContext(typeof(ScimDbContext))]
-    [Migration("20260102225743_InitialCreate")]
-    partial class InitialCreate
+    [DbContext(typeof(ScimDbContextSqlServer))]
+    [Migration("20260103103959_Initial")]
+    partial class Initial
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

@@ -2,7 +2,6 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Oluso.Enterprise.Ldap.EntityFramework;
 
@@ -10,12 +9,10 @@ using Oluso.Enterprise.Ldap.EntityFramework;
 
 namespace Oluso.Enterprise.Ldap.Migrations.Sqlite
 {
-    [DbContext(typeof(LdapDbContext))]
-    [Migration("20260101214753_Initial")]
-    partial class Initial
+    [DbContext(typeof(LdapDbContextSqlite))]
+    partial class LdapDbContextSqliteModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
-        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.22");

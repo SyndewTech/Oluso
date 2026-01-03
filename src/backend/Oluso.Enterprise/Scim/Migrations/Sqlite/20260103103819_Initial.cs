@@ -16,7 +16,6 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                 columns: table => new
                 {
                     Id = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
-                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     ScimClientId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     ScimAttribute = table.Column<string>(type: "TEXT", maxLength: 256, nullable: false),
                     InternalProperty = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
@@ -27,7 +26,8 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                     Priority = table.Column<int>(type: "INTEGER", nullable: false),
                     IsEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
+                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false)
                 },
                 constraints: table =>
                 {
@@ -39,7 +39,6 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                 columns: table => new
                 {
                     Id = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
-                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     Name = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
                     Description = table.Column<string>(type: "TEXT", maxLength: 1000, nullable: true),
                     IsEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
@@ -58,7 +57,8 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                     UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     LastActivityAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     SuccessCount = table.Column<long>(type: "INTEGER", nullable: false),
-                    ErrorCount = table.Column<long>(type: "INTEGER", nullable: false)
+                    ErrorCount = table.Column<long>(type: "INTEGER", nullable: false),
+                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false)
                 },
                 constraints: table =>
                 {
@@ -70,7 +70,6 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                 columns: table => new
                 {
                     Id = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
-                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     ScimClientId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     Method = table.Column<string>(type: "TEXT", maxLength: 10, nullable: false),
                     Path = table.Column<string>(type: "TEXT", maxLength: 500, nullable: false),
@@ -84,7 +83,8 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                     ResponseBody = table.Column<string>(type: "TEXT", nullable: true),
                     ClientIp = table.Column<string>(type: "TEXT", maxLength: 50, nullable: true),
                     DurationMs = table.Column<long>(type: "INTEGER", nullable: false),
-                    Timestamp = table.Column<DateTime>(type: "TEXT", nullable: false)
+                    Timestamp = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false)
                 },
                 constraints: table =>
                 {
@@ -96,13 +96,13 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                 columns: table => new
                 {
                     Id = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
-                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     ScimClientId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     ResourceType = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
                     ExternalId = table.Column<string>(type: "TEXT", maxLength: 256, nullable: false),
                     InternalId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
+                    UpdatedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    TenantId = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false)
                 },
                 constraints: table =>
                 {

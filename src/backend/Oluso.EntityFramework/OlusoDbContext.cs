@@ -44,6 +44,14 @@ public class OlusoDbContext : IdentityDbContext<
         EnableWalModeIfSqlite();
     }
 
+    /// <summary>
+    /// Constructor for derived provider-specific contexts (e.g., OlusoDbContextSqlite).
+    /// </summary>
+    protected OlusoDbContext(DbContextOptions options) : base(options)
+    {
+        EnableWalModeIfSqlite();
+    }
+
     public OlusoDbContext(
         DbContextOptions<OlusoDbContext> options,
         ITenantContext tenantContext) : base(options)

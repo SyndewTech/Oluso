@@ -58,6 +58,13 @@ public abstract class PluginDbContextBase<TContext> : DbContext, ITenantFiltered
     {
     }
 
+    /// <summary>
+    /// Constructor for derived provider-specific contexts (e.g., ScimDbContextSqlite).
+    /// </summary>
+    protected PluginDbContextBase(DbContextOptions options) : base(options)
+    {
+    }
+
     protected PluginDbContextBase(
         DbContextOptions<TContext> options,
         ITenantContext tenantContext) : base(options)

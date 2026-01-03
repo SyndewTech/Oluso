@@ -12,36 +12,18 @@ using Oluso.Telemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Get database configuration
+// Set Oluso:Database:Provider to "SqlServer", "PostgreSQL", or "Sqlite" (default)
+var connectionString = builder.Configuration.GetConnectionString("OlusoDb")!;
+var provider = builder.Configuration.GetValue<string>("Oluso:Database:Provider", "Sqlite")!;
+
 // Add Oluso identity server with enterprise add-ons
 var olusoBuilder = builder.Services.AddOluso(builder.Configuration)
     .AddMultiTenancy()
     .AddUserJourneyEngine()
     .AddAdminApi(mvc => mvc.AddOlusoAdmin().AddOlusoAccount()) // Register Admin + Account API controllers
     .AddFileSystemPluginStore(Path.Combine(builder.Environment.ContentRootPath, "plugins")) // WASM plugin storage
-    .AddEntityFrameworkStores(options =>
-    {
-        // Auto-detect database provider from configuration
-        // Set Oluso:Database:Provider to "SqlServer", "PostgreSQL", or "Sqlite" (default)
-        var connectionString = builder.Configuration.GetConnectionString("OlusoDb")!;
-        var provider = builder.Configuration.GetValue<string>("Oluso:Database:Provider", "Sqlite")!;
-
-        switch (provider.ToLowerInvariant())
-        {
-            case "sqlserver":
-            case "mssql":
-                options.UseSqlServer(connectionString);
-                break;
-            case "postgresql":
-            case "postgres":
-            case "npgsql":
-                options.UseNpgsql(connectionString);
-                break;
-            case "sqlite":
-            default:
-                options.UseSqlite(connectionString);
-                break;
-        }
-    })
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
     // Enterprise: FIDO2/WebAuthn Passkey authentication
     // Origins are dynamically validated based on RP ID - any localhost:* origin is accepted
     .AddFido2(fido2 => fido2
@@ -58,11 +40,11 @@ var olusoBuilder = builder.Services.AddOluso(builder.Configuration)
 
 // Enterprise: LDAP Server
 builder.Services.AddLdapServer(builder.Configuration)
-    .AddLdapDbContext<OlusoDbContext>();
+    .AddLdapForProvider(provider, connectionString);
 
 // Enterprise: SAML 2.0 (SP and IdP)
 builder.Services.AddSaml(builder.Configuration)
-    .AddSamlDbContext<OlusoDbContext>();
+    .AddSamlForProvider(provider, connectionString);
 
 // Enterprise: SCIM 2.0 provisioning
 builder.Services.AddScim(options =>
@@ -72,7 +54,7 @@ builder.Services.AddScim(options =>
     options.SoftDeleteUsers = true;
     options.LogRetention = TimeSpan.FromDays(90);
 })
-.AddScimDbContext<OlusoDbContext>();
+.AddScimForProvider(provider, connectionString);
 
 // Webhook dispatching
 builder.Services.AddOlusoWebhooks();
@@ -149,6 +131,13 @@ app.UseScim();
 
 // Health check
 app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }));
+
+// Config URLs endpoint (for frontend dashboards)
+app.MapGet("/api/config/urls", (IConfiguration config) => Results.Ok(new
+{
+    adminUiUrl = config.GetValue<string>("Oluso:Urls:AdminUiUrl", "http://localhost:3100"),
+    accountUiUrl = config.GetValue<string>("Oluso:Urls:AccountUiUrl", "http://localhost:5173")
+}));
 
 // Serve the landing page at root
 app.MapGet("/", () => Results.Redirect("/index.html"));

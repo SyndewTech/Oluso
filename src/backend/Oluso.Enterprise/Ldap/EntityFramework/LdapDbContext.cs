@@ -30,6 +30,13 @@ public class LdapDbContext : PluginDbContextBase<LdapDbContext>
     {
     }
 
+    /// <summary>
+    /// Constructor for derived provider-specific contexts (e.g., LdapDbContextSqlite).
+    /// </summary>
+    protected LdapDbContext(DbContextOptions options) : base(options)
+    {
+    }
+
     public LdapDbContext(
         DbContextOptions<LdapDbContext> options,
         ITenantContext tenantContext) : base(options, tenantContext)

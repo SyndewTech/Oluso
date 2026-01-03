@@ -201,109 +201,77 @@ public static class DependencyInjection
 public static class SamlDbContextExtensions
 {
     /// <summary>
-    /// Add SAML DbContext using the same connection as the host application.
-    /// Uses a separate migrations history table.
-    /// </summary>
-    /// <typeparam name="THostContext">The host application's DbContext type</typeparam>
-    /// <param name="services">Service collection</param>
-    public static IServiceCollection AddSamlDbContext<THostContext>(this IServiceCollection services)
-        where THostContext : DbContext
-    {
-        var migrationsTable = PluginDbContextExtensions.GetMigrationsTableName(SamlDbContext.PluginIdentifier);
-
-        services.AddDbContext<SamlDbContext>((serviceProvider, options) =>
-        {
-            // Get the host context's connection
-            var hostContext = serviceProvider.GetRequiredService<THostContext>();
-            var connection = hostContext.Database.GetDbConnection();
-
-            // Use the same connection with separate migrations table
-            // Detect provider and configure appropriately
-            var providerName = hostContext.Database.ProviderName ?? "";
-
-            if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-            {
-                options.UseSqlServer(connection, sql =>
-                    sql.MigrationsHistoryTable(migrationsTable));
-            }
-            else if (providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) ||
-                     providerName.Contains("PostgreSQL", StringComparison.OrdinalIgnoreCase))
-            {
-                var pgTable = PluginDbContextExtensions.GetMigrationsTableNamePostgres(SamlDbContext.PluginIdentifier);
-                options.UseNpgsql(connection, npg =>
-                    npg.MigrationsHistoryTable(pgTable));
-            }
-            else if (providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-            {
-                options.UseSqlite(connection, sqlite =>
-                    sqlite.MigrationsHistoryTable(migrationsTable));
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"Unsupported database provider: {providerName}. " +
-                    "Use AddSamlDbContext with explicit configuration instead.");
-            }
-        });
-
-        // Register for automatic migration discovery
-        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<SamlDbContext>());
-
-        return services;
-    }
-
-    /// <summary>
-    /// Add SAML DbContext with a custom connection string (separate database).
-    /// Uses a separate migrations history table.
-    /// </summary>
-    /// <param name="services">Service collection</param>
-    /// <param name="configureDb">DbContext options configuration</param>
-    public static IServiceCollection AddSamlDbContext(
-        this IServiceCollection services,
-        Action<DbContextOptionsBuilder> configureDb)
-    {
-        services.AddDbContext<SamlDbContext>(configureDb);
-
-        // Register for automatic migration discovery
-        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<SamlDbContext>());
-
-        return services;
-    }
-
-    /// <summary>
     /// Add SAML DbContext with SQLite.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddSamlSqlite(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddSamlDbContext(options =>
+        services.AddDbContext<SamlDbContextSqlite>(options =>
             options.UseSqlite(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(SamlDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<SamlDbContext>(sp => sp.GetRequiredService<SamlDbContextSqlite>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<SamlDbContextSqlite>());
+
+        return services;
     }
 
     /// <summary>
     /// Add SAML DbContext with SQL Server.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddSamlSqlServer(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddSamlDbContext(options =>
+        services.AddDbContext<SamlDbContextSqlServer>(options =>
             options.UseSqlServer(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(SamlDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<SamlDbContext>(sp => sp.GetRequiredService<SamlDbContextSqlServer>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<SamlDbContextSqlServer>());
+
+        return services;
     }
 
     /// <summary>
     /// Add SAML DbContext with PostgreSQL.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddSamlNpgsql(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddSamlDbContext(options =>
+        services.AddDbContext<SamlDbContextPostgres>(options =>
             options.UseNpgsql(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableNamePostgres(SamlDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<SamlDbContext>(sp => sp.GetRequiredService<SamlDbContextPostgres>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<SamlDbContextPostgres>());
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add SAML DbContext using the specified database provider.
+    /// Convenience method that selects the appropriate provider-specific context.
+    /// </summary>
+    public static IServiceCollection AddSamlForProvider(
+        this IServiceCollection services,
+        string provider,
+        string connectionString)
+    {
+        return provider.ToLowerInvariant() switch
+        {
+            "sqlserver" or "mssql" => services.AddSamlSqlServer(connectionString),
+            "postgresql" or "postgres" or "npgsql" => services.AddSamlNpgsql(connectionString),
+            _ => services.AddSamlSqlite(connectionString)
+        };
     }
 }
 

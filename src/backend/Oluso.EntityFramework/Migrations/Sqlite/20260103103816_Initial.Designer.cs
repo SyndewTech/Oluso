@@ -4,14 +4,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Oluso.EntityFramework;
+using Oluso.EntityFramework.Design;
 
 #nullable disable
 
 namespace Oluso.EntityFramework.Migrations.Sqlite
 {
-    [DbContext(typeof(OlusoDbContext))]
-    [Migration("20260101155957_Initial")]
+    [DbContext(typeof(OlusoDbContextSqlite))]
+    [Migration("20260103103816_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
