@@ -103,21 +103,36 @@ const passkeysPlugin: AccountUIPlugin = {
 ### Minimal Configuration
 
 ```csharp
-builder.Services.AddOluso(options =>
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneysWithDefaults();
+```
+
+Configuration in `appsettings.json`:
+```json
 {
-    options.Issuer = "https://auth.example.com";
-})
-.AddUserJourneysWithDefaults();
+  "Oluso": {
+    "IssuerUri": "https://auth.example.com"
+  }
+}
 ```
 
 ### With Entity Framework
 
 ```csharp
-builder.Services.AddOluso(options =>
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
+```
+
+### With Custom Options
+
+```csharp
+builder.Services.AddOluso(builder.Configuration, options =>
 {
-    options.Issuer = "https://auth.example.com";
+    options.IssuerUri = "https://auth.example.com";
+    options.AutoMigrate = true;
 })
-.AddEntityFramework<ApplicationDbContext>()
+.AddEntityFrameworkStores<ApplicationDbContext>()
 .AddUserJourneysWithDefaults();
 ```
 
@@ -130,28 +145,56 @@ The User Journey Engine provides a flexible, policy-driven authentication flow s
 ### Enable with All Built-in Steps
 
 ```csharp
-builder.Services.AddOluso()
+builder.Services.AddOluso(builder.Configuration)
     .AddUserJourneysWithDefaults();
 ```
 
 This registers all built-in step handlers:
+
+**UI Steps:**
 - `local_login` - Username/password authentication
+- `composite_login` - Combined local and external login
 - `signup` - User registration
 - `mfa` - Multi-factor authentication
 - `consent` - OAuth scope consent
 - `password_reset` - Forgot password flow
+- `password_change` - In-journey password change
 - `external_login` - Social/external identity providers
+- `passwordless_email` - Email OTP/magic links
+- `passwordless_sms` - SMS OTP
+- `link_account` - Account linking
+- `terms_acceptance` - Terms acceptance step
+- `dynamic_form` - Custom form collection
+- `claims_collection` - Claims gathering
+- `captcha` - CAPTCHA verification
+
+**Logic Steps (no UI):**
+- `condition` - Conditional flow control
+- `branch` - Branching logic
+- `transform` - Data transformation
+- `api_call` - External API calls
+- `webhook` - Webhook notifications
+- `create_user` - User creation
+- `update_user` - User profile update
 
 ### Selective Step Registration
 
 ```csharp
-builder.Services.AddOluso()
+builder.Services.AddOluso(builder.Configuration)
     .AddUserJourneys(journeys =>
     {
+        // Add only UI steps you need
         journeys.AddLocalLogin();
         journeys.AddSignUp();
         journeys.AddMfa();
-        // Only add what you need
+        journeys.AddPasswordReset();
+        journeys.AddExternalLogin();
+
+        // Or add all built-in steps at once
+        // journeys.AddBuiltInSteps();
+
+        // Or add all including logic steps
+        // journeys.AddAllBuiltInSteps();
     });
 ```
 
@@ -1572,6 +1615,104 @@ The FIDO2 module exposes REST endpoints for credential management:
 
 ---
 
+### SAML IdP (Oluso.Enterprise.Saml)
+
+Add SAML 2.0 Identity Provider support for enterprise SSO:
+
+```csharp
+builder.Services.AddSaml(builder.Configuration);
+
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
+```
+
+**Configuration (appsettings.json):**
+```json
+{
+  "Saml": {
+    "EntityId": "https://auth.example.com/saml",
+    "SigningCertificatePath": "certs/saml-signing.pfx",
+    "SigningCertificatePassword": "your-password"
+  }
+}
+```
+
+**API Endpoints:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /saml/metadata` | SAML metadata document |
+| `POST /saml/sso` | Single Sign-On endpoint |
+| `GET /saml/slo` | Single Logout endpoint |
+| `GET /api/admin/saml/service-providers` | List configured SPs |
+| `POST /api/admin/saml/service-providers` | Create SP configuration |
+| `PUT /api/admin/saml/service-providers/{id}` | Update SP configuration |
+| `DELETE /api/admin/saml/service-providers/{id}` | Delete SP configuration |
+
+---
+
+### SCIM Provisioning (Oluso.Enterprise.Scim)
+
+Add SCIM 2.0 user provisioning for automated user management:
+
+```csharp
+builder.Services.AddScim();
+builder.Services.AddScimDbContext<ApplicationDbContext>();
+
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
+
+// In middleware pipeline
+app.UseScim();
+```
+
+**API Endpoints:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /scim/v2/Users` | List users |
+| `POST /scim/v2/Users` | Create user |
+| `GET /scim/v2/Users/{id}` | Get user |
+| `PUT /scim/v2/Users/{id}` | Replace user |
+| `PATCH /scim/v2/Users/{id}` | Update user |
+| `DELETE /scim/v2/Users/{id}` | Delete user |
+| `GET /scim/v2/Groups` | List groups |
+| `POST /scim/v2/Groups` | Create group |
+| `GET /scim/v2/ServiceProviderConfig` | SCIM service config |
+| `GET /scim/v2/Schemas` | SCIM schemas |
+
+---
+
+### LDAP Authentication (Oluso.Enterprise.Ldap)
+
+Add LDAP directory authentication:
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddLdap(ldap => ldap
+        .WithServer("ldap.example.com", 389)
+        .WithBaseDn("dc=example,dc=com")
+        .WithBindCredentials("cn=admin,dc=example,dc=com", "password")
+        .WithUserSearchFilter("(uid={0})")
+        .WithGroupSearchFilter("(memberUid={0})"))
+    .AddUserJourneysWithDefaults();
+```
+
+**Or with LDAP server (acting as an LDAP IdP):**
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddLdapServer(server => server
+        .WithPort(389)
+        .WithBaseDn("dc=example,dc=com")
+        .EnableAnonymousBind(false));
+```
+
+---
+
 ## Complete Example
 
 These examples show complete `Program.cs` configurations for common scenarios. Copy the appropriate example as a starting point for your application.
@@ -1595,7 +1736,7 @@ builder.Services.AddStackExchangeRedisCache(options =>
 
 // Add Oluso with static external providers
 builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFramework<ApplicationDbContext>()
+    .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddUserJourneys(journeys =>
     {
         journeys.AddBuiltInSteps();
@@ -1646,7 +1787,7 @@ builder.Services.AddStackExchangeRedisCache(options =>
 
 // Add Oluso with multi-tenancy and dynamic external providers
 builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFramework<ApplicationDbContext>()
+    .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddMultiTenancy(options =>
     {
         // Resolve tenant from subdomain (e.g., acme.yourapp.com -> tenant "acme")
@@ -1690,7 +1831,7 @@ Store sensitive credentials in environment variables, Azure Key Vault, or a secr
     "Redis": "localhost:6379"
   },
   "Oluso": {
-    "Issuer": "https://auth.example.com"
+    "IssuerUri": "https://auth.example.com"
   },
   "Auth": {
     "Google": {
@@ -1733,14 +1874,21 @@ Oluso provides a unified event system for monitoring authentication flows, integ
 
 ### Enable Events
 
+Events are registered on `IServiceCollection`:
+
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddEvents(events =>
-    {
-        events.AddLoggerSink();        // Logs to ILogger
-        events.AddAuditLogSink();      // Persists to database
-        events.AddWebhookSink();       // Dispatches to webhook endpoints
-    });
+// Add the event system
+builder.Services.AddOlusoEvents();
+
+// Add event sinks
+builder.Services.AddLoggerEventSink();           // Logs to ILogger
+builder.Services.AddEventSink<AuditEventSink>(); // Persists to database
+builder.Services.AddWebhookEventSink();          // Dispatches to webhook endpoints
+
+// Then add Oluso
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
 ```
 
 ### Event Categories
@@ -1811,11 +1959,7 @@ public class SlackNotificationSink : IOlusoEventSink
 }
 
 // Register
-builder.Services.AddOluso(configuration)
-    .AddEvents(events =>
-    {
-        events.AddEventSink<SlackNotificationSink>();
-    });
+builder.Services.AddEventSink<SlackNotificationSink>();
 ```
 
 ---
@@ -1826,10 +1970,17 @@ Webhooks allow external systems to receive real-time notifications when events o
 
 ### Enable Webhooks
 
+Webhooks are registered on `IServiceCollection`:
+
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddOlusoWebhooks()
-    .AddCoreWebhookEvents();
+// Add webhook support
+builder.Services.AddOlusoWebhooks();
+builder.Services.AddCoreWebhookEvents();
+
+// Then add Oluso
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
 ```
 
 ### Webhook Events
@@ -1941,12 +2092,14 @@ Audit logs provide a compliance-ready record of all security-relevant actions in
 ### Enable Audit Logging
 
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddEntityFramework<ApplicationDbContext>()
-    .AddEvents(events =>
-    {
-        events.AddAuditLogSink();  // Persists events to AuditLogs table
-    });
+// Add event system with audit sink
+builder.Services.AddOlusoEvents();
+builder.Services.AddEventSink<AuditEventSink>();  // Persists events to AuditLogs table
+
+// Then add Oluso with EF stores
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
 ```
 
 ### Audit Log Schema
@@ -2049,12 +2202,20 @@ Oluso includes a flexible licensing system for feature gating. The platform lice
 
 ### Quick Start
 
+Licensing is registered on `IServiceCollection`:
+
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddLicensing(options =>
-    {
-        options.LicenseKey = configuration["Oluso:LicenseKey"];
-    });
+// With a license key
+builder.Services.AddOlusoLicensing(builder.Configuration["Oluso:LicenseKey"]);
+
+// Or for community/development
+builder.Services.AddOlusoCommunityLicense();
+builder.Services.AddOlusoDevelopmentLicense(); // For development only
+
+// Then add Oluso
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneysWithDefaults();
 ```
 
 ### License Tiers

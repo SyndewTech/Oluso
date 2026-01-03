@@ -1,7 +1,8 @@
 import axios from 'axios';
+import { apiBaseUrl as configuredApiBaseUrl } from '../config/oidc';
 
-// API base URL from environment variables
-let apiBaseUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_OIDC_AUTHORITY || '';
+// API base URL from runtime/environment config
+let apiBaseUrl = configuredApiBaseUrl;
 
 export const apiClient = axios.create({
   baseURL: apiBaseUrl,

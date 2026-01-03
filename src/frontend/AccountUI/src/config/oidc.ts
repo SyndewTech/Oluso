@@ -1,6 +1,23 @@
 import { UserManagerSettings, WebStorageStateStore } from 'oidc-client-ts';
 
 /**
+ * Runtime configuration interface
+ */
+interface OlusoRuntimeConfig {
+  serverUrl?: string;
+  apiUrl?: string;
+}
+
+declare global {
+  interface Window {
+    __OLUSO_CONFIG__?: OlusoRuntimeConfig;
+  }
+}
+
+// Get runtime config (set by shell's config.js)
+const runtimeConfig = window.__OLUSO_CONFIG__ ?? {};
+
+/**
  * Configuration options for OIDC
  */
 export interface OidcConfig {
@@ -43,10 +60,16 @@ export function createOidcConfig(options: OidcConfig): UserManagerSettings {
   };
 }
 
+// Resolve server URL: runtime config > env var > localhost fallback
+const serverUrl = runtimeConfig.serverUrl
+  ?? import.meta.env.VITE_OIDC_AUTHORITY
+  ?? import.meta.env.VITE_SERVER_URL
+  ?? 'http://localhost:5050';
+
 // Default OIDC configuration from environment variables
 export const oidcConfig: UserManagerSettings = {
-  authority: import.meta.env.VITE_OIDC_AUTHORITY || 'http://localhost:5050',
-  client_id: import.meta.env.VITE_OIDC_CLIENT_ID || 'test-client',
+  authority: serverUrl,
+  client_id: import.meta.env.VITE_OIDC_CLIENT_ID || 'account-ui',
   redirect_uri: import.meta.env.VITE_OIDC_REDIRECT_URI || `${window.location.origin}/callback`,
   post_logout_redirect_uri: import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI || window.location.origin,
   scope: import.meta.env.VITE_OIDC_SCOPE || 'openid profile email account',
@@ -66,5 +89,7 @@ export const oidcConfig: UserManagerSettings = {
   monitorSession: true,
 };
 
-// API base URL (defaults to OIDC authority)
-export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_OIDC_AUTHORITY || 'http://localhost:5050';
+// API base URL: runtime config > env var > server URL
+export const apiBaseUrl = runtimeConfig.apiUrl
+  ?? import.meta.env.VITE_API_BASE_URL
+  ?? serverUrl;

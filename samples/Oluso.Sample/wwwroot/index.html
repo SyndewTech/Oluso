@@ -360,6 +360,29 @@
         </header>
 
         <div class="grid">
+            <!-- Dashboards -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="icon icon-admin">&#128187;</div>
+                    <h2>Dashboards</h2>
+                </div>
+                <div class="card-body">
+                    <p>Access the Admin and Account management dashboards to configure and manage your identity server.</p>
+                    <ul class="link-list">
+                        <li><a href="" id="adminDashboardLink" target="_blank">
+                            Admin Dashboard
+                            <span class="badge badge-enterprise">Admin</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                        <li><a href="" id="accountDashboardLink" target="_blank">
+                            Account Dashboard
+                            <span class="badge badge-api">User</span>
+                            <span class="arrow">&#8594;</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+
             <!-- OIDC -->
             <div class="card">
                 <div class="card-header">
@@ -453,7 +476,7 @@
                             Try Passkey Login
                             <span class="arrow">&#8594;</span>
                         </a></li>
-                        <li><a href="/account/security">
+                        <li><a href="" id="managePasskeysLink">
                             Manage Passkeys
                             <span class="arrow">&#8594;</span>
                         </a></li>
@@ -488,39 +511,6 @@
                         </a></li>
                         <li><a href="/scim/v2/Groups" target="_blank">
                             Groups Endpoint
-                            <span class="badge badge-api">API</span>
-                            <span class="arrow">&#8594;</span>
-                        </a></li>
-                    </ul>
-                </div>
-            </div>
-
-            <!-- Admin API -->
-            <div class="card">
-                <div class="card-header">
-                    <div class="icon icon-admin">&#9881;</div>
-                    <h2>Admin API</h2>
-                </div>
-                <div class="card-body">
-                    <p>RESTful API for managing users, clients, tenants, and configuration programmatically.</p>
-                    <ul class="link-list">
-                        <li><a href="/api/users" target="_blank">
-                            Users API
-                            <span class="badge badge-api">API</span>
-                            <span class="arrow">&#8594;</span>
-                        </a></li>
-                        <li><a href="/api/clients" target="_blank">
-                            Clients API
-                            <span class="badge badge-api">API</span>
-                            <span class="arrow">&#8594;</span>
-                        </a></li>
-                        <li><a href="/api/tenants" target="_blank">
-                            Tenants API
-                            <span class="badge badge-api">API</span>
-                            <span class="arrow">&#8594;</span>
-                        </a></li>
-                        <li><a href="/api/roles" target="_blank">
-                            Roles API
                             <span class="badge badge-api">API</span>
                             <span class="arrow">&#8594;</span>
                         </a></li>
@@ -593,10 +583,42 @@
         fetch('/test/ldap/config')
             .then(r => r.json())
             .then(config => {
-                document.getElementById('ldapConnection').textContent = 'ldap://' + config.host + ':' + config.port;
+                document.getElementById('ldapConnection').textContent = config.serverUrl || ('ldap://' + config.host + ':' + config.port);
                 document.getElementById('ldapBaseDn').textContent = config.baseDn;
             })
             .catch(() => { /* Use defaults */ });
+
+        // Load dashboard URLs from server config
+        const adminDashboardLink = document.getElementById('adminDashboardLink');
+        const accountDashboardLink = document.getElementById('accountDashboardLink');
+        const managePasskeysLink = document.getElementById('managePasskeysLink');
+
+        fetch('/api/config/urls')
+            .then(r => r.json())
+            .then(config => {
+                const accountUrl = config.accountUiUrl || '/account';
+                if (adminDashboardLink) {
+                    adminDashboardLink.href = config.adminUiUrl || '/admin';
+                }
+                if (accountDashboardLink) {
+                    accountDashboardLink.href = accountUrl;
+                }
+                if (managePasskeysLink) {
+                    managePasskeysLink.href = accountUrl + '/security/passkeys';
+                }
+            })
+            .catch(() => {
+                // Fallback to same-origin paths
+                if (adminDashboardLink) {
+                    adminDashboardLink.href = '/admin';
+                }
+                if (accountDashboardLink) {
+                    accountDashboardLink.href = '/account';
+                }
+                if (managePasskeysLink) {
+                    managePasskeysLink.href = '/account/security/passkeys';
+                }
+            });
     </script>
 </body>
 </html>
