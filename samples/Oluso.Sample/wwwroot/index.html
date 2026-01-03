@@ -589,19 +589,35 @@
             .catch(() => { /* Use defaults */ });
 
         // Load dashboard URLs from server config
+        const adminDashboardLink = document.getElementById('adminDashboardLink');
+        const accountDashboardLink = document.getElementById('accountDashboardLink');
+        const managePasskeysLink = document.getElementById('managePasskeysLink');
+
         fetch('/api/config/urls')
             .then(r => r.json())
             .then(config => {
                 const accountUrl = config.accountUiUrl || '/account';
-                document.getElementById('adminDashboardLink').href = config.adminUiUrl || '/admin';
-                document.getElementById('accountDashboardLink').href = accountUrl;
-                document.getElementById('managePasskeysLink').href = accountUrl + '/security/passkeys';
+                if (adminDashboardLink) {
+                    adminDashboardLink.href = config.adminUiUrl || '/admin';
+                }
+                if (accountDashboardLink) {
+                    accountDashboardLink.href = accountUrl;
+                }
+                if (managePasskeysLink) {
+                    managePasskeysLink.href = accountUrl + '/security/passkeys';
+                }
             })
             .catch(() => {
                 // Fallback to same-origin paths
-                document.getElementById('adminDashboardLink').href = '/admin';
-                document.getElementById('accountDashboardLink').href = '/account';
-                document.getElementById('managePasskeysLink').href = '/account/security/passkeys';
+                if (adminDashboardLink) {
+                    adminDashboardLink.href = '/admin';
+                }
+                if (accountDashboardLink) {
+                    accountDashboardLink.href = '/account';
+                }
+                if (managePasskeysLink) {
+                    managePasskeysLink.href = '/account/security/passkeys';
+                }
             });
     </script>
 </body>
