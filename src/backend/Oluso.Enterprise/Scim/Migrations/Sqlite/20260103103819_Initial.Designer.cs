@@ -10,8 +10,8 @@ using Oluso.Enterprise.Scim.EntityFramework;
 
 namespace Oluso.Enterprise.Scim.Migrations.Sqlite
 {
-    [DbContext(typeof(ScimDbContext))]
-    [Migration("20260101214744_Initial")]
+    [DbContext(typeof(ScimDbContextSqlite))]
+    [Migration("20260103103819_Initial")]
     partial class Initial
     {
         /// <inheritdoc />

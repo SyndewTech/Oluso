@@ -40,116 +40,80 @@ public static class ScimExtensions
     }
 
     /// <summary>
-    /// Add SCIM DbContext using the same connection as the host application.
-    /// Uses a separate migrations history table.
-    /// </summary>
-    /// <typeparam name="THostContext">The host application's DbContext type</typeparam>
-    /// <param name="services">Service collection</param>
-    public static IServiceCollection AddScimDbContext<THostContext>(this IServiceCollection services)
-        where THostContext : DbContext
-    {
-        var migrationsTable = PluginDbContextExtensions.GetMigrationsTableName(ScimDbContext.PluginIdentifier);
-
-        services.AddDbContext<ScimDbContext>((serviceProvider, options) =>
-        {
-            // Get the host context's connection
-            var hostContext = serviceProvider.GetRequiredService<THostContext>();
-            var connection = hostContext.Database.GetDbConnection();
-
-            // Use the same connection with separate migrations table
-            // Detect provider and configure appropriately
-            var providerName = hostContext.Database.ProviderName ?? "";
-
-            if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-            {
-                options.UseSqlServer(connection, sql =>
-                    sql.MigrationsHistoryTable(migrationsTable));
-            }
-            else if (providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) ||
-                     providerName.Contains("PostgreSQL", StringComparison.OrdinalIgnoreCase))
-            {
-                var pgTable = PluginDbContextExtensions.GetMigrationsTableNamePostgres(ScimDbContext.PluginIdentifier);
-                options.UseNpgsql(connection, npg =>
-                    npg.MigrationsHistoryTable(pgTable));
-            }
-            else if (providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-            {
-                options.UseSqlite(connection, sqlite =>
-                    sqlite.MigrationsHistoryTable(migrationsTable));
-            }
-            else
-            {
-                // Fallback - try to use the same options builder pattern
-                throw new InvalidOperationException(
-                    $"Unsupported database provider: {providerName}. " +
-                    "Use AddScimDbContext with explicit configuration instead.");
-            }
-        });
-
-        // Register for automatic migration discovery
-        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<ScimDbContext>());
-
-        // Register for automatic seeding
-        services.AddScoped<ISeedableDbContext>(sp => sp.GetRequiredService<ScimDbContext>());
-
-        return services;
-    }
-
-    /// <summary>
-    /// Add SCIM DbContext with a custom connection string (separate database).
-    /// Uses a separate migrations history table.
-    /// </summary>
-    /// <param name="services">Service collection</param>
-    /// <param name="configureDb">DbContext options configuration</param>
-    public static IServiceCollection AddScimDbContext(
-        this IServiceCollection services,
-        Action<DbContextOptionsBuilder> configureDb)
-    {
-        services.AddDbContext<ScimDbContext>(configureDb);
-
-        // Register for automatic migration discovery
-        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<ScimDbContext>());
-
-        // Register for automatic seeding
-        services.AddScoped<ISeedableDbContext>(sp => sp.GetRequiredService<ScimDbContext>());
-
-        return services;
-    }
-
-    /// <summary>
     /// Add SCIM DbContext with SQLite.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddScimSqlite(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddScimDbContext(options =>
+        services.AddDbContext<ScimDbContextSqlite>(options =>
             options.UseSqlite(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(ScimDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<ScimDbContext>(sp => sp.GetRequiredService<ScimDbContextSqlite>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<ScimDbContextSqlite>());
+        services.AddScoped<ISeedableDbContext>(sp => sp.GetRequiredService<ScimDbContextSqlite>());
+
+        return services;
     }
 
     /// <summary>
     /// Add SCIM DbContext with SQL Server.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddScimSqlServer(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddScimDbContext(options =>
+        services.AddDbContext<ScimDbContextSqlServer>(options =>
             options.UseSqlServer(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(ScimDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<ScimDbContext>(sp => sp.GetRequiredService<ScimDbContextSqlServer>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<ScimDbContextSqlServer>());
+        services.AddScoped<ISeedableDbContext>(sp => sp.GetRequiredService<ScimDbContextSqlServer>());
+
+        return services;
     }
 
     /// <summary>
     /// Add SCIM DbContext with PostgreSQL.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
     /// </summary>
     public static IServiceCollection AddScimNpgsql(
         this IServiceCollection services,
         string connectionString)
     {
-        return services.AddScimDbContext(options =>
+        services.AddDbContext<ScimDbContextPostgres>(options =>
             options.UseNpgsql(connectionString, o =>
                 o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableNamePostgres(ScimDbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<ScimDbContext>(sp => sp.GetRequiredService<ScimDbContextPostgres>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<ScimDbContextPostgres>());
+        services.AddScoped<ISeedableDbContext>(sp => sp.GetRequiredService<ScimDbContextPostgres>());
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add SCIM DbContext using the specified database provider.
+    /// Convenience method that selects the appropriate provider-specific context.
+    /// </summary>
+    public static IServiceCollection AddScimForProvider(
+        this IServiceCollection services,
+        string provider,
+        string connectionString)
+    {
+        return provider.ToLowerInvariant() switch
+        {
+            "sqlserver" or "mssql" => services.AddScimSqlServer(connectionString),
+            "postgresql" or "postgres" or "npgsql" => services.AddScimNpgsql(connectionString),
+            _ => services.AddScimSqlite(connectionString)
+        };
     }
 
     /// <summary>

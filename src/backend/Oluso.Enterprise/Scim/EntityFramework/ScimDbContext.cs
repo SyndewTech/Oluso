@@ -35,6 +35,13 @@ public class ScimDbContext : PluginDbContextBase<ScimDbContext>, ISeedableDbCont
     {
     }
 
+    /// <summary>
+    /// Constructor for derived provider-specific contexts (e.g., ScimDbContextSqlite).
+    /// </summary>
+    protected ScimDbContext(DbContextOptions options) : base(options)
+    {
+    }
+
     public ScimDbContext(
         DbContextOptions<ScimDbContext> options,
         ITenantContext tenantContext) : base(options, tenantContext)

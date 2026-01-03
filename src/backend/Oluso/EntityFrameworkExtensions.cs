@@ -11,6 +11,7 @@ using Oluso.Core.Events;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Oluso.EntityFramework;
+using Oluso.EntityFramework.Design;
 using Oluso.EntityFramework.Events;
 using Oluso.EntityFramework.Services;
 using Oluso.EntityFramework.Stores;
@@ -87,6 +88,14 @@ public static class EntityFrameworkExtensions
     /// Adds Entity Framework stores with the built-in OlusoDbContext.
     /// Use this if you don't have an existing DbContext.
     /// </summary>
+    /// <remarks>
+    /// Note: For migrations to work correctly, use the provider-specific methods instead:
+    /// <list type="bullet">
+    ///   <item><see cref="AddEntityFrameworkStoresSqlite"/></item>
+    ///   <item><see cref="AddEntityFrameworkStoresSqlServer"/></item>
+    ///   <item><see cref="AddEntityFrameworkStoresNpgsql"/></item>
+    /// </list>
+    /// </remarks>
     public static OlusoBuilder AddEntityFrameworkStores(
         this OlusoBuilder builder,
         Action<DbContextOptionsBuilder> configureDbContext)
@@ -129,6 +138,143 @@ public static class EntityFrameworkExtensions
         }
 
         return builder;
+    }
+
+    /// <summary>
+    /// Adds Entity Framework stores with SQLite.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// builder.Services.AddOluso(configuration)
+    ///     .AddEntityFrameworkStoresSqlite("Data Source=oluso.db");
+    /// </code>
+    /// </example>
+    public static OlusoBuilder AddEntityFrameworkStoresSqlite(
+        this OlusoBuilder builder,
+        string connectionString)
+    {
+        builder.Services.AddDbContext<OlusoDbContextSqlite>(options =>
+            options.UseSqlite(connectionString));
+
+        // Register as both the specific type and interfaces
+        builder.Services.AddScoped<OlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextSqlite>());
+        builder.Services.AddScoped<IOlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextSqlite>());
+
+        RegisterStores(builder);
+        RegisterIdentityWithContext<OlusoDbContextSqlite>(builder);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds Entity Framework stores with SQL Server.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// builder.Services.AddOluso(configuration)
+    ///     .AddEntityFrameworkStoresSqlServer("Server=.;Database=Oluso;Trusted_Connection=True");
+    /// </code>
+    /// </example>
+    public static OlusoBuilder AddEntityFrameworkStoresSqlServer(
+        this OlusoBuilder builder,
+        string connectionString)
+    {
+        builder.Services.AddDbContext<OlusoDbContextSqlServer>(options =>
+            options.UseSqlServer(connectionString));
+
+        // Register as both the specific type and interfaces
+        builder.Services.AddScoped<OlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextSqlServer>());
+        builder.Services.AddScoped<IOlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextSqlServer>());
+
+        RegisterStores(builder);
+        RegisterIdentityWithContext<OlusoDbContextSqlServer>(builder);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds Entity Framework stores with PostgreSQL.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// builder.Services.AddOluso(configuration)
+    ///     .AddEntityFrameworkStoresNpgsql("Host=localhost;Database=Oluso;Username=postgres;Password=postgres");
+    /// </code>
+    /// </example>
+    public static OlusoBuilder AddEntityFrameworkStoresNpgsql(
+        this OlusoBuilder builder,
+        string connectionString)
+    {
+        builder.Services.AddDbContext<OlusoDbContextPostgres>(options =>
+            options.UseNpgsql(connectionString));
+
+        // Register as both the specific type and interfaces
+        builder.Services.AddScoped<OlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextPostgres>());
+        builder.Services.AddScoped<IOlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextPostgres>());
+
+        RegisterStores(builder);
+        RegisterIdentityWithContext<OlusoDbContextPostgres>(builder);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds Entity Framework stores using the specified database provider.
+    /// Convenience method that selects the appropriate provider-specific context.
+    /// </summary>
+    /// <param name="builder">The Oluso builder</param>
+    /// <param name="provider">Provider name: "Sqlite", "SqlServer", "PostgreSQL", etc.</param>
+    /// <param name="connectionString">Database connection string</param>
+    /// <example>
+    /// <code>
+    /// var provider = configuration.GetValue&lt;string&gt;("Oluso:Database:Provider", "Sqlite");
+    /// var connectionString = configuration.GetConnectionString("OlusoDb");
+    /// builder.Services.AddOluso(configuration)
+    ///     .AddEntityFrameworkStoresForProvider(provider, connectionString);
+    /// </code>
+    /// </example>
+    public static OlusoBuilder AddEntityFrameworkStoresForProvider(
+        this OlusoBuilder builder,
+        string provider,
+        string connectionString)
+    {
+        return provider.ToLowerInvariant() switch
+        {
+            "sqlserver" or "mssql" => builder.AddEntityFrameworkStoresSqlServer(connectionString),
+            "postgresql" or "postgres" or "npgsql" => builder.AddEntityFrameworkStoresNpgsql(connectionString),
+            _ => builder.AddEntityFrameworkStoresSqlite(connectionString) // Default to SQLite
+        };
+    }
+
+    private static void RegisterIdentityWithContext<TContext>(OlusoBuilder builder)
+        where TContext : OlusoDbContext
+    {
+        if (!builder.Options.SkipIdentityRegistration)
+        {
+            var identityBuilder = builder.Services.AddIdentity<OlusoUser, OlusoRole>(options =>
+            {
+                options.Password.RequiredLength = 1;
+                options.Password.RequireDigit = false;
+                options.Password.RequireLowercase = false;
+                options.Password.RequireUppercase = false;
+                options.Password.RequireNonAlphanumeric = false;
+                options.Password.RequiredUniqueChars = 0;
+                options.User.RequireUniqueEmail = true;
+            })
+            .AddEntityFrameworkStores<TContext>()
+            .AddDefaultTokenProviders()
+            .AddPasswordValidator<TenantPasswordValidator>();
+
+            identityBuilder.AddClaimsPrincipalFactory<OlusoClaimsPrincipalFactory>();
+
+            if (!builder.Options.CustomUserServiceRegistered)
+            {
+                builder.Services.AddScoped<IOlusoUserService, IdentityUserService>();
+            }
+        }
     }
 
     private static void RegisterStores(OlusoBuilder builder)

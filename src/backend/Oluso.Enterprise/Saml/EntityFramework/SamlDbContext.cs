@@ -30,6 +30,13 @@ public class SamlDbContext : PluginDbContextBase<SamlDbContext>
     {
     }
 
+    /// <summary>
+    /// Constructor for derived provider-specific contexts (e.g., SamlDbContextSqlite).
+    /// </summary>
+    protected SamlDbContext(DbContextOptions options) : base(options)
+    {
+    }
+
     public SamlDbContext(
         DbContextOptions<SamlDbContext> options,
         ITenantContext tenantContext) : base(options, tenantContext)
