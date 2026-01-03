@@ -1701,7 +1701,7 @@ builder.Services.AddOluso(builder.Configuration)
     .AddUserJourneysWithDefaults();
 ```
 
-**Or with LDAP Server (act as LDAP IdP):**
+**Or with LDAP server (acting as an LDAP IdP):**
 
 ```csharp
 builder.Services.AddOluso(builder.Configuration)
