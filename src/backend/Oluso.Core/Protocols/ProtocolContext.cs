@@ -121,7 +121,12 @@ public enum EndpointType
     /// <summary>
     /// Custom protocol-specific endpoint
     /// </summary>
-    Custom
+    Custom,
+
+    /// <summary>
+    /// Dynamic client registration endpoint (RFC 7591)
+    /// </summary>
+    Registration,
 }
 
 /// <summary>

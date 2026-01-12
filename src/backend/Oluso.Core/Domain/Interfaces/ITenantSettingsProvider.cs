@@ -120,6 +120,7 @@ public class TenantBrandingSettings
     public static TenantBrandingSettings Default => new();
 }
 
+//Fixme: Expand protocol settings and check it is not duplicate of other settings
 /// <summary>
 /// Protocol settings for a tenant (OIDC discovery document configuration).
 /// Controls what capabilities are advertised and enabled for this tenant.
@@ -212,6 +213,46 @@ public class TenantProtocolSettings
     /// Whether backchannel logout is enabled.
     /// </summary>
     public bool BackchannelLogoutSupported { get; set; } = true;
+
+    // ========================================
+    // Dynamic Client Registration (RFC 7591)
+    // ========================================
+
+    /// <summary>
+    /// Whether Dynamic Client Registration is enabled for this tenant.
+    /// </summary>
+    public bool EnableDynamicClientRegistration { get; set; }
+
+    /// <summary>
+    /// Whether unauthenticated (open) registration is allowed.
+    /// If false, an initial access token is required.
+    /// </summary>
+    public bool AllowOpenDynamicRegistration { get; set; }
+
+    /// <summary>
+    /// Scopes that dynamically registered clients are allowed to request.
+    /// Values must exist in tenant's configured scopes (ApiScope/IdentityResource).
+    /// If empty/null, defaults to openid, profile, email.
+    /// </summary>
+    public List<string>? DynamicRegistrationAllowedScopes { get; set; }
+
+    /// <summary>
+    /// Grant types that dynamically registered clients are allowed to use.
+    /// Values must be a subset of tenant's AllowedGrantTypes.
+    /// If empty/null, defaults to authorization_code and refresh_token.
+    /// </summary>
+    public List<string>? DynamicRegistrationAllowedGrantTypes { get; set; }
+
+    /// <summary>
+    /// Whether PKCE is required for dynamically registered clients.
+    /// Recommended: true for security.
+    /// </summary>
+    public bool DynamicRegistrationRequirePkce { get; set; } = true;
+
+    /// <summary>
+    /// Maximum number of redirect URIs allowed per dynamically registered client.
+    /// </summary>
+    public int DynamicRegistrationMaxRedirectUris { get; set; } = 10;
 
     public static TenantProtocolSettings Default => new();
 }

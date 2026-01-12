@@ -5,6 +5,8 @@ import type {
   CreateTenantRequest,
   UpdateTenantRequest,
   UpdatePasswordPolicyRequest,
+  ProtocolConfiguration,
+  UpdateProtocolConfigurationRequest,
 } from '../types/tenant';
 
 export const tenantService = {
@@ -48,5 +50,23 @@ export const tenantService = {
 
   resetPasswordPolicy: async (tenantId: string): Promise<void> => {
     await api.delete(`/tenants/${tenantId}/password-policy`);
+  },
+
+  // Protocol Configuration
+  getProtocolConfiguration: async (tenantId: string): Promise<ProtocolConfiguration> => {
+    const response = await api.get(`/tenants/${tenantId}/protocol-configuration`);
+    return response.data;
+  },
+
+  updateProtocolConfiguration: async (
+    tenantId: string,
+    data: UpdateProtocolConfigurationRequest
+  ): Promise<ProtocolConfiguration> => {
+    const response = await api.put(`/tenants/${tenantId}/protocol-configuration`, data);
+    return response.data;
+  },
+
+  resetProtocolConfiguration: async (tenantId: string): Promise<void> => {
+    await api.delete(`/tenants/${tenantId}/protocol-configuration`);
   },
 };

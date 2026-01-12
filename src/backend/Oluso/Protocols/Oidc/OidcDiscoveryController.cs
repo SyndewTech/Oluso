@@ -36,6 +36,17 @@ public class OidcDiscoveryController : ControllerBase
 
     [HttpGet]
     public async Task<IActionResult> GetConfiguration(CancellationToken cancellationToken)
+        => await GetDiscoveryDocument(cancellationToken);
+
+    /// <summary>
+    /// RFC 8414 OAuth 2.0 Authorization Server Metadata endpoint.
+    /// Returns the same metadata as the OIDC discovery endpoint.
+    /// </summary>
+    [HttpGet("/.well-known/oauth-authorization-server")]
+    public async Task<IActionResult> GetOAuthAuthorizationServerMetadata(CancellationToken cancellationToken)
+        => await GetDiscoveryDocument(cancellationToken);
+
+    private async Task<IActionResult> GetDiscoveryDocument(CancellationToken cancellationToken)
     {
         var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
         var baseUrl = issuer.TrimEnd('/'); // Use issuer as base URL for consistency
@@ -126,6 +137,12 @@ public class OidcDiscoveryController : ControllerBase
             ["backchannel_authentication_request_signing_alg_values_supported"] = idTokenSigningAlgs,
             ["backchannel_user_code_parameter_supported"] = true
         };
+
+        // Dynamic Client Registration (RFC 7591) - only advertise if enabled
+        if (protocolSettings.EnableDynamicClientRegistration)
+        {
+            discovery["registration_endpoint"] = $"{baseUrl}{_endpointConfig.RegistrationEndpoint}";
+        }
 
         return Ok(discovery);
     }

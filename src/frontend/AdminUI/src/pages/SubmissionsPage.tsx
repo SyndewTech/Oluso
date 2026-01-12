@@ -10,6 +10,7 @@ import {
   JourneySubmission,
   SubmissionStatus
 } from '../services/submissionService';
+import { serverUrl } from '../config';
 import {
   DocumentTextIcon,
   ArrowDownTrayIcon,
@@ -75,10 +76,8 @@ export default function SubmissionsPage() {
   // /journey/start/{policyId} starts a new journey from the policy
   // /journey/{journeyStateId} is for active journey sessions
   const getJourneyUrl = (policyId: string) => {
-    // Derive identity server URL from API URL (remove /api/admin suffix)
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5050/api/admin';
-    const identityServerUrl = apiUrl.replace(/\/api\/admin\/?$/, '');
-    return `${identityServerUrl}/journey/start/${policyId}`;
+    // Use serverUrl from config (set by runtime config or env vars)
+    return `${serverUrl}/journey/start/${policyId}`;
   };
 
   const copyToClipboard = async (text: string) => {

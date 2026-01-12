@@ -62,6 +62,17 @@ public class Client : TenantEntity
     public DateTime? LastAccessed { get; set; }
     public bool NonEditable { get; set; } = false;
 
+    /// <summary>
+    /// Whether this client was created via Dynamic Client Registration (RFC 7591).
+    /// </summary>
+    public bool IsDynamicallyRegistered { get; set; }
+
+    /// <summary>
+    /// Hashed registration access token for DCR client management (RFC 7591).
+    /// Used to authenticate GET/PUT/DELETE requests to /connect/register/{clientId}.
+    /// </summary>
+    public string? RegistrationAccessTokenHash { get; set; }
+
     // DPoP settings
     public bool RequireDPoP { get; set; } = false;
 

@@ -79,6 +79,11 @@ public class OidcEndpointConfiguration : ProtocolEndpointConfiguration
     public string JwksEndpoint { get; set; } = "/.well-known/jwks";
 
     /// <summary>
+    /// Dynamic Client Registration endpoint path (RFC 7591)
+    /// </summary>
+    public string RegistrationEndpoint { get; set; } = "/connect/register";
+
+    /// <summary>
     /// Enable Pushed Authorization Requests (RFC 9126)
     /// </summary>
     public bool EnablePar { get; set; } = true;

@@ -192,7 +192,14 @@ public class DefaultTenantSettingsProvider : ITenantSettingsProvider
                 RequestParameterSupported = protocol.RequestParameterSupported,
                 RequestUriParameterSupported = protocol.RequestUriParameterSupported,
                 FrontchannelLogoutSupported = protocol.FrontchannelLogoutSupported,
-                BackchannelLogoutSupported = protocol.BackchannelLogoutSupported
+                BackchannelLogoutSupported = protocol.BackchannelLogoutSupported,
+                // Dynamic Client Registration (RFC 7591)
+                EnableDynamicClientRegistration = protocol.EnableDynamicClientRegistration,
+                AllowOpenDynamicRegistration = protocol.AllowOpenDynamicRegistration,
+                DynamicRegistrationAllowedScopes = ParseJsonArray(protocol.DynamicRegistrationAllowedScopesJson),
+                DynamicRegistrationAllowedGrantTypes = ParseJsonArray(protocol.DynamicRegistrationAllowedGrantTypesJson),
+                DynamicRegistrationRequirePkce = protocol.DynamicRegistrationRequirePkce,
+                DynamicRegistrationMaxRedirectUris = protocol.DynamicRegistrationMaxRedirectUris
             };
         }
 

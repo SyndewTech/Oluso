@@ -236,6 +236,20 @@ public class TenantsController : AdminBaseController
         if (request.BackchannelLogoutSupported.HasValue)
             config.BackchannelLogoutSupported = request.BackchannelLogoutSupported.Value;
 
+        // Dynamic Client Registration (RFC 7591)
+        if (request.EnableDynamicClientRegistration.HasValue)
+            config.EnableDynamicClientRegistration = request.EnableDynamicClientRegistration.Value;
+        if (request.AllowOpenDynamicRegistration.HasValue)
+            config.AllowOpenDynamicRegistration = request.AllowOpenDynamicRegistration.Value;
+        if (request.DynamicRegistrationAllowedScopes != null)
+            config.DynamicRegistrationAllowedScopesJson = SerializeJsonArray(request.DynamicRegistrationAllowedScopes);
+        if (request.DynamicRegistrationAllowedGrantTypes != null)
+            config.DynamicRegistrationAllowedGrantTypesJson = SerializeJsonArray(request.DynamicRegistrationAllowedGrantTypes);
+        if (request.DynamicRegistrationRequirePkce.HasValue)
+            config.DynamicRegistrationRequirePkce = request.DynamicRegistrationRequirePkce.Value;
+        if (request.DynamicRegistrationMaxRedirectUris.HasValue)
+            config.DynamicRegistrationMaxRedirectUris = request.DynamicRegistrationMaxRedirectUris.Value;
+
         config.Updated = DateTime.UtcNow;
         tenant.Updated = DateTime.UtcNow;
 
@@ -306,6 +320,13 @@ public class TenantsController : AdminBaseController
             RequestUriParameterSupported = config.RequestUriParameterSupported,
             FrontchannelLogoutSupported = config.FrontchannelLogoutSupported,
             BackchannelLogoutSupported = config.BackchannelLogoutSupported,
+            // Dynamic Client Registration (RFC 7591)
+            EnableDynamicClientRegistration = config.EnableDynamicClientRegistration,
+            AllowOpenDynamicRegistration = config.AllowOpenDynamicRegistration,
+            DynamicRegistrationAllowedScopes = DeserializeJsonArray(config.DynamicRegistrationAllowedScopesJson),
+            DynamicRegistrationAllowedGrantTypes = DeserializeJsonArray(config.DynamicRegistrationAllowedGrantTypesJson),
+            DynamicRegistrationRequirePkce = config.DynamicRegistrationRequirePkce,
+            DynamicRegistrationMaxRedirectUris = config.DynamicRegistrationMaxRedirectUris,
             Created = config.Created,
             Updated = config.Updated
         };
@@ -381,6 +402,15 @@ public class TenantProtocolConfigurationDto
     public bool RequestUriParameterSupported { get; set; } = true;
     public bool FrontchannelLogoutSupported { get; set; } = true;
     public bool BackchannelLogoutSupported { get; set; } = true;
+
+    // Dynamic Client Registration (RFC 7591)
+    public bool EnableDynamicClientRegistration { get; set; }
+    public bool AllowOpenDynamicRegistration { get; set; }
+    public List<string>? DynamicRegistrationAllowedScopes { get; set; }
+    public List<string>? DynamicRegistrationAllowedGrantTypes { get; set; }
+    public bool DynamicRegistrationRequirePkce { get; set; } = true;
+    public int DynamicRegistrationMaxRedirectUris { get; set; } = 10;
+
     public DateTime Created { get; set; }
     public DateTime? Updated { get; set; }
 }
@@ -403,6 +433,14 @@ public class UpdateTenantProtocolConfigurationRequest
     public bool? RequestUriParameterSupported { get; set; }
     public bool? FrontchannelLogoutSupported { get; set; }
     public bool? BackchannelLogoutSupported { get; set; }
+
+    // Dynamic Client Registration (RFC 7591)
+    public bool? EnableDynamicClientRegistration { get; set; }
+    public bool? AllowOpenDynamicRegistration { get; set; }
+    public List<string>? DynamicRegistrationAllowedScopes { get; set; }
+    public List<string>? DynamicRegistrationAllowedGrantTypes { get; set; }
+    public bool? DynamicRegistrationRequirePkce { get; set; }
+    public int? DynamicRegistrationMaxRedirectUris { get; set; }
 }
 
 

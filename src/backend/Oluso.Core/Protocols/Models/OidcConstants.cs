@@ -33,6 +33,11 @@ public static class OidcConstants
         public const string Address = "address";
         public const string Phone = "phone";
         public const string OfflineAccess = "offline_access";
+
+        /// <summary>
+        /// Scope required for Dynamic Client Registration (RFC 7591)
+        /// </summary>
+        public const string ClientRegistration = "oluso:client:register";
     }
 
     public static class TokenTypes

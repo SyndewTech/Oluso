@@ -297,6 +297,46 @@ public class TenantProtocolConfiguration
     /// </summary>
     public bool BackchannelLogoutSupported { get; set; } = true;
 
+    // ========================================
+    // Dynamic Client Registration (RFC 7591)
+    // ========================================
+
+    /// <summary>
+    /// Whether Dynamic Client Registration is enabled for this tenant.
+    /// </summary>
+    public bool EnableDynamicClientRegistration { get; set; }
+
+    /// <summary>
+    /// Whether unauthenticated (open) registration is allowed.
+    /// If false, an initial access token is required.
+    /// </summary>
+    public bool AllowOpenDynamicRegistration { get; set; }
+
+    /// <summary>
+    /// Scopes that dynamically registered clients are allowed to request (JSON array).
+    /// Values must exist in tenant's configured scopes.
+    /// If empty/null, defaults to openid, profile, email.
+    /// </summary>
+    public string? DynamicRegistrationAllowedScopesJson { get; set; }
+
+    /// <summary>
+    /// Grant types that dynamically registered clients are allowed to use (JSON array).
+    /// Values must be a subset of tenant's AllowedGrantTypes.
+    /// If empty/null, defaults to authorization_code and refresh_token.
+    /// </summary>
+    public string? DynamicRegistrationAllowedGrantTypesJson { get; set; }
+
+    /// <summary>
+    /// Whether PKCE is required for dynamically registered clients.
+    /// Recommended: true for security.
+    /// </summary>
+    public bool DynamicRegistrationRequirePkce { get; set; } = true;
+
+    /// <summary>
+    /// Maximum number of redirect URIs allowed per dynamically registered client.
+    /// </summary>
+    public int DynamicRegistrationMaxRedirectUris { get; set; } = 10;
+
     // Note: Package-specific settings (e.g., SAML IdP, SCIM, etc.) are stored in Tenant.Configuration JSON.
     // Each package uses its own section key (e.g., "SamlIdp", "Scim") to avoid coupling to Core.
 

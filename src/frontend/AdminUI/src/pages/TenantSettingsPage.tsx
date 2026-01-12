@@ -6,8 +6,8 @@ import Button from '../components/common/Button';
 import Input from '../components/common/Input';
 import Modal from '../components/common/Modal';
 import { tenantService } from '../services/tenantService';
-import type { PasswordPolicy, UpdateTenantRequest, UpdatePasswordPolicyRequest } from '../types/tenant';
-import { DEFAULT_PASSWORD_POLICY } from '../types/tenant';
+import type { PasswordPolicy, UpdateTenantRequest, UpdatePasswordPolicyRequest, ProtocolConfiguration, UpdateProtocolConfigurationRequest } from '../types/tenant';
+import { DEFAULT_PASSWORD_POLICY, DEFAULT_PROTOCOL_CONFIGURATION } from '../types/tenant';
 import { useTenantSettingsTabs, type TenantData } from '@oluso/ui-core';
 import {
   ArrowLeftIcon,
@@ -16,6 +16,7 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   Cog6ToothIcon,
+  ServerIcon,
 } from '@heroicons/react/24/outline';
 
 export default function TenantSettingsPage() {
@@ -29,10 +30,11 @@ export default function TenantSettingsPage() {
   // Get plugin-provided tabs
   const pluginTabs = useTenantSettingsTabs();
 
-  // All tabs: built-in general tab + plugin tabs
+  // All tabs: built-in tabs + plugin tabs
   const allTabs = useMemo(() => {
     const builtInTabs = [
       { id: 'general', label: 'General', icon: Cog6ToothIcon, order: 0 },
+      { id: 'protocol', label: 'Protocol', icon: ServerIcon, order: 10 },
     ];
     return [...builtInTabs, ...pluginTabs].sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
   }, [pluginTabs]);
@@ -55,8 +57,17 @@ export default function TenantSettingsPage() {
     enabled: !!tenantId,
   });
 
+  const { data: protocolConfig, isLoading: isLoadingProtocol } = useQuery({
+    queryKey: ['tenant-protocol-config', tenantId],
+    queryFn: () => tenantService.getProtocolConfiguration(tenantId!),
+    enabled: !!tenantId,
+  });
+
   const [tenantData, setTenantData] = useState<UpdateTenantRequest>({});
   const [policyData, setPolicyData] = useState<PasswordPolicy>(DEFAULT_PASSWORD_POLICY);
+  const [protocolData, setProtocolData] = useState<UpdateProtocolConfigurationRequest>({
+    ...DEFAULT_PROTOCOL_CONFIGURATION,
+  });
 
   useEffect(() => {
     if (tenant) {
@@ -75,6 +86,19 @@ export default function TenantSettingsPage() {
       setPolicyData(passwordPolicy);
     }
   }, [passwordPolicy]);
+
+  useEffect(() => {
+    if (protocolConfig) {
+      setProtocolData({
+        enableDynamicClientRegistration: protocolConfig.enableDynamicClientRegistration,
+        allowOpenDynamicRegistration: protocolConfig.allowOpenDynamicRegistration,
+        dynamicRegistrationAllowedScopes: protocolConfig.dynamicRegistrationAllowedScopes,
+        dynamicRegistrationAllowedGrantTypes: protocolConfig.dynamicRegistrationAllowedGrantTypes,
+        dynamicRegistrationRequirePkce: protocolConfig.dynamicRegistrationRequirePkce,
+        dynamicRegistrationMaxRedirectUris: protocolConfig.dynamicRegistrationMaxRedirectUris,
+      });
+    }
+  }, [protocolConfig]);
 
   const updateTenantMutation = useMutation({
     mutationFn: (data: UpdateTenantRequest) => tenantService.update(tenantId!, data),
@@ -103,6 +127,14 @@ export default function TenantSettingsPage() {
     },
   });
 
+  const updateProtocolMutation = useMutation({
+    mutationFn: (data: UpdateProtocolConfigurationRequest) => tenantService.updateProtocolConfiguration(tenantId!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tenant-protocol-config', tenantId] });
+      setHasChanges(false);
+    },
+  });
+
   const handleTenantChange = (key: keyof UpdateTenantRequest, value: string | boolean | undefined) => {
     setTenantData((prev) => ({ ...prev, [key]: value }));
     setHasChanges(true);
@@ -113,14 +145,23 @@ export default function TenantSettingsPage() {
     setHasChanges(true);
   };
 
-  const handleSave = async () => {
-    await Promise.all([
-      updateTenantMutation.mutateAsync(tenantData),
-      updatePolicyMutation.mutateAsync(policyData),
-    ]);
+  const handleProtocolChange = (key: keyof UpdateProtocolConfigurationRequest, value: boolean | number | string[] | undefined) => {
+    setProtocolData((prev) => ({ ...prev, [key]: value }));
+    setHasChanges(true);
   };
 
-  if (isLoadingTenant || isLoadingPolicy) {
+  const handleSave = async () => {
+    if (activeTab === 'general') {
+      await Promise.all([
+        updateTenantMutation.mutateAsync(tenantData),
+        updatePolicyMutation.mutateAsync(policyData),
+      ]);
+    } else if (activeTab === 'protocol') {
+      await updateProtocolMutation.mutateAsync(protocolData);
+    }
+  };
+
+  if (isLoadingTenant || isLoadingPolicy || isLoadingProtocol) {
     return <div className="flex items-center justify-center h-64">Loading...</div>;
   }
 
@@ -135,7 +176,7 @@ export default function TenantSettingsPage() {
     );
   }
 
-  const isSaving = updateTenantMutation.isPending || updatePolicyMutation.isPending;
+  const isSaving = updateTenantMutation.isPending || updatePolicyMutation.isPending || updateProtocolMutation.isPending;
 
   // Convert tenant to TenantData format for plugin tabs
   const tenantData2: TenantData = {
@@ -473,6 +514,111 @@ export default function TenantSettingsPage() {
               </Button>
             </div>
           </Modal>
+        </>
+      ) : activeTab === 'protocol' ? (
+        <>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {/* Dynamic Client Registration */}
+            <Card className="lg:col-span-2">
+              <CardHeader
+                title="Dynamic Client Registration"
+                description="RFC 7591 - Allow clients to register dynamically"
+                icon={<ServerIcon className="h-5 w-5 text-gray-400" />}
+              />
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Enable Dynamic Client Registration</p>
+                    <p className="text-sm text-gray-500">Allow OAuth clients to register via /connect/register</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={protocolData.enableDynamicClientRegistration ?? false}
+                    onChange={(e) => handleProtocolChange('enableDynamicClientRegistration', e.target.checked)}
+                    className="h-4 w-4 text-primary-600 rounded"
+                  />
+                </div>
+
+                {protocolData.enableDynamicClientRegistration && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Allow Open Registration</p>
+                        <p className="text-sm text-gray-500">Allow unauthenticated registration (no access token required)</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={protocolData.allowOpenDynamicRegistration ?? false}
+                        onChange={(e) => handleProtocolChange('allowOpenDynamicRegistration', e.target.checked)}
+                        className="h-4 w-4 text-primary-600 rounded"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Require PKCE</p>
+                        <p className="text-sm text-gray-500">Require PKCE for dynamically registered clients</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={protocolData.dynamicRegistrationRequirePkce ?? true}
+                        onChange={(e) => handleProtocolChange('dynamicRegistrationRequirePkce', e.target.checked)}
+                        className="h-4 w-4 text-primary-600 rounded"
+                      />
+                    </div>
+
+                    <Input
+                      label="Max Redirect URIs"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={protocolData.dynamicRegistrationMaxRedirectUris ?? 10}
+                      onChange={(e) => handleProtocolChange('dynamicRegistrationMaxRedirectUris', parseInt(e.target.value) || 10)}
+                      helperText="Maximum number of redirect URIs per registered client"
+                    />
+
+                    <Input
+                      label="Allowed Scopes"
+                      value={(protocolData.dynamicRegistrationAllowedScopes ?? []).join(', ')}
+                      onChange={(e) =>
+                        handleProtocolChange(
+                          'dynamicRegistrationAllowedScopes',
+                          e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                        )
+                      }
+                      placeholder="openid, profile, email"
+                      helperText="Comma-separated list of scopes DCR clients can request (empty = defaults)"
+                    />
+
+                    <Input
+                      label="Allowed Grant Types"
+                      value={(protocolData.dynamicRegistrationAllowedGrantTypes ?? []).join(', ')}
+                      onChange={(e) =>
+                        handleProtocolChange(
+                          'dynamicRegistrationAllowedGrantTypes',
+                          e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                        )
+                      }
+                      placeholder="authorization_code, refresh_token"
+                      helperText="Comma-separated list of grant types DCR clients can use (empty = defaults)"
+                    />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            {hasChanges && (
+              <span className="text-sm text-gray-500 self-center mr-2">You have unsaved changes</span>
+            )}
+            <Button
+              onClick={handleSave}
+              disabled={!hasChanges || isSaving}
+            >
+              {isSaving ? 'Saving...' : 'Save Settings'}
+            </Button>
+          </div>
         </>
       ) : (
         // Render plugin tabs
