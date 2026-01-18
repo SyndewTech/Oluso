@@ -573,6 +573,15 @@ export default function TenantSettingsPage() {
                       min={1}
                       max={100}
                       value={protocolData.dynamicRegistrationMaxRedirectUris ?? 10}
+                      onChange={(e) => {
+                        const value = Number(e.target.value);
+                        const clamped = Number.isNaN(value)
+                          ? undefined
+                          : Math.max(1, Math.min(100, value));
+
+                        handleProtocolChange('dynamicRegistrationMaxRedirectUris', clamped);
+                      }}
+                      helperText="Maximum number of redirect URIs per registered client"
                       onChange={(e) => handleProtocolChange('dynamicRegistrationMaxRedirectUris', parseInt(e.target.value) || 10)}
                       helperText="Maximum number of redirect URIs per registered client"
                     />
