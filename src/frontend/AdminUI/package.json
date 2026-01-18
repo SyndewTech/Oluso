@@ -32,7 +32,7 @@
     "@oluso/saml-ui": "*",
     "@oluso/scim-ui": "*",
     "@oluso/telemetry-ui": "*",
-    "@headlessui/react": "^1.7.18",
+    "@headlessui/react": "^2.2.0",
     "@heroicons/react": "^2.1.1",
     "@hookform/resolvers": "^3.3.4",
     "@tanstack/react-table": "^8.11.6",
@@ -49,7 +49,7 @@
   "devDependencies": {
     "@tanstack/react-query": "^5.17.19",
     "@testing-library/jest-dom": "^6.2.0",
-    "@testing-library/react": "^14.1.2",
+    "@testing-library/react": "^16.0.0",
     "@types/node": "^20.11.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
