@@ -7,6 +7,8 @@ using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
 using Oluso.Enterprise.Fido2.Configuration;
+using Oluso.Enterprise.Fido2.Entities;
+using Oluso.Enterprise.Fido2.Stores;
 using Oluso.Enterprise.Fido2.WebAuthn;
 
 namespace Oluso.Enterprise.Fido2.Services;

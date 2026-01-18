@@ -97,7 +97,12 @@ class ExtensionRegistry {
    * Get navigation items from all plugins
    */
   getNavigation(options: FilterOptions = {}): AdminNavItem[] {
-    const { isSuperAdmin = false, hasFeature = () => true } = options;
+    const {
+      isSuperAdmin = false,
+      hasFeature = () => true,
+      hasPermission = () => true,
+      hasAnyPermission = () => true
+    } = options;
 
     return this.getPlugins()
       .filter(plugin => this.pluginMeetsRequirements(plugin, options))
@@ -105,6 +110,10 @@ class ExtensionRegistry {
       .filter(item => {
         if (item.superAdminOnly && !isSuperAdmin) return false;
         if (item.feature && !hasFeature(item.feature)) return false;
+        // Permission check - if permission is required, check it
+        if (item.permission && !hasPermission(item.permission)) return false;
+        // AnyPermission check - at least one permission must match
+        if (item.anyPermission?.length && !hasAnyPermission(item.anyPermission)) return false;
         return true;
       })
       .sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
@@ -114,7 +123,12 @@ class ExtensionRegistry {
    * Get routes from all plugins
    */
   getRoutes(options: FilterOptions = {}): AdminRoute[] {
-    const { isSuperAdmin = false, hasFeature = () => true } = options;
+    const {
+      isSuperAdmin = false,
+      hasFeature = () => true,
+      hasPermission = () => true,
+      hasAnyPermission = () => true
+    } = options;
 
     return this.getPlugins()
       .filter(plugin => this.pluginMeetsRequirements(plugin, options))
@@ -122,6 +136,10 @@ class ExtensionRegistry {
       .filter(route => {
         if (route.superAdminOnly && !isSuperAdmin) return false;
         if (route.feature && !hasFeature(route.feature)) return false;
+        // Permission check - if permission is required, check it
+        if (route.permission && !hasPermission(route.permission)) return false;
+        // AnyPermission check - at least one permission must match
+        if (route.anyPermission?.length && !hasAnyPermission(route.anyPermission)) return false;
         return true;
       });
   }

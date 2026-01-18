@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -28,6 +29,7 @@ public class IdentityResourcesController : AdminBaseController
     /// Get all identity resources
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.IdentityResourcesRead)]
     public async Task<ActionResult<IEnumerable<IdentityResourceDto>>> GetAll(CancellationToken cancellationToken)
     {
         var resources = await _resourceStore.GetAllIdentityResourcesAsync(cancellationToken);
@@ -39,6 +41,7 @@ public class IdentityResourcesController : AdminBaseController
     /// Get identity resource by ID
     /// </summary>
     [HttpGet("{id:int}")]
+    [RequirePermission(AdminPermissions.IdentityResourcesRead)]
     public async Task<ActionResult<IdentityResourceDto>> GetById(int id, CancellationToken cancellationToken)
     {
         var resource = await _resourceStore.GetIdentityResourceByIdAsync(id, cancellationToken);
@@ -52,6 +55,7 @@ public class IdentityResourcesController : AdminBaseController
     /// Get identity resource by name
     /// </summary>
     [HttpGet("by-name/{name}")]
+    [RequirePermission(AdminPermissions.IdentityResourcesRead)]
     public async Task<ActionResult<IdentityResourceDto>> GetByName(string name, CancellationToken cancellationToken)
     {
         var resources = await _resourceStore.FindIdentityResourcesByScopeNameAsync(new[] { name }, cancellationToken);
@@ -66,6 +70,7 @@ public class IdentityResourcesController : AdminBaseController
     /// Create a new identity resource
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.IdentityResourcesWrite)]
     public async Task<ActionResult<IdentityResourceDto>> Create(
         [FromBody] CreateIdentityResourceRequest request,
         CancellationToken cancellationToken)
@@ -100,6 +105,7 @@ public class IdentityResourcesController : AdminBaseController
     /// Update an identity resource
     /// </summary>
     [HttpPut("{id:int}")]
+    [RequirePermission(AdminPermissions.IdentityResourcesWrite)]
     public async Task<ActionResult<IdentityResourceDto>> Update(
         int id,
         [FromBody] UpdateIdentityResourceRequest request,
@@ -136,6 +142,7 @@ public class IdentityResourcesController : AdminBaseController
     /// Delete an identity resource
     /// </summary>
     [HttpDelete("{id:int}")]
+    [RequirePermission(AdminPermissions.IdentityResourcesDelete)]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
         var existing = await _resourceStore.GetIdentityResourceByIdAsync(id, cancellationToken);

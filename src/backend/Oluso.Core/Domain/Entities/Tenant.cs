@@ -1,7 +1,9 @@
 namespace Oluso.Core.Domain.Entities;
 
 /// <summary>
-/// Represents a tenant in a multi-tenant deployment
+/// Represents a tenant in a multi-tenant deployment.
+/// Tenants provide data isolation for end users.
+/// Tenants can optionally belong to an Organization for multi-environment management.
 /// </summary>
 public class Tenant
 {
@@ -14,6 +16,22 @@ public class Tenant
     public string? Configuration { get; set; }
     public DateTime Created { get; set; } = DateTime.UtcNow;
     public DateTime? Updated { get; set; }
+
+    /// <summary>
+    /// The organization this tenant belongs to.
+    /// Every tenant must belong to an organization.
+    /// </summary>
+    public string OrganizationId { get; set; } = default!;
+
+    /// <summary>
+    /// Environment type for this tenant (Development, Staging, Production, etc.)
+    /// </summary>
+    public TenantEnvironment Environment { get; set; } = TenantEnvironment.Production;
+
+    /// <summary>
+    /// Navigation property to the parent organization
+    /// </summary>
+    public Organization Organization { get; set; } = default!;
 
     /// <summary>
     /// Connection string override for tenant-specific database (optional)
@@ -336,6 +354,24 @@ public class TenantProtocolConfiguration
     /// Maximum number of redirect URIs allowed per dynamically registered client.
     /// </summary>
     public int DynamicRegistrationMaxRedirectUris { get; set; } = 10;
+
+    /// <summary>
+    /// Required scope for initial access tokens when protected registration is enabled.
+    /// If null/empty, any valid token is accepted.
+    /// </summary>
+    public string? DynamicRegistrationRequiredScope { get; set; }
+
+    /// <summary>
+    /// Required claim name for initial access tokens when protected registration is enabled.
+    /// If null/empty, no claim check is performed.
+    /// </summary>
+    public string? DynamicRegistrationRequiredClaim { get; set; }
+
+    /// <summary>
+    /// Required claim value for initial access tokens when protected registration is enabled.
+    /// If null/empty but DynamicRegistrationRequiredClaim is set, only claim presence is checked.
+    /// </summary>
+    public string? DynamicRegistrationRequiredClaimValue { get; set; }
 
     // Note: Package-specific settings (e.g., SAML IdP, SCIM, etc.) are stored in Tenant.Configuration JSON.
     // Each package uses its own section key (e.g., "SamlIdp", "Scim") to avoid coupling to Core.

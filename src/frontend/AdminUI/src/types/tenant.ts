@@ -108,6 +108,10 @@ export interface ProtocolConfiguration {
   dynamicRegistrationAllowedGrantTypes?: string[];
   dynamicRegistrationRequirePkce: boolean;
   dynamicRegistrationMaxRedirectUris: number;
+  // Initial access token requirements (for protected registration)
+  dynamicRegistrationRequiredScope?: string;
+  dynamicRegistrationRequiredClaim?: string;
+  dynamicRegistrationRequiredClaimValue?: string;
   created: string;
   updated?: string;
 }
@@ -119,6 +123,10 @@ export interface UpdateProtocolConfigurationRequest {
   dynamicRegistrationAllowedGrantTypes?: string[];
   dynamicRegistrationRequirePkce?: boolean;
   dynamicRegistrationMaxRedirectUris?: number;
+  // Initial access token requirements (for protected registration)
+  dynamicRegistrationRequiredScope?: string;
+  dynamicRegistrationRequiredClaim?: string;
+  dynamicRegistrationRequiredClaimValue?: string;
 }
 
 export const DEFAULT_PROTOCOL_CONFIGURATION: Partial<ProtocolConfiguration> = {

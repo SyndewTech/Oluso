@@ -41,6 +41,7 @@ public class RolesController : AdminBaseController
     /// Tenant admins only see tenant-scoped roles and non-system global roles.
     /// </remarks>
     [HttpGet]
+    [RequirePermission(AdminPermissions.RolesRead)]
     public async Task<ActionResult<IEnumerable<RoleDto>>> GetRoles(
         [FromQuery] bool includeSystem = true,
         CancellationToken cancellationToken = default)
@@ -75,6 +76,7 @@ public class RolesController : AdminBaseController
     /// Get a specific role by ID
     /// </summary>
     [HttpGet("{roleId}")]
+    [RequirePermission(AdminPermissions.RolesRead)]
     public async Task<ActionResult<RoleDetailDto>> GetRole(string roleId, CancellationToken cancellationToken)
     {
         var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
@@ -116,6 +118,7 @@ public class RolesController : AdminBaseController
     /// Create a new role for the current tenant
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.RolesWrite)]
     public async Task<ActionResult<RoleDto>> CreateRole(
         [FromBody] CreateRoleRequest request,
         CancellationToken cancellationToken)
@@ -142,6 +145,13 @@ public class RolesController : AdminBaseController
                     TenantId, string.Join(", ", reservedClaims));
                 return BadRequest(new { error = $"The following claim types are reserved for system use: {string.Join(", ", reservedClaims)}" });
             }
+        }
+
+        // Validate permissions are valid system-defined permissions
+        var permissionValidationError = ValidatePermissions(request.Permissions);
+        if (permissionValidationError != null)
+        {
+            return BadRequest(new { error = permissionValidationError });
         }
 
         // Check if role with same name already exists in tenant
@@ -206,6 +216,7 @@ public class RolesController : AdminBaseController
     /// Update an existing role
     /// </summary>
     [HttpPut("{roleId}")]
+    [RequirePermission(AdminPermissions.RolesWrite)]
     public async Task<ActionResult<RoleDto>> UpdateRole(
         string roleId,
         [FromBody] UpdateRoleRequest request,
@@ -259,7 +270,15 @@ public class RolesController : AdminBaseController
             role.Description = request.Description;
 
         if (request.Permissions != null)
+        {
+            // Validate permissions are valid system-defined permissions
+            var permissionValidationError = ValidatePermissions(request.Permissions);
+            if (permissionValidationError != null)
+            {
+                return BadRequest(new { error = permissionValidationError });
+            }
             role.Permissions = string.Join(",", request.Permissions);
+        }
 
         role.UpdatedAt = DateTime.UtcNow;
 
@@ -325,6 +344,7 @@ public class RolesController : AdminBaseController
     /// Delete a role
     /// </summary>
     [HttpDelete("{roleId}")]
+    [RequirePermission(AdminPermissions.RolesDelete)]
     public async Task<IActionResult> DeleteRole(string roleId, CancellationToken cancellationToken)
     {
         var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
@@ -377,6 +397,7 @@ public class RolesController : AdminBaseController
     /// Get users assigned to a role
     /// </summary>
     [HttpGet("{roleId}/users")]
+    [RequirePermission(AdminPermissions.RolesRead)]
     public async Task<ActionResult<IEnumerable<RoleUserDto>>> GetRoleUsers(
         string roleId,
         CancellationToken cancellationToken)
@@ -403,6 +424,30 @@ public class RolesController : AdminBaseController
             Email = u.Email,
             DisplayName = u.DisplayName
         }));
+    }
+
+    /// <summary>
+    /// Validates that all permissions in the list are valid system-defined permissions.
+    /// Returns an error message if validation fails, null if successful.
+    /// </summary>
+    private static string? ValidatePermissions(ICollection<string>? permissions)
+    {
+        if (permissions == null || permissions.Count == 0)
+        {
+            return null;
+        }
+
+        var invalidPermissions = permissions
+            .Where(p => !AdminPermissions.Exists(p))
+            .Distinct()
+            .ToList();
+
+        if (invalidPermissions.Count > 0)
+        {
+            return $"The following permissions are not valid: {string.Join(", ", invalidPermissions)}. Use GET /api/admin/permissions to see available permissions.";
+        }
+
+        return null;
     }
 }
 

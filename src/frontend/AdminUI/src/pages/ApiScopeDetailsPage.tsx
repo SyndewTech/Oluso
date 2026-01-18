@@ -6,13 +6,12 @@ import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
 import { apiScopeService } from '../services/resourceService';
 import type { CreateApiScopeRequest, UpdateApiScopeRequest } from '../types/resources';
-import { ArrowLeftIcon, PlusIcon, XMarkIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 export default function ApiScopeDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [showResourceModal, setShowResourceModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showClaimsModal, setShowClaimsModal] = useState(false);
@@ -37,12 +36,6 @@ export default function ApiScopeDetailsPage() {
     enabled: !isNew && !isNaN(numericId),
   });
 
-  const { data: availableResources = [] } = useQuery({
-    queryKey: ['available-resources'],
-    queryFn: () => apiScopeService.getAvailableResources(),
-    enabled: !isNew,
-  });
-
   const createMutation = useMutation({
     mutationFn: (data: CreateApiScopeRequest) => apiScopeService.create(data),
     onSuccess: (created) => {
@@ -59,20 +52,6 @@ export default function ApiScopeDetailsPage() {
     },
   });
 
-  const updateResourcesMutation = useMutation({
-    mutationFn: (resourceNames: string[]) =>
-      apiScopeService.update(numericId, { apiResourceNames: resourceNames }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['api-scope', numericId] });
-      queryClient.invalidateQueries({ queryKey: ['available-resources'] });
-      setShowResourceModal(false);
-    },
-    onError: (error) => {
-      console.error('Failed to update resources:', error);
-      alert('Failed to update resources. Check console for details.');
-    },
-  });
-
   const handleCreate = () => {
     if (formData.name) {
       createMutation.mutate(formData);
@@ -83,18 +62,6 @@ export default function ApiScopeDetailsPage() {
     if (scope) {
       deleteMutation.mutate(scope.id);
     }
-  };
-
-  const handleAddResource = (resourceName: string) => {
-    const currentResources = scope?.apiResourceNames || [];
-    if (!currentResources.includes(resourceName)) {
-      updateResourcesMutation.mutate([...currentResources, resourceName]);
-    }
-  };
-
-  const handleRemoveResource = (resourceName: string) => {
-    const currentResources = scope?.apiResourceNames || [];
-    updateResourcesMutation.mutate(currentResources.filter((r) => r !== resourceName));
   };
 
   const updateMutation = useMutation({
@@ -148,11 +115,6 @@ export default function ApiScopeDetailsPage() {
   const handleUpdate = () => {
     updateMutation.mutate(editFormData);
   };
-
-  // Get resources not already associated with this scope
-  const unassociatedResources = availableResources?.filter(
-    (resource) => !scope?.apiResourceNames?.includes(resource.name)
-  ) || [];
 
   if (isNew) {
     return (
@@ -349,48 +311,6 @@ export default function ApiScopeDetailsPage() {
 
         <Card className="lg:col-span-2">
           <CardHeader
-            title="API Resources"
-            action={
-              <Button size="sm" onClick={() => setShowResourceModal(true)}>
-                <PlusIcon className="h-4 w-4 mr-2" />
-                Add to Resource
-              </Button>
-            }
-          />
-          <CardContent>
-          <p className="text-sm text-gray-500 mb-4">
-            API Resources this scope belongs to. A scope can belong to multiple resources.
-            Clients requesting this scope will receive access tokens for these resources.
-          </p>
-          {scope.apiResourceNames && scope.apiResourceNames.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {scope.apiResourceNames.map((resourceName) => (
-                <span
-                  key={resourceName}
-                  className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-800"
-                >
-                  {resourceName}
-                  <button
-                    onClick={() => handleRemoveResource(resourceName)}
-                    className="ml-1 hover:text-blue-600"
-                    disabled={updateResourcesMutation.isPending}
-                  >
-                    <XMarkIcon className="h-4 w-4" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              This scope is not associated with any API resource. Add it to a resource
-              so clients can request it.
-            </div>
-          )}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader
             title="User Claims"
             action={
               <Button size="sm" onClick={() => setShowClaimsModal(true)}>
@@ -421,44 +341,6 @@ export default function ApiScopeDetailsPage() {
         </Card>
       </div>
 
-      {/* Add to Resource Modal */}
-      <Modal
-        isOpen={showResourceModal}
-        onClose={() => setShowResourceModal(false)}
-        title="Add Scope to API Resource"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-500">
-            Select an API resource to add this scope to. This allows clients to request
-            this scope when accessing that resource.
-          </p>
-          {unassociatedResources.length > 0 ? (
-            <div className="max-h-64 overflow-y-auto space-y-2">
-              {unassociatedResources.map((resource) => (
-                <button
-                  key={resource.name}
-                  onClick={() => handleAddResource(resource.name)}
-                  disabled={updateResourcesMutation.isPending}
-                  className="w-full text-left p-3 rounded-md border border-gray-200 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <div className="font-medium text-gray-900">{resource.name}</div>
-                  {resource.displayName && (
-                    <div className="text-sm text-gray-500">{resource.displayName}</div>
-                  )}
-                  <div className="text-xs text-gray-400 mt-1">
-                    {resource.scopeCount} scope{resource.scopeCount !== 1 ? 's' : ''}
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              This scope is already associated with all available resources.
-            </div>
-          )}
-        </div>
-      </Modal>
-
       {/* Delete Confirmation Modal */}
       <Modal
         isOpen={showDeleteModal}
@@ -468,7 +350,7 @@ export default function ApiScopeDetailsPage() {
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             Are you sure you want to delete the API scope <strong>{scope.name}</strong>?
-            This will remove the scope from all associated resources. This action cannot be undone.
+            This action cannot be undone.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>

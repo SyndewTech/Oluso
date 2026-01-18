@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -7,10 +8,10 @@ using Oluso.Core.Domain.Interfaces;
 namespace Oluso.Admin.Controllers;
 
 /// <summary>
-/// Admin API for managing Tenants (super-admin only)
+/// Admin API for managing Tenants (SuperAdmin or OrgAdmin)
 /// </summary>
 [Route("api/admin/tenants")]
-[Authorize(Policy = "SuperAdmin")]
+[Authorize(Policy = "SuperAdminOrOrgAdmin")]
 public class TenantsController : AdminBaseController
 {
     private readonly ITenantStore _tenantStore;
@@ -29,6 +30,7 @@ public class TenantsController : AdminBaseController
     /// Get all tenants
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.TenantsRead)]
     public async Task<ActionResult<IEnumerable<TenantDto>>> GetAll(CancellationToken cancellationToken)
     {
         var tenants = await _tenantStore.GetAllAsync(cancellationToken);
@@ -39,6 +41,7 @@ public class TenantsController : AdminBaseController
     /// Get tenant by ID
     /// </summary>
     [HttpGet("{tenantId}")]
+    [RequirePermission(AdminPermissions.TenantsRead)]
     public async Task<ActionResult<TenantDto>> GetById(string tenantId, CancellationToken cancellationToken)
     {
         var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
@@ -51,6 +54,7 @@ public class TenantsController : AdminBaseController
     /// Get tenant by identifier (subdomain/path)
     /// </summary>
     [HttpGet("by-identifier/{identifier}")]
+    [RequirePermission(AdminPermissions.TenantsRead)]
     public async Task<ActionResult<TenantDto>> GetByIdentifier(string identifier, CancellationToken cancellationToken)
     {
         var tenant = await _tenantStore.GetByIdentifierAsync(identifier, cancellationToken);
@@ -63,6 +67,7 @@ public class TenantsController : AdminBaseController
     /// Create a new tenant
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.TenantsWrite)]
     public async Task<ActionResult<TenantDto>> Create(
         [FromBody] CreateTenantRequest request,
         CancellationToken cancellationToken)
@@ -95,6 +100,7 @@ public class TenantsController : AdminBaseController
     /// Update a tenant
     /// </summary>
     [HttpPut("{tenantId}")]
+    [RequirePermission(AdminPermissions.TenantsWrite)]
     public async Task<ActionResult<TenantDto>> Update(
         string tenantId,
         [FromBody] UpdateTenantRequest request,
@@ -121,6 +127,7 @@ public class TenantsController : AdminBaseController
     /// Delete a tenant
     /// </summary>
     [HttpDelete("{tenantId}")]
+    [RequirePermission(AdminPermissions.TenantsDelete)]
     public async Task<IActionResult> Delete(string tenantId, CancellationToken cancellationToken)
     {
         var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
@@ -138,6 +145,7 @@ public class TenantsController : AdminBaseController
     /// Enable a tenant
     /// </summary>
     [HttpPost("{tenantId}/enable")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
     public async Task<IActionResult> Enable(string tenantId, CancellationToken cancellationToken)
     {
         var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
@@ -156,6 +164,7 @@ public class TenantsController : AdminBaseController
     /// Disable a tenant
     /// </summary>
     [HttpPost("{tenantId}/disable")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
     public async Task<IActionResult> Disable(string tenantId, CancellationToken cancellationToken)
     {
         var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
@@ -174,6 +183,7 @@ public class TenantsController : AdminBaseController
     /// Get tenant protocol configuration
     /// </summary>
     [HttpGet("{tenantId}/protocol-configuration")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
     public async Task<ActionResult<TenantProtocolConfigurationDto>> GetProtocolConfiguration(
         string tenantId,
         CancellationToken cancellationToken)
@@ -189,6 +199,7 @@ public class TenantsController : AdminBaseController
     /// Update tenant protocol configuration
     /// </summary>
     [HttpPut("{tenantId}/protocol-configuration")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
     public async Task<ActionResult<TenantProtocolConfigurationDto>> UpdateProtocolConfiguration(
         string tenantId,
         [FromBody] UpdateTenantProtocolConfigurationRequest request,
@@ -264,6 +275,7 @@ public class TenantsController : AdminBaseController
     /// Delete tenant protocol configuration (reset to defaults)
     /// </summary>
     [HttpDelete("{tenantId}/protocol-configuration")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
     public async Task<IActionResult> DeleteProtocolConfiguration(
         string tenantId,
         CancellationToken cancellationToken)
@@ -282,6 +294,103 @@ public class TenantsController : AdminBaseController
         return NoContent();
     }
 
+    /// <summary>
+    /// Get tenant password policy
+    /// </summary>
+    [HttpGet("{tenantId}/password-policy")]
+    [RequirePermission(AdminPermissions.TenantsRead)]
+    public async Task<ActionResult<PasswordPolicyDto>> GetPasswordPolicy(
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
+        if (tenant == null)
+            return NotFound();
+
+        return Ok(MapPasswordPolicyToDto(tenant.PasswordPolicy));
+    }
+
+    /// <summary>
+    /// Update tenant password policy
+    /// </summary>
+    [HttpPut("{tenantId}/password-policy")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
+    public async Task<ActionResult<PasswordPolicyDto>> UpdatePasswordPolicy(
+        string tenantId,
+        [FromBody] UpdatePasswordPolicyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
+        if (tenant == null)
+            return NotFound();
+
+        // Create or update password policy
+        tenant.PasswordPolicy ??= new TenantPasswordPolicy { TenantId = tenantId };
+        var policy = tenant.PasswordPolicy;
+
+        if (request.MinimumLength.HasValue)
+            policy.MinimumLength = request.MinimumLength.Value;
+        if (request.MaximumLength.HasValue)
+            policy.MaximumLength = request.MaximumLength.Value;
+        if (request.RequireDigit.HasValue)
+            policy.RequireDigit = request.RequireDigit.Value;
+        if (request.RequireLowercase.HasValue)
+            policy.RequireLowercase = request.RequireLowercase.Value;
+        if (request.RequireUppercase.HasValue)
+            policy.RequireUppercase = request.RequireUppercase.Value;
+        if (request.RequireNonAlphanumeric.HasValue)
+            policy.RequireNonAlphanumeric = request.RequireNonAlphanumeric.Value;
+        if (request.RequiredUniqueChars.HasValue)
+            policy.RequiredUniqueChars = request.RequiredUniqueChars.Value;
+        if (request.PasswordHistoryCount.HasValue)
+            policy.PasswordHistoryCount = request.PasswordHistoryCount.Value;
+        if (request.PasswordExpirationDays.HasValue)
+            policy.PasswordExpirationDays = request.PasswordExpirationDays.Value;
+        if (request.MaxFailedAttempts.HasValue)
+            policy.MaxFailedAttempts = request.MaxFailedAttempts.Value;
+        if (request.LockoutDurationMinutes.HasValue)
+            policy.LockoutDurationMinutes = request.LockoutDurationMinutes.Value;
+        if (request.BlockCommonPasswords.HasValue)
+            policy.BlockCommonPasswords = request.BlockCommonPasswords.Value;
+        if (request.CheckBreachedPasswords.HasValue)
+            policy.CheckBreachedPasswords = request.CheckBreachedPasswords.Value;
+        if (request.CustomRegexPattern != null)
+            policy.CustomRegexPattern = request.CustomRegexPattern;
+        if (request.CustomRegexErrorMessage != null)
+            policy.CustomRegexErrorMessage = request.CustomRegexErrorMessage;
+
+        tenant.Updated = DateTime.UtcNow;
+
+        await _tenantStore.UpdateAsync(tenant, cancellationToken);
+
+        _logger.LogInformation("Updated password policy for tenant: {TenantId}", tenantId);
+
+        return Ok(MapPasswordPolicyToDto(policy));
+    }
+
+    /// <summary>
+    /// Delete tenant password policy (reset to defaults)
+    /// </summary>
+    [HttpDelete("{tenantId}/password-policy")]
+    [RequirePermission(AdminPermissions.TenantsManageSettings)]
+    public async Task<IActionResult> DeletePasswordPolicy(
+        string tenantId,
+        CancellationToken cancellationToken)
+    {
+        var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
+        if (tenant == null)
+            return NotFound();
+
+        tenant.PasswordPolicy = null;
+        tenant.Updated = DateTime.UtcNow;
+
+        await _tenantStore.UpdateAsync(tenant, cancellationToken);
+
+        _logger.LogInformation("Reset password policy for tenant: {TenantId}", tenantId);
+
+        return NoContent();
+    }
+
     private static TenantDto MapToDto(Tenant tenant) => new()
     {
         Id = tenant.Id,
@@ -289,10 +398,20 @@ public class TenantsController : AdminBaseController
         DisplayName = tenant.DisplayName,
         Identifier = tenant.Identifier,
         Description = tenant.Description,
+        CustomDomain = tenant.CustomDomain,
         Enabled = tenant.Enabled,
         Configuration = tenant.Configuration,
-        Created = tenant.Created,
-        Updated = tenant.Updated
+        CreatedAt = tenant.Created,
+        UpdatedAt = tenant.Updated,
+        PlanId = tenant.PlanId,
+        PlanExpiresAt = tenant.PlanExpiresAt,
+        AllowSelfRegistration = tenant.AllowSelfRegistration,
+        RequireTermsAcceptance = tenant.RequireTermsAcceptance,
+        TermsOfServiceUrl = tenant.TermsOfServiceUrl,
+        PrivacyPolicyUrl = tenant.PrivacyPolicyUrl,
+        RequireEmailVerification = tenant.RequireEmailVerification,
+        AllowedEmailDomains = tenant.AllowedEmailDomains,
+        UseJourneyFlow = tenant.UseJourneyFlow
     };
 
     private static TenantProtocolConfigurationDto MapProtocolConfigToDto(TenantProtocolConfiguration? config)
@@ -350,6 +469,34 @@ public class TenantsController : AdminBaseController
         if (list == null || list.Count == 0) return null;
         return System.Text.Json.JsonSerializer.Serialize(list);
     }
+
+    private static PasswordPolicyDto MapPasswordPolicyToDto(TenantPasswordPolicy? policy)
+    {
+        if (policy == null)
+        {
+            // Return defaults when no policy is set
+            return new PasswordPolicyDto();
+        }
+
+        return new PasswordPolicyDto
+        {
+            MinimumLength = policy.MinimumLength,
+            MaximumLength = policy.MaximumLength,
+            RequireDigit = policy.RequireDigit,
+            RequireLowercase = policy.RequireLowercase,
+            RequireUppercase = policy.RequireUppercase,
+            RequireNonAlphanumeric = policy.RequireNonAlphanumeric,
+            RequiredUniqueChars = policy.RequiredUniqueChars,
+            PasswordHistoryCount = policy.PasswordHistoryCount,
+            PasswordExpirationDays = policy.PasswordExpirationDays,
+            MaxFailedAttempts = policy.MaxFailedAttempts,
+            LockoutDurationMinutes = policy.LockoutDurationMinutes,
+            BlockCommonPasswords = policy.BlockCommonPasswords,
+            CheckBreachedPasswords = policy.CheckBreachedPasswords,
+            CustomRegexPattern = policy.CustomRegexPattern,
+            CustomRegexErrorMessage = policy.CustomRegexErrorMessage
+        };
+    }
 }
 
 #region DTOs
@@ -361,10 +508,20 @@ public class TenantDto
     public string? DisplayName { get; set; }
     public string Identifier { get; set; } = null!;
     public string? Description { get; set; }
+    public string? CustomDomain { get; set; }
     public bool Enabled { get; set; }
     public string? Configuration { get; set; }
-    public DateTime Created { get; set; }
-    public DateTime? Updated { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? PlanId { get; set; }
+    public DateTime? PlanExpiresAt { get; set; }
+    public bool AllowSelfRegistration { get; set; }
+    public bool RequireTermsAcceptance { get; set; }
+    public string? TermsOfServiceUrl { get; set; }
+    public string? PrivacyPolicyUrl { get; set; }
+    public bool RequireEmailVerification { get; set; }
+    public string? AllowedEmailDomains { get; set; }
+    public bool UseJourneyFlow { get; set; }
 }
 
 public class CreateTenantRequest
@@ -443,5 +600,42 @@ public class UpdateTenantProtocolConfigurationRequest
     public int? DynamicRegistrationMaxRedirectUris { get; set; }
 }
 
+public class PasswordPolicyDto
+{
+    public int MinimumLength { get; set; } = 8;
+    public int MaximumLength { get; set; } = 128;
+    public bool RequireDigit { get; set; } = true;
+    public bool RequireLowercase { get; set; } = true;
+    public bool RequireUppercase { get; set; } = true;
+    public bool RequireNonAlphanumeric { get; set; } = true;
+    public int RequiredUniqueChars { get; set; } = 4;
+    public int PasswordHistoryCount { get; set; } = 0;
+    public int PasswordExpirationDays { get; set; } = 0;
+    public int MaxFailedAttempts { get; set; } = 5;
+    public int LockoutDurationMinutes { get; set; } = 15;
+    public bool BlockCommonPasswords { get; set; } = true;
+    public bool CheckBreachedPasswords { get; set; } = false;
+    public string? CustomRegexPattern { get; set; }
+    public string? CustomRegexErrorMessage { get; set; }
+}
+
+public class UpdatePasswordPolicyRequest
+{
+    public int? MinimumLength { get; set; }
+    public int? MaximumLength { get; set; }
+    public bool? RequireDigit { get; set; }
+    public bool? RequireLowercase { get; set; }
+    public bool? RequireUppercase { get; set; }
+    public bool? RequireNonAlphanumeric { get; set; }
+    public int? RequiredUniqueChars { get; set; }
+    public int? PasswordHistoryCount { get; set; }
+    public int? PasswordExpirationDays { get; set; }
+    public int? MaxFailedAttempts { get; set; }
+    public int? LockoutDurationMinutes { get; set; }
+    public bool? BlockCommonPasswords { get; set; }
+    public bool? CheckBreachedPasswords { get; set; }
+    public string? CustomRegexPattern { get; set; }
+    public string? CustomRegexErrorMessage { get; set; }
+}
 
 #endregion

@@ -155,7 +155,9 @@ public static class EntityFrameworkExtensions
         string connectionString)
     {
         builder.Services.AddDbContext<OlusoDbContextSqlite>(options =>
-            options.UseSqlite(connectionString));
+        {
+            options.UseSqlite(connectionString);
+        });
 
         // Register as both the specific type and interfaces
         builder.Services.AddScoped<OlusoDbContext>(sp => sp.GetRequiredService<OlusoDbContextSqlite>());
@@ -288,7 +290,6 @@ public static class EntityFrameworkExtensions
         builder.Services.AddScoped<IDeviceFlowStore, DeviceFlowStore>();
         builder.Services.AddScoped<IPushedAuthorizationStore, PushedAuthorizationStore>();
         builder.Services.AddScoped<IAuthorizationCodeStore, AuthorizationCodeStore>();
-        builder.Services.AddScoped<IFido2CredentialStore, Fido2CredentialStore>();
         builder.Services.AddScoped<IRoleStore, RoleStore>();
         builder.Services.AddScoped<IIdentityProviderStore, IdentityProviderStore>();
         builder.Services.AddScoped<IExternalProviderConfigStore, ExternalProviderConfigStore>();
@@ -299,6 +300,10 @@ public static class EntityFrameworkExtensions
 
         // Register audit event sink to persist events to the database
         builder.Services.AddScoped<IOlusoEventSink, AuditEventSink>();
+
+        // Telemetry log stores and service (application logging)
+        builder.Services.AddScoped<ITelemetryLogStore, TelemetryLogStore>();
+        builder.Services.AddScoped<ITelemetryLogService, TelemetryLogService>();
 
         // Webhook stores
         builder.Services.AddScoped<IWebhookStore, WebhookStore>();
@@ -311,6 +316,11 @@ public static class EntityFrameworkExtensions
         // Always register tenant store - needed for SAML IdP, SCIM, and other package-specific settings
         // In single-tenant mode, there's still a default tenant for configuration storage
         builder.Services.AddScoped<ITenantStore, TenantStore>();
+
+        // Organization stores (multi-tenant management layer above tenants)
+        builder.Services.AddScoped<IOrganizationStore, OrganizationStore>();
+        builder.Services.AddScoped<IOrganizationMembershipStore, OrganizationMembershipStore>();
+        builder.Services.AddScoped<IOrganizationInvitationStore, OrganizationInvitationStore>();
 
         // Server-side sessions store
         builder.Services.AddScoped<IServerSideSessionStore, ServerSideSessionStore>();

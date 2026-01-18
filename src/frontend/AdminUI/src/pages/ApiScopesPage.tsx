@@ -45,26 +45,6 @@ export default function ApiScopesPage() {
       ),
     },
     {
-      key: 'apiResourceNames',
-      header: 'Resources',
-      render: (scope: ApiScope) => (
-        <div className="flex flex-wrap gap-1">
-          {scope.apiResourceNames?.length > 0 ? (
-            scope.apiResourceNames.map((name) => (
-              <span
-                key={name}
-                className="inline-flex rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700"
-              >
-                {name}
-              </span>
-            ))
-          ) : (
-            <span className="text-xs text-gray-400">No resources</span>
-          )}
-        </div>
-      ),
-    },
-    {
       key: 'required',
       header: 'Required',
       render: (scope: ApiScope) => (scope.required ? 'Yes' : 'No'),

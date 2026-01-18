@@ -8,7 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Admin.Authorization;
 using Oluso.Admin.Controllers;
-using Oluso.Core.Protocols.Models;
 
 namespace Oluso.Admin;
 
@@ -41,6 +40,11 @@ public static class OlusoAdminExtensions
 
         // Register authorization handlers
         mvcBuilder.Services.AddScoped<IAuthorizationHandler, TenantAdminAuthorizationHandler>();
+        mvcBuilder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        mvcBuilder.Services.AddScoped<IAuthorizationHandler, ServiceApiAuthorizationHandler>();
+
+        // Register dynamic policy provider for permission-based authorization
+        mvcBuilder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
 
         // Add JWT Bearer authentication for Admin API
         // Configuration is read at runtime when the authentication handler is invoked
@@ -122,6 +126,15 @@ public static class OlusoAdminExtensions
                 policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: true));
             });
 
+            // SuperAdminOrOrgAdmin policy: Cross-tenant access for SuperAdmin or OrgAdmin
+            // Allows both system-level admins and organization-level admins
+            authOptions.AddPolicy("SuperAdminOrOrgAdmin", policy =>
+            {
+                policy.AuthenticationSchemes.Add(AdminApiScheme);
+                policy.RequireAuthenticatedUser();
+                policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: true, allowOrgAdmin: true));
+            });
+
             // TenantAdmin policy: Explicit tenant-scoped admin (alias for AdminApi)
             authOptions.AddPolicy("TenantAdmin", policy =>
             {
@@ -130,14 +143,15 @@ public static class OlusoAdminExtensions
                 policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: false));
             });
 
-            // AccountApi policy: End-user self-service access
-            // Uses OIDC access tokens (not admin JWT) - for end users authenticated via the identity server
-            // Requires authenticated user (no admin role needed)
-            // Used for account management endpoints like profile, sessions, passkeys
-            authOptions.AddPolicy("AccountApi", policy =>
+            // ServiceApi policy: Machine-to-machine access via client_credentials grant
+            // Used by resource servers and external applications for automated operations
+            // Requires "service" scope in the access token
+            // Uses OlusoAccessToken scheme (Oluso's own access tokens) not AdminApiJwt
+            authOptions.AddPolicy("ServiceApi", policy =>
             {
-                policy.AuthenticationSchemes.Add(OidcConstants.AccessTokenAuthenticationScheme);
+                policy.AuthenticationSchemes.Add("OlusoAccessToken");
                 policy.RequireAuthenticatedUser();
+                policy.AddRequirements(new ServiceApiRequirement("service"));
             });
         });
 

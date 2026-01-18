@@ -1,28 +1,19 @@
-export interface ApiResource {
+/**
+ * RFC 8707 Resource - Protected resource identified by absolute URI
+ */
+export interface Resource {
   id: number;
+  /** The absolute URI identifying this resource (RFC 8707) */
+  uri: string;
   enabled: boolean;
-  name: string;
   displayName?: string;
   description?: string;
-  allowedAccessTokenSigningAlgorithms?: string;
   showInDiscoveryDocument: boolean;
-  requireResourceIndicator: boolean;
-  scopes: string[];
-  secrets?: ApiResourceSecret[];
+  /** Scopes that are valid for this resource */
+  allowedScopes: string[];
   userClaims: string[];
-  properties?: ResourceProperty[];
   created: string;
   updated?: string;
-  lastAccessed?: string;
-}
-
-export interface ApiResourceSecret {
-  id: number;
-  description?: string;
-  value: string;
-  expiration?: string;
-  type: string;
-  created: string;
 }
 
 export interface ApiScope {
@@ -36,8 +27,6 @@ export interface ApiScope {
   showInDiscoveryDocument: boolean;
   userClaims: string[];
   properties?: ResourceProperty[];
-  /** API resources this scope belongs to */
-  apiResourceNames: string[];
   created: string;
   updated?: string;
 }
@@ -63,26 +52,23 @@ export interface ResourceProperty {
   value: string;
 }
 
-export interface CreateApiResourceRequest {
-  name: string;
+export interface CreateResourceRequest {
+  /** The absolute URI identifying this resource (RFC 8707) */
+  uri: string;
   displayName?: string;
   description?: string;
   enabled?: boolean;
   showInDiscoveryDocument?: boolean;
-  allowedAccessTokenSigningAlgorithms?: string;
-  requireResourceIndicator?: boolean;
-  scopes?: string[];
+  allowedScopes?: string[];
   userClaims?: string[];
 }
 
-export interface UpdateApiResourceRequest {
+export interface UpdateResourceRequest {
   displayName?: string;
   description?: string;
   enabled?: boolean;
   showInDiscoveryDocument?: boolean;
-  allowedAccessTokenSigningAlgorithms?: string;
-  requireResourceIndicator?: boolean;
-  scopes?: string[];
+  allowedScopes?: string[];
   userClaims?: string[];
 }
 
@@ -95,8 +81,6 @@ export interface CreateApiScopeRequest {
   emphasize?: boolean;
   showInDiscoveryDocument?: boolean;
   userClaims?: string[];
-  /** Optional: API resource to automatically add this scope to */
-  apiResourceName?: string;
 }
 
 export interface UpdateApiScopeRequest {
@@ -107,8 +91,6 @@ export interface UpdateApiScopeRequest {
   emphasize?: boolean;
   showInDiscoveryDocument?: boolean;
   userClaims?: string[];
-  /** API resources this scope should belong to */
-  apiResourceNames?: string[];
 }
 
 export interface CreateIdentityResourceRequest {
@@ -126,11 +108,10 @@ export interface ApiScopeSummary {
   name: string;
   displayName?: string;
   description?: string;
-  enabled: boolean;
 }
 
-export interface ApiResourceSummary {
-  name: string;
+export interface ResourceSummary {
+  uri: string;
   displayName?: string;
   description?: string;
   enabled: boolean;

@@ -1,13 +1,18 @@
 using System.Reflection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Oluso.Core.Authentication;
+using Oluso.Core.Data;
 using Oluso.Core.Events;
 using Oluso.Core.UserJourneys;
 using Oluso.Enterprise.Fido2.Configuration;
 using Oluso.Enterprise.Fido2.Controllers;
+using Oluso.Enterprise.Fido2.EntityFramework;
 using Oluso.Enterprise.Fido2.Services;
 using Oluso.Enterprise.Fido2.Steps;
+using Oluso.Enterprise.Fido2.Stores;
 
 namespace Oluso.Enterprise.Fido2;
 
@@ -121,6 +126,9 @@ public static class Fido2Extensions
 
         // Register FIDO2 webhook event provider for webhook subscriptions
         builder.Services.AddSingleton<IWebhookEventProvider, Fido2WebhookEventProvider>();
+
+        // Register authentication method provider for pluggable UI discovery
+        builder.Services.AddScoped<IAuthenticationMethodProvider, PasskeyAuthenticationMethodProvider>();
 
         // Add session support (required for FIDO2 registration/assertion state).
         // Multiple calls to AddSession are safe (idempotent).
@@ -273,5 +281,94 @@ public class Fido2Builder
         });
 
         return _services;
+    }
+}
+
+/// <summary>
+/// Extension methods for configuring FIDO2 DbContext
+/// </summary>
+public static class Fido2DbContextExtensions
+{
+    /// <summary>
+    /// Add FIDO2 DbContext with SQLite.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
+    /// </summary>
+    public static IServiceCollection AddFido2Sqlite(
+        this IServiceCollection services,
+        string connectionString)
+    {
+        services.AddDbContext<Fido2DbContextSqlite>(options =>
+            options.UseSqlite(connectionString, o =>
+                o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(Fido2DbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<Fido2DbContext>(sp => sp.GetRequiredService<Fido2DbContextSqlite>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<Fido2DbContextSqlite>());
+
+        // Register credential store
+        services.AddScoped<IFido2CredentialStore, Fido2CredentialStore>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add FIDO2 DbContext with SQL Server.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
+    /// </summary>
+    public static IServiceCollection AddFido2SqlServer(
+        this IServiceCollection services,
+        string connectionString)
+    {
+        services.AddDbContext<Fido2DbContextSqlServer>(options =>
+            options.UseSqlServer(connectionString, o =>
+                o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableName(Fido2DbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<Fido2DbContext>(sp => sp.GetRequiredService<Fido2DbContextSqlServer>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<Fido2DbContextSqlServer>());
+
+        // Register credential store
+        services.AddScoped<IFido2CredentialStore, Fido2CredentialStore>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add FIDO2 DbContext with PostgreSQL.
+    /// Uses provider-specific context to ensure migrations are properly discovered.
+    /// </summary>
+    public static IServiceCollection AddFido2Npgsql(
+        this IServiceCollection services,
+        string connectionString)
+    {
+        services.AddDbContext<Fido2DbContextPostgres>(options =>
+            options.UseNpgsql(connectionString, o =>
+                o.MigrationsHistoryTable(PluginDbContextExtensions.GetMigrationsTableNamePostgres(Fido2DbContext.PluginIdentifier))));
+
+        // Register as both the specific type and base type
+        services.AddScoped<Fido2DbContext>(sp => sp.GetRequiredService<Fido2DbContextPostgres>());
+        services.AddScoped<IMigratableDbContext>(sp => sp.GetRequiredService<Fido2DbContextPostgres>());
+
+        // Register credential store
+        services.AddScoped<IFido2CredentialStore, Fido2CredentialStore>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Add FIDO2 DbContext using the specified database provider.
+    /// Convenience method that selects the appropriate provider-specific context.
+    /// </summary>
+    public static IServiceCollection AddFido2ForProvider(
+        this IServiceCollection services,
+        string provider,
+        string connectionString)
+    {
+        return provider.ToLowerInvariant() switch
+        {
+            "sqlserver" or "mssql" => services.AddFido2SqlServer(connectionString),
+            "postgresql" or "postgres" or "npgsql" => services.AddFido2Npgsql(connectionString),
+            _ => services.AddFido2Sqlite(connectionString)
+        };
     }
 }

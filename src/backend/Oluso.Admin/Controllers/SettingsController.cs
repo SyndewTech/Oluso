@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
 
@@ -39,6 +40,7 @@ public class SettingsController : AdminBaseController
     /// Get all settings
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.SettingsRead)]
     public async Task<ActionResult<ServerSettingsDto>> GetSettings(CancellationToken cancellationToken)
     {
         var tenantSettings = await GetTenantSettingsAsync(cancellationToken);
@@ -71,6 +73,7 @@ public class SettingsController : AdminBaseController
     /// Update settings
     /// </summary>
     [HttpPut]
+    [RequirePermission(AdminPermissions.SettingsWrite)]
     public async Task<ActionResult<ServerSettingsDto>> UpdateSettings(
         [FromBody] ServerSettingsDto settings,
         CancellationToken cancellationToken)
@@ -99,6 +102,7 @@ public class SettingsController : AdminBaseController
     /// Get token settings
     /// </summary>
     [HttpGet("tokens")]
+    [RequirePermission(AdminPermissions.SettingsRead)]
     public async Task<ActionResult<TokenSettingsDto>> GetTokenSettings(CancellationToken cancellationToken)
     {
         var tenantSettings = await GetTenantSettingsAsync(cancellationToken);
@@ -117,6 +121,7 @@ public class SettingsController : AdminBaseController
     /// Get security settings
     /// </summary>
     [HttpGet("security")]
+    [RequirePermission(AdminPermissions.SettingsRead)]
     public async Task<ActionResult<SecuritySettingsDto>> GetSecuritySettings(CancellationToken cancellationToken)
     {
         var tenantSettings = await GetTenantSettingsAsync(cancellationToken);
@@ -135,6 +140,7 @@ public class SettingsController : AdminBaseController
     /// Get CORS settings
     /// </summary>
     [HttpGet("cors")]
+    [RequirePermission(AdminPermissions.SettingsRead)]
     public async Task<ActionResult<CorsSettingsDto>> GetCorsSettings(CancellationToken cancellationToken)
     {
         var tenantSettings = await GetTenantSettingsAsync(cancellationToken);
@@ -152,6 +158,7 @@ public class SettingsController : AdminBaseController
     /// Get branding settings
     /// </summary>
     [HttpGet("branding")]
+    [RequirePermission(AdminPermissions.SettingsRead)]
     public async Task<ActionResult<BrandingSettingsDto>> GetBrandingSettings(CancellationToken cancellationToken)
     {
         var tenantSettings = await GetTenantSettingsAsync(cancellationToken);
@@ -162,6 +169,7 @@ public class SettingsController : AdminBaseController
     /// Update branding settings
     /// </summary>
     [HttpPut("branding")]
+    [RequirePermission(AdminPermissions.SettingsWrite)]
     public async Task<ActionResult<BrandingSettingsDto>> UpdateBrandingSettings(
         [FromBody] BrandingSettingsDto settings,
         CancellationToken cancellationToken)

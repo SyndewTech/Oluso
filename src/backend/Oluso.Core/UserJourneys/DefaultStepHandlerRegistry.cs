@@ -272,9 +272,9 @@ public class DefaultStepHandlerRegistry : IExtendedStepHandlerRegistry
                 ["showIdentityScopes"] = new { type = "boolean", @default = true, description = "Show identity scopes" }
             });
 
-        RegisterTypeWithRawSchema("claims_collection", "Claims Collection", "User Interaction",
-            "Collects additional user information via configurable form",
-            GetClaimsCollectionSchema());
+        RegisterTypeWithRawSchema("dynamic_form", "Dynamic Form", "User Interaction",
+            "Collects user information via configurable form with optional persistence to user properties",
+            GetDynamicFormSchema());
 
         RegisterTypeWithRawSchema("captcha", "CAPTCHA Verification", "User Interaction",
             "Bot protection verification",
@@ -361,7 +361,7 @@ public class DefaultStepHandlerRegistry : IExtendedStepHandlerRegistry
             });
     }
 
-    private static Dictionary<string, object> GetClaimsCollectionSchema()
+    private static Dictionary<string, object> GetDynamicFormSchema()
     {
         return new Dictionary<string, object>
         {
@@ -407,6 +407,8 @@ public class DefaultStepHandlerRegistry : IExtendedStepHandlerRegistry
                         ["readOnly"] = new { type = "boolean", @default = false, description = "Field is read-only" },
                         ["hidden"] = new { type = "boolean", @default = false, description = "Field is hidden" },
                         ["group"] = new { type = "string", description = "Group name for fieldset grouping" },
+                        ["persistToUser"] = new { type = "boolean", @default = false, description = "Persist field value to user properties" },
+                        ["userPropertyName"] = new { type = "string", description = "User property name (e.g., firstName, lastName, phoneNumber, picture, or custom property key)" },
                         ["options"] = new
                         {
                             type = "array",

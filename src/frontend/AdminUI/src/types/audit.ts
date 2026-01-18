@@ -24,6 +24,9 @@ export interface AuditLogFilter {
   subjectId?: string;
   clientId?: string;
   success?: boolean;
+  search?: string;
+  from?: string;
+  to?: string;
   pageNumber: number;
   pageSize: number;
 }

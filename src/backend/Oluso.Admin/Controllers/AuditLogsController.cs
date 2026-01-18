@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -44,6 +45,7 @@ public class AuditLogsController : AdminBaseController
     /// Get audit logs with filtering and pagination
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.AuditLogsRead)]
     public async Task<ActionResult<AuditLogPaginatedResult>> GetAuditLogs(
         [FromQuery] string? action,
         [FromQuery] string? category,
@@ -107,6 +109,7 @@ public class AuditLogsController : AdminBaseController
     /// Get a specific audit log by ID
     /// </summary>
     [HttpGet("{id:long}")]
+    [RequirePermission(AdminPermissions.AuditLogsRead)]
     public async Task<ActionResult<AuditLogDto>> GetAuditLog(long id, CancellationToken cancellationToken = default)
     {
         if (!_auditLogService.IsEnabled)
@@ -131,6 +134,7 @@ public class AuditLogsController : AdminBaseController
     /// Get audit logs for a specific resource
     /// </summary>
     [HttpGet("resource/{resourceType}/{resourceId}")]
+    [RequirePermission(AdminPermissions.AuditLogsRead)]
     public async Task<ActionResult<List<AuditLogDto>>> GetResourceAuditLogs(
         string resourceType,
         string resourceId,
@@ -154,6 +158,7 @@ public class AuditLogsController : AdminBaseController
     /// Get audit logs for a specific user
     /// </summary>
     [HttpGet("user/{subjectId}")]
+    [RequirePermission(AdminPermissions.AuditLogsRead)]
     public async Task<ActionResult<List<AuditLogDto>>> GetUserAuditLogs(
         string subjectId,
         [FromQuery] int limit = 100,
@@ -176,6 +181,7 @@ public class AuditLogsController : AdminBaseController
     /// Export audit logs
     /// </summary>
     [HttpGet("export")]
+    [RequirePermission(AdminPermissions.AuditLogsExport)]
     public async Task<ActionResult> ExportAuditLogs(
         [FromQuery] string? action,
         [FromQuery] string? category,

@@ -26,6 +26,8 @@
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Ldap\Oluso.Enterprise.Ldap.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Saml\Oluso.Enterprise.Saml.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Scim\Oluso.Enterprise.Scim.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.Telemetry.OpenTelemetry\Oluso.Telemetry.OpenTelemetry.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\AzureKeyVault\Oluso.Enterprise.AzureKeyVault.csproj" />
   </ItemGroup>
 
   <ItemGroup>

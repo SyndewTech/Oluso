@@ -180,11 +180,21 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
             }
         }
 
+        // Collect permissions from user's roles only when the "permissions" scope is requested
+        var permissions = new List<string>();
+        if (scopes.Contains(OidcConstants.Scopes.Permissions))
+        {
+            var tenantId = resultClaims.TryGetValue("tenant_id", out var tid) ? tid?.ToString() : null;
+            permissions = (await _profileService.GetUserPermissionsAsync(
+                subjectId, tenantId, cancellationToken)).ToList();
+        }
+
         return new GrantResult
         {
             SubjectId = subjectId,
             Scopes = scopes,
-            Claims = resultClaims
+            Claims = resultClaims,
+            Permissions = permissions
         };
     }
 

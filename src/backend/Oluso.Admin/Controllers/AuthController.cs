@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Admin.Authorization;
@@ -14,6 +15,11 @@ namespace Oluso.Admin.Controllers;
 /// Authentication controller for Admin UI.
 /// Admin login is NOT tenant-scoped - admins can log in from any domain.
 /// After login, the JWT contains the admin's TenantId which determines data access.
+///
+/// Tenant resolution priority for login:
+/// 1. Explicit tenant qualifier in username (e.g., "john@acme")
+/// 2. Tenant context from subdomain/domain (e.g., acme.example.com)
+/// 3. Ask user to specify if multiple accounts found
 /// </summary>
 [ApiController]
 [Route("api/admin/auth")]
@@ -21,6 +27,7 @@ public class AuthController : ControllerBase
 {
     private readonly IOlusoUserService _userService;
     private readonly ITenantStore _tenantStore;
+    private readonly ITenantContext _tenantContext;
     private readonly IRoleStore _roleStore;
     private readonly IConfiguration _configuration;
     private readonly IOlusoEventService _eventService;
@@ -29,6 +36,7 @@ public class AuthController : ControllerBase
     public AuthController(
         IOlusoUserService userService,
         ITenantStore tenantStore,
+        ITenantContext tenantContext,
         IRoleStore roleStore,
         IConfiguration configuration,
         IOlusoEventService eventService,
@@ -36,6 +44,7 @@ public class AuthController : ControllerBase
     {
         _userService = userService;
         _tenantStore = tenantStore;
+        _tenantContext = tenantContext;
         _roleStore = roleStore;
         _configuration = configuration;
         _eventService = eventService;
@@ -66,6 +75,8 @@ public class AuthController : ControllerBase
         var (username, tenantIdentifier) = ParseUsernameWithTenant(request.Username);
 
         string? tenantId = null;
+
+        // Priority 1: Explicit tenant qualifier in username (e.g., "john@acme")
         if (!string.IsNullOrEmpty(tenantIdentifier))
         {
             var tenant = await _tenantStore.GetByIdentifierAsync(tenantIdentifier, cancellationToken);
@@ -75,6 +86,13 @@ public class AuthController : ControllerBase
                 return Unauthorized(new { message = "Invalid username or password" });
             }
             tenantId = tenant.Id;
+            _logger.LogDebug("Using tenant from username qualifier: {TenantId}", tenantId);
+        }
+        // Priority 2: Tenant context from subdomain/domain resolution
+        else if (_tenantContext.HasTenant)
+        {
+            tenantId = _tenantContext.TenantId;
+            _logger.LogDebug("Using tenant from request context (subdomain/domain): {TenantId}", tenantId);
         }
 
         // Validate credentials
@@ -85,12 +103,12 @@ public class AuthController : ControllerBase
             if (result.RequiresTenantQualifier)
             {
                 _logger.LogWarning(
-                    "Admin login failed: multiple users found for {Username}",
+                    "Admin login failed: multiple users found for {Username} across tenants",
                     request.Username);
 
                 return BadRequest(new
                 {
-                    message = "Multiple accounts found with this username. Please specify tenant: username@tenant",
+                    message = "Multiple accounts found with this username. Either: (1) access via tenant subdomain, or (2) specify tenant in username: username@tenant",
                     code = "MULTIPLE_ACCOUNTS",
                     tenants = result.AvailableTenants
                 });
@@ -118,15 +136,24 @@ public class AuthController : ControllerBase
         // 2. A role with the admin_dashboard_access claim set to "true"
         var roles = await _userService.GetUserRolesAsync(user.Id, cancellationToken);
 
-        // Get role claims to check for admin_dashboard_access claim
+        // Get role claims and permissions
         var roleClaims = new List<(string Type, string Value)>();
+        var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var roleName in roles)
         {
-            var role = await _roleStore.GetByNameAsync(roleName, user.TenantId, cancellationToken);
+            // Try tenant-specific role first, then global
+            var role = await _roleStore.GetByNameAsync(roleName, user.TenantId, cancellationToken)
+                ?? await _roleStore.GetByNameAsync(roleName, null, cancellationToken);
             if (role != null)
             {
                 var claims = await _roleStore.GetRoleClaimsAsync(role.Id, cancellationToken);
                 roleClaims.AddRange(claims.Select(c => (c.Type, c.Value)));
+
+                // Collect permissions from role
+                foreach (var permission in role.GetPermissions())
+                {
+                    permissions.Add(permission);
+                }
             }
         }
 
@@ -141,8 +168,8 @@ public class AuthController : ControllerBase
         // Update last login time
         await _userService.UpdateLastLoginAsync(user.Id, cancellationToken);
 
-        // Generate JWT token
-        var accessToken = GenerateJwtToken(user, roles);
+        // Generate JWT token with permissions
+        var accessToken = GenerateJwtToken(user, roles, permissions);
 
         // Raise login success event
         await _eventService.RaiseAsync(new UserSignedInEvent
@@ -168,6 +195,7 @@ public class AuthController : ControllerBase
                 Email = user.Email,
                 DisplayName = user.DisplayName ?? $"{user.FirstName} {user.LastName}".Trim(),
                 Roles = roles.ToList(),
+                Permissions = permissions.ToList(),
                 TenantId = user.TenantId
             },
             AccessToken = accessToken
@@ -229,6 +257,21 @@ public class AuthController : ControllerBase
 
         var roles = await _userService.GetUserRolesAsync(userId, cancellationToken);
 
+        // Collect permissions from roles
+        var permissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var roleName in roles)
+        {
+            var role = await _roleStore.GetByNameAsync(roleName, user.TenantId, cancellationToken)
+                ?? await _roleStore.GetByNameAsync(roleName, null, cancellationToken);
+            if (role != null)
+            {
+                foreach (var permission in role.GetPermissions())
+                {
+                    permissions.Add(permission);
+                }
+            }
+        }
+
         return Ok(new UserInfo
         {
             Id = user.Id,
@@ -236,11 +279,12 @@ public class AuthController : ControllerBase
             Email = user.Email,
             DisplayName = user.DisplayName ?? $"{user.FirstName} {user.LastName}".Trim(),
             Roles = roles.ToList(),
+            Permissions = permissions.ToList(),
             TenantId = user.TenantId
         });
     }
 
-    private string GenerateJwtToken(ValidatedUser user, IEnumerable<string> roles)
+    private string GenerateJwtToken(ValidatedUser user, IEnumerable<string> roles, IEnumerable<string> permissions)
     {
         var jwtKey = _configuration["Oluso:Jwt:Key"]
             ?? _configuration["Oluso:AdminJwtKey"]
@@ -266,16 +310,32 @@ public class AuthController : ControllerBase
         };
 
         // Add roles
-        foreach (var role in roles)
+        var rolesList = roles.ToList();
+        foreach (var role in rolesList)
         {
             claims.Add(new Claim(ClaimTypes.Role, role));
             claims.Add(new Claim("role", role));
+        }
+
+        // Add super_admin claim for SuperAdmin/SystemAdmin users
+        if (rolesList.Any(r => r.Equals("SuperAdmin", StringComparison.OrdinalIgnoreCase) ||
+                               r.Equals("SystemAdmin", StringComparison.OrdinalIgnoreCase)))
+        {
+            claims.Add(new Claim("super_admin", "true"));
         }
 
         // Add tenant if present
         if (!string.IsNullOrEmpty(user.TenantId))
         {
             claims.Add(new Claim("tenant_id", user.TenantId));
+        }
+
+        // Add permissions as JSON array (ensure distinct)
+        var permissionsList = permissions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (permissionsList.Count > 0)
+        {
+            var permissionsJson = JsonSerializer.Serialize(permissionsList);
+            claims.Add(new Claim("permissions", permissionsJson, JsonClaimValueTypes.JsonArray));
         }
 
         var token = new JwtSecurityToken(
@@ -310,6 +370,10 @@ public class UserInfo
     public string Email { get; set; } = null!;
     public string? DisplayName { get; set; }
     public List<string> Roles { get; set; } = new();
+    /// <summary>
+    /// Permissions derived from the user's roles.
+    /// </summary>
+    public List<string> Permissions { get; set; } = new();
     /// <summary>
     /// The tenant this admin belongs to. Null for system-level admins (SuperAdmin).
     /// </summary>

@@ -468,7 +468,13 @@ function CertificateCard({
       </div>
 
       {certInfo?.hasCertificate && (
-        <div className="bg-white rounded border border-gray-200 p-3 space-y-2">
+        <div className={`bg-white rounded border p-3 space-y-2 ${certInfo.isRevoked ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+          {certInfo.isRevoked && (
+            <div className="flex items-center gap-2 text-red-700 bg-red-100 rounded px-2 py-1 mb-2">
+              <ExclamationTriangleIcon className="h-4 w-4" />
+              <span className="text-sm font-medium">Certificate Revoked - Please generate a new certificate</span>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             <div>
               <span className="text-gray-500">Subject:</span>
@@ -484,13 +490,18 @@ function CertificateCard({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-gray-500">Valid Until:</span>
-              <span className={`ml-2 ${certInfo.isExpired ? 'text-red-600' : certInfo.isExpiringSoon ? 'text-yellow-600' : 'text-gray-900'}`}>
+              <span className={`ml-2 ${certInfo.isRevoked ? 'text-red-600' : certInfo.isExpired ? 'text-red-600' : certInfo.isExpiringSoon ? 'text-yellow-600' : 'text-gray-900'}`}>
                 {formatDate(certInfo.notAfter)}
               </span>
-              {certInfo.isExpired && (
+              {certInfo.isRevoked && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                  Revoked
+                </span>
+              )}
+              {!certInfo.isRevoked && certInfo.isExpired && (
                 <ExclamationTriangleIcon className="h-4 w-4 text-red-500" title="Certificate expired" />
               )}
-              {certInfo.isExpiringSoon && !certInfo.isExpired && (
+              {!certInfo.isRevoked && certInfo.isExpiringSoon && !certInfo.isExpired && (
                 <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" title="Certificate expiring soon" />
               )}
             </div>

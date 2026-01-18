@@ -2,31 +2,23 @@ namespace Oluso.Admin.Authorization;
 
 /// <summary>
 /// Security constants for reserved claim types and role names.
-/// These cannot be created or modified by tenant administrators.
+///
+/// SECURITY MODEL:
+/// - Permissions are system-defined constants stored in database roles
+/// - Claims are identity data in tokens (profile, roles, org info)
+/// - Authorization checks verify role membership against the database
+/// - Token claims are NOT directly trusted for permission checks
 /// </summary>
 public static class ReservedClaimTypes
 {
     /// <summary>
-    /// Claim types that are reserved for system use and cannot be created by tenant admins.
-    /// These claims grant elevated privileges or affect system-level authorization.
+    /// Standard OIDC/JWT claim types that are system-managed.
+    /// These claims are set by the token service and should not be
+    /// overwritten by user claims or client claims.
     /// </summary>
-    public static readonly HashSet<string> Reserved = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> StandardClaims = new(StringComparer.OrdinalIgnoreCase)
     {
-        // SuperAdmin/system-level claims
-        "super_admin",
-        "superadmin",
-        "system_admin",
-        "systemadmin",
-        "global_admin",
-        "globaladmin",
-        "platform_admin",
-
-        // Tenant bypass claims
-        "tenant_bypass",
-        "all_tenants",
-        "cross_tenant",
-
-        // Standard security claims that shouldn't be manually set
+        // JWT registered claims (RFC 7519)
         "sub",                  // Subject (user ID)
         "iss",                  // Issuer
         "aud",                  // Audience
@@ -34,6 +26,8 @@ public static class ReservedClaimTypes
         "nbf",                  // Not before
         "iat",                  // Issued at
         "jti",                  // JWT ID
+
+        // OIDC authentication claims
         "auth_time",            // Authentication time
         "amr",                  // Authentication methods references
         "acr",                  // Authentication context class reference
@@ -42,16 +36,38 @@ public static class ReservedClaimTypes
         "at_hash",              // Access token hash
         "c_hash",               // Code hash
         "s_hash",               // State hash
-
-        // Internal tenant claims
-        "tenant_id",
-        "tid",
-        "http://schemas.oluso.io/claims/tenant",
+        "sid",                  // Session ID
     };
 
     /// <summary>
-    /// Role names that are reserved for system use and cannot be created at tenant level.
-    /// These roles grant access to the Admin Dashboard and must be assigned by SuperAdmin only.
+    /// System-level claim types that affect authorization.
+    /// These are managed by the system and should not be user-settable.
+    /// </summary>
+    public static readonly HashSet<string> SystemClaims = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Tenant context
+        "tenant_id",
+        "tid",
+
+        // Role claims (populated from database)
+        "role",
+
+        // Permissions claim (populated from roles at token creation)
+        // SECURITY: This must never be settable via client claims or API scopes
+        "permissions",
+
+        // Organization context
+        "org_id",
+        "org_ids",
+        "org_role",
+        "org_roles",
+        "is_org_admin",
+        "allowed_tenants",
+    };
+
+    /// <summary>
+    /// Role names that are reserved for system use.
+    /// These roles have special meaning in the authorization system.
     /// </summary>
     public static readonly HashSet<string> ReservedRoles = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -60,29 +76,62 @@ public static class ReservedClaimTypes
         "GlobalAdmin",
         "PlatformAdmin",
         "System",
-
-        // Admin roles that grant dashboard access - these are system-managed
+        "OrgAdmin",
         "TenantAdmin",
         "Admin",
     };
 
     /// <summary>
     /// Roles that grant access to the Admin Dashboard.
-    /// Users must have at least one of these roles to log in to the Admin UI.
     /// </summary>
     public static readonly HashSet<string> AdminDashboardRoles = new(StringComparer.OrdinalIgnoreCase)
     {
         "SuperAdmin",
         "SystemAdmin",
+        "OrgAdmin",
         "TenantAdmin",
         "Admin",
     };
 
     /// <summary>
     /// Claim type that grants access to the Admin Dashboard.
-    /// This can be added to custom roles to allow admin access without using reserved role names.
+    /// Can be added to custom roles for admin access.
     /// </summary>
     public const string AdminDashboardAccessClaim = "admin_dashboard_access";
+
+    /// <summary>
+    /// Checks if a claim type is a standard OIDC/JWT claim that should not be overwritten.
+    /// </summary>
+    public static bool IsStandardClaim(string claimType)
+    {
+        if (string.IsNullOrWhiteSpace(claimType))
+            return false;
+
+        return StandardClaims.Contains(claimType);
+    }
+
+    /// <summary>
+    /// Checks if a claim type is a system-managed claim.
+    /// </summary>
+    public static bool IsSystemClaim(string claimType)
+    {
+        if (string.IsNullOrWhiteSpace(claimType))
+            return false;
+
+        return SystemClaims.Contains(claimType);
+    }
+
+    /// <summary>
+    /// Checks if a claim type should not be settable via client claims.
+    /// Client claims should not override standard or system claims.
+    /// </summary>
+    public static bool IsProtectedFromClientClaims(string claimType)
+    {
+        if (string.IsNullOrWhiteSpace(claimType))
+            return false;
+
+        return IsStandardClaim(claimType) || IsSystemClaim(claimType);
+    }
 
     /// <summary>
     /// Checks if a claim type is reserved for system use.
@@ -92,37 +141,7 @@ public static class ReservedClaimTypes
         if (string.IsNullOrWhiteSpace(claimType))
             return false;
 
-        // Direct match
-        if (Reserved.Contains(claimType))
-            return true;
-
-        // Also check for variations with common prefixes/suffixes
-        var normalized = claimType.Replace("-", "_").Replace(".", "_").ToLowerInvariant();
-
-        // Block any claim that contains "super_admin" or similar patterns
-        if (normalized.Contains("super_admin") ||
-            normalized.Contains("superadmin") ||
-            normalized.Contains("system_admin") ||
-            normalized.Contains("systemadmin") ||
-            normalized.Contains("global_admin") ||
-            normalized.Contains("globaladmin") ||
-            normalized.Contains("platform_admin"))
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Checks if a role name is reserved for system use.
-    /// </summary>
-    public static bool IsReservedRoleName(string roleName)
-    {
-        if (string.IsNullOrWhiteSpace(roleName))
-            return false;
-
-        return ReservedRoles.Contains(roleName);
+        return IsStandardClaim(claimType) || IsSystemClaim(claimType);
     }
 
     /// <summary>
@@ -138,14 +157,30 @@ public static class ReservedClaimTypes
     }
 
     /// <summary>
-    /// Checks if a user has access to the Admin Dashboard based on their roles and claims.
-    /// Access is granted if:
-    /// 1. User has one of the AdminDashboardRoles (SuperAdmin, SystemAdmin, TenantAdmin, Admin), OR
-    /// 2. User has a role with the admin_dashboard_access claim
+    /// Checks if a role name is reserved for system use.
     /// </summary>
-    /// <param name="roles">User's roles</param>
-    /// <param name="roleClaims">Claims from the user's roles (claim type, claim value pairs)</param>
-    /// <returns>True if user has admin dashboard access</returns>
+    public static bool IsReservedRoleName(string roleName)
+    {
+        if (string.IsNullOrWhiteSpace(roleName))
+            return false;
+
+        return ReservedRoles.Contains(roleName);
+    }
+
+    /// <summary>
+    /// Checks if a role grants admin dashboard access.
+    /// </summary>
+    public static bool IsAdminDashboardRole(string roleName)
+    {
+        if (string.IsNullOrWhiteSpace(roleName))
+            return false;
+
+        return AdminDashboardRoles.Contains(roleName);
+    }
+
+    /// <summary>
+    /// Checks if a user has access to the Admin Dashboard based on their roles and claims.
+    /// </summary>
     public static bool HasAdminDashboardAccess(
         IEnumerable<string> roles,
         IEnumerable<(string Type, string Value)>? roleClaims = null)
@@ -166,16 +201,5 @@ public static class ReservedClaimTypes
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// Checks if a role grants admin dashboard access.
-    /// </summary>
-    public static bool IsAdminDashboardRole(string roleName)
-    {
-        if (string.IsNullOrWhiteSpace(roleName))
-            return false;
-
-        return AdminDashboardRoles.Contains(roleName);
     }
 }

@@ -27,6 +27,7 @@ public class TokenService : ITokenService
     private readonly ITenantContext _tenantContext;
     private readonly ITenantSettingsProvider _tenantSettings;
     private readonly IClaimsProviderRegistry _claimsProviderRegistry;
+    private readonly IOrganizationMembershipStore? _organizationMembershipStore;
     private readonly IConfiguration _configuration;
     private readonly ILogger<TokenService> _logger;
 
@@ -38,7 +39,8 @@ public class TokenService : ITokenService
         ITenantSettingsProvider tenantSettings,
         IClaimsProviderRegistry claimsProviderRegistry,
         IConfiguration configuration,
-        ILogger<TokenService> logger)
+        ILogger<TokenService> logger,
+        IOrganizationMembershipStore? organizationMembershipStore = null)
     {
         _signingCredentialStore = signingCredentialStore;
         _grantStore = grantStore;
@@ -46,6 +48,7 @@ public class TokenService : ITokenService
         _tenantContext = tenantContext;
         _tenantSettings = tenantSettings;
         _claimsProviderRegistry = claimsProviderRegistry;
+        _organizationMembershipStore = organizationMembershipStore;
         _configuration = configuration;
         _logger = logger;
     }
@@ -71,8 +74,19 @@ public class TokenService : ITokenService
             mergedClaims[claim.Key] = claim.Value;
         }
 
-        // Determine audiences from API resources associated with the requested scopes
-        var audiences = await GetAudiencesFromScopesAsync(scopes, client.ClientId, cancellationToken);
+        // Add organization claims if user is member of organizations
+        if (!string.IsNullOrEmpty(grant.SubjectId))
+        {
+            var orgClaims = await GetOrganizationClaimsAsync(grant.SubjectId, cancellationToken);
+            foreach (var claim in orgClaims)
+            {
+                mergedClaims[claim.Key] = claim.Value;
+            }
+        }
+
+        // Determine audiences from resource parameter (RFC 8707)
+        // The resource URIs directly become the audience values
+        var audiences = await GetAudiencesFromResourcesAsync(request.Resource, client.ClientId, cancellationToken);
 
         // Create token request with DPoP thumbprint from validated proof
         var tokenRequest = new TokenCreationRequest
@@ -82,6 +96,7 @@ public class TokenService : ITokenService
             ClientName = client.ClientName,
             Scopes = scopes,
             Claims = mergedClaims,
+            Permissions = grant.Permissions.ToList(),
             Lifetime = client.AccessTokenLifetime,
             IdentityTokenLifetime = client.IdentityTokenLifetime,
             SessionId = grant.SessionId,
@@ -243,6 +258,15 @@ public class TokenService : ITokenService
             }
             var value = claim.Value is string s ? s : JsonSerializer.Serialize(claim.Value);
             claims.Add(new Claim(claim.Key, value));
+        }
+
+        // Add permissions as a dedicated claim when the "permissions" scope is requested
+        // This enables client-side permission checks and reduces database lookups
+        if (request.Permissions.Count > 0 && request.Scopes.Contains(OidcConstants.Scopes.Permissions))
+        {
+            var distinctPermissions = request.Permissions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var permissionsJson = JsonSerializer.Serialize(distinctPermissions);
+            claims.Add(new Claim("permissions", permissionsJson, JsonClaimValueTypes.JsonArray));
         }
 
         // Determine audiences - default to client_id if no audiences specified
@@ -534,41 +558,31 @@ public class TokenService : ITokenService
     }
 
     /// <summary>
-    /// Gets audiences (aud claim) based on API resources associated with the requested scopes.
-    /// If scopes have associated API resources, their names become audiences.
-    /// If no API resources are found, defaults to the client ID.
+    /// Gets audiences (aud claim) based on the resource parameter (RFC 8707).
+    /// Per RFC 8707, the resource URIs directly become the audience values.
+    /// If no resources are specified, defaults to the client ID.
     /// </summary>
-    private async Task<ICollection<string>> GetAudiencesFromScopesAsync(
-        IEnumerable<string> scopes,
+    private async Task<ICollection<string>> GetAudiencesFromResourcesAsync(
+        ICollection<string> resources,
         string clientId,
         CancellationToken cancellationToken)
     {
-        // Filter to only API scopes (not identity scopes like openid, profile, etc.)
-        var apiScopes = scopes.Where(s =>
-            s != OidcConstants.Scopes.OpenId &&
-            s != OidcConstants.Scopes.Profile &&
-            s != OidcConstants.Scopes.Email &&
-            s != OidcConstants.Scopes.Address &&
-            s != OidcConstants.Scopes.Phone &&
-            s != OidcConstants.Scopes.OfflineAccess).ToList();
-
-        if (apiScopes.Count == 0)
+        if (resources == null || resources.Count == 0)
         {
-            // Only identity scopes requested, use client ID as audience
+            // No resource parameter provided - check for default resource in tenant settings
+            var protocolSettings = await _tenantSettings.GetProtocolSettingsAsync(cancellationToken);
+            if (!string.IsNullOrEmpty(protocolSettings.DefaultResourceUri))
+            {
+                return new List<string> { protocolSettings.DefaultResourceUri };
+            }
+
+            // No default resource, use client ID as audience (OAuth 2.0 default behavior)
             return new List<string> { clientId };
         }
 
-        // Find API resources that contain these scopes
-        var apiResources = await _resourceStore.FindApiResourcesByScopeNameAsync(apiScopes, cancellationToken);
-        var resourceNames = apiResources.Select(r => r.Name).Distinct().ToList();
-
-        if (resourceNames.Count == 0)
-        {
-            // Scopes exist but no API resources defined, use client ID as audience
-            return new List<string> { clientId };
-        }
-
-        return resourceNames;
+        // RFC 8707: Resource URIs directly become the audience values
+        // The resource parameter contains absolute URIs that identify the protected resources
+        return resources.Distinct().ToList();
     }
 
     private async Task<IDictionary<string, object>> GetProviderClaimsAsync(
@@ -602,6 +616,75 @@ public class TokenService : ITokenService
             _logger.LogError(ex, "Error collecting claims from providers for user {SubjectId}", grant.SubjectId);
             return new Dictionary<string, object>();
         }
+    }
+
+    /// <summary>
+    /// Gets organization-related claims for a user.
+    /// These claims enable organization-based access control and tenant switching.
+    /// </summary>
+    private async Task<IDictionary<string, object>> GetOrganizationClaimsAsync(
+        string subjectId,
+        CancellationToken cancellationToken)
+    {
+        var claims = new Dictionary<string, object>();
+
+        if (_organizationMembershipStore == null)
+        {
+            return claims;
+        }
+
+        try
+        {
+            // Get all organizations the user is a member of
+            var memberships = await _organizationMembershipStore.GetByUserAsync(subjectId, cancellationToken);
+            var membershipList = memberships.ToList();
+
+            if (membershipList.Count == 0)
+            {
+                return claims;
+            }
+
+            // Add organization IDs
+            var orgIds = membershipList.Select(m => m.OrganizationId).ToList();
+            claims["org_ids"] = orgIds;
+
+            // Add organization roles (format: { "org_id": "role" })
+            var orgRoles = membershipList.ToDictionary(
+                m => m.OrganizationId,
+                m => m.Role.ToString().ToLowerInvariant());
+            claims["org_roles"] = orgRoles;
+
+            // Add allowed tenant IDs (aggregated from all memberships)
+            var allowedTenantIds = new HashSet<string>();
+            foreach (var membership in membershipList)
+            {
+                var tenantIds = await _organizationMembershipStore.GetAllowedTenantIdsAsync(
+                    subjectId, membership.OrganizationId, cancellationToken);
+                foreach (var tenantId in tenantIds)
+                {
+                    allowedTenantIds.Add(tenantId);
+                }
+            }
+
+            if (allowedTenantIds.Count > 0)
+            {
+                claims["allowed_tenants"] = allowedTenantIds.ToList();
+            }
+
+            // Check if user is an org admin (owner or admin in any org)
+            var isOrgAdmin = membershipList.Any(m =>
+                m.Role == OrganizationRole.Owner || m.Role == OrganizationRole.Admin);
+            if (isOrgAdmin)
+            {
+                claims["is_org_admin"] = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error collecting organization claims for user {SubjectId}", subjectId);
+        }
+
+        return claims;
     }
 
     private static string GenerateHandle()

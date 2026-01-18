@@ -53,9 +53,15 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ICertificateMaterialProviderRegistry>(sp =>
         {
             var providers = sp.GetServices<ICertificateMaterialProvider>();
-            return new CertificateMaterialProviderRegistry(providers);
+            var certOptions = sp.GetService<Certificates.CertificateOptions>();
+            var defaultProvider = certOptions?.DefaultStorageProvider ?? Core.Domain.Entities.KeyStorageProvider.Local;
+            return new Certificates.CertificateMaterialProviderRegistry(providers, defaultProvider);
         });
-        services.TryAddScoped<ICertificateService, CertificateService>();
+        services.TryAddScoped<ICertificateService, Certificates.CertificateService>();
+
+        // Register authentication method registry for pluggable authentication providers
+        // Providers are discovered via IAuthenticationMethodProvider registrations from packages like Fido2
+        services.TryAddScoped<IAuthenticationMethodRegistry, DefaultAuthenticationMethodRegistry>();
 
         // Oluso is an OIDC-compliant identity server - enable OIDC and dynamic providers by default
         builder.AddOidc();
@@ -246,7 +252,6 @@ public static class UserJourneyExtensions
         builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.PasswordlessSmsStepHandler>();
         builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.CaptchaStepHandler>();
         builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.DynamicFormStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.ClaimsCollectionStepHandler>();
         builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.ConditionStepHandler>();
         builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.BranchStepHandler>();
         builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.TransformStepHandler>();

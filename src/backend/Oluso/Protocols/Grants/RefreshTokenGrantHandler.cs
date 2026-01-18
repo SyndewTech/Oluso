@@ -185,12 +185,23 @@ public class RefreshTokenGrantHandler : IGrantHandler
                     ?? new Dictionary<string, object>();
         }
 
+        // Refresh permissions on token refresh only when the "permissions" scope is present
+        // This picks up any role changes since the original token was issued
+        var permissions = new List<string>();
+        if (!string.IsNullOrEmpty(grant.SubjectId) && effectiveScopes.Contains(OidcConstants.Scopes.Permissions))
+        {
+            var tenantId = claims.TryGetValue("tenant_id", out var tid) ? tid?.ToString() : null;
+            permissions = (await _profileService.GetUserPermissionsAsync(
+                grant.SubjectId, tenantId, cancellationToken)).ToList();
+        }
+
         var result = new GrantResult
         {
             SubjectId = grant.SubjectId,
             SessionId = grant.SessionId,
             Scopes = effectiveScopes,
-            Claims = claims
+            Claims = claims,
+            Permissions = permissions
         };
 
         // Signal to token service about refresh token handling

@@ -56,6 +56,7 @@ export function createSamlPlugin(options: SamlPluginOptions): AdminUIPlugin {
         icon: ShieldCheckIcon,
         group: 'settings',
         order: 60,
+        permission: 'saml.read',
         children: [
           {
             id: 'saml-dashboard',

@@ -43,7 +43,7 @@ public class DashboardController : AdminBaseController
     public async Task<ActionResult<DashboardStatsDto>> GetStats(CancellationToken cancellationToken)
     {
         var clients = await _clientStore.GetAllClientsAsync(cancellationToken);
-        var apiResources = await _resourceStore.GetAllApiResourcesAsync(cancellationToken);
+        var resources = await _resourceStore.GetAllResourcesAsync(cancellationToken);
         var identityResources = await _resourceStore.GetAllIdentityResourcesAsync(cancellationToken);
 
         // Get user count
@@ -77,7 +77,7 @@ public class DashboardController : AdminBaseController
         {
             ClientsCount = clients.Count(),
             UsersCount = usersResult.TotalCount,
-            ApiResourcesCount = apiResources.Count(),
+            ResourcesCount = resources.Count(),
             IdentityResourcesCount = identityResources.Count(),
             ActiveSessionsCount = activeSessionsCount,
             RecentLoginsCount = recentLoginsCount
@@ -91,7 +91,10 @@ public class DashboardStatsDto
 {
     public int ClientsCount { get; set; }
     public int UsersCount { get; set; }
-    public int ApiResourcesCount { get; set; }
+    /// <summary>
+    /// Count of RFC 8707 Resources (protected resources identified by URI)
+    /// </summary>
+    public int ResourcesCount { get; set; }
     public int IdentityResourcesCount { get; set; }
     public int ActiveSessionsCount { get; set; }
     public int RecentLoginsCount { get; set; }

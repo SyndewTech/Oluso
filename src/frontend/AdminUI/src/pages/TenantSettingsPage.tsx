@@ -6,7 +6,7 @@ import Button from '../components/common/Button';
 import Input from '../components/common/Input';
 import Modal from '../components/common/Modal';
 import { tenantService } from '../services/tenantService';
-import type { PasswordPolicy, UpdateTenantRequest, UpdatePasswordPolicyRequest, ProtocolConfiguration, UpdateProtocolConfigurationRequest } from '../types/tenant';
+import type { PasswordPolicy, UpdateTenantRequest, UpdatePasswordPolicyRequest, UpdateProtocolConfigurationRequest } from '../types/tenant';
 import { DEFAULT_PASSWORD_POLICY, DEFAULT_PROTOCOL_CONFIGURATION } from '../types/tenant';
 import { useTenantSettingsTabs, type TenantData } from '@oluso/ui-core';
 import {
@@ -96,6 +96,9 @@ export default function TenantSettingsPage() {
         dynamicRegistrationAllowedGrantTypes: protocolConfig.dynamicRegistrationAllowedGrantTypes,
         dynamicRegistrationRequirePkce: protocolConfig.dynamicRegistrationRequirePkce,
         dynamicRegistrationMaxRedirectUris: protocolConfig.dynamicRegistrationMaxRedirectUris,
+        dynamicRegistrationRequiredScope: protocolConfig.dynamicRegistrationRequiredScope,
+        dynamicRegistrationRequiredClaim: protocolConfig.dynamicRegistrationRequiredClaim,
+        dynamicRegistrationRequiredClaimValue: protocolConfig.dynamicRegistrationRequiredClaimValue,
       });
     }
   }, [protocolConfig]);
@@ -145,7 +148,7 @@ export default function TenantSettingsPage() {
     setHasChanges(true);
   };
 
-  const handleProtocolChange = (key: keyof UpdateProtocolConfigurationRequest, value: boolean | number | string[] | undefined) => {
+  const handleProtocolChange = (key: keyof UpdateProtocolConfigurationRequest, value: boolean | number | string | string[] | undefined) => {
     setProtocolData((prev) => ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
@@ -573,15 +576,6 @@ export default function TenantSettingsPage() {
                       min={1}
                       max={100}
                       value={protocolData.dynamicRegistrationMaxRedirectUris ?? 10}
-                      onChange={(e) => {
-                        const value = Number(e.target.value);
-                        const clamped = Number.isNaN(value)
-                          ? undefined
-                          : Math.max(1, Math.min(100, value));
-
-                        handleProtocolChange('dynamicRegistrationMaxRedirectUris', clamped);
-                      }}
-                      helperText="Maximum number of redirect URIs per registered client"
                       onChange={(e) => handleProtocolChange('dynamicRegistrationMaxRedirectUris', parseInt(e.target.value) || 10)}
                       helperText="Maximum number of redirect URIs per registered client"
                     />
@@ -611,6 +605,43 @@ export default function TenantSettingsPage() {
                       placeholder="authorization_code, refresh_token"
                       helperText="Comma-separated list of grant types DCR clients can use (empty = defaults)"
                     />
+
+                    {/* Initial Access Token Requirements (for protected registration) */}
+                    {!protocolData.allowOpenDynamicRegistration && (
+                      <div className="border-t pt-4 mt-4 space-y-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-700 mb-1">Initial Access Token Requirements</h4>
+                          <p className="text-xs text-gray-500 mb-3">
+                            Configure requirements for tokens used to register clients. Leave empty to accept any valid token.
+                          </p>
+                        </div>
+
+                        <Input
+                          label="Required Scope"
+                          value={protocolData.dynamicRegistrationRequiredScope ?? ''}
+                          onChange={(e) => handleProtocolChange('dynamicRegistrationRequiredScope', e.target.value || undefined)}
+                          placeholder="client:register"
+                          helperText="Token must have this scope to register clients (empty = no scope requirement)"
+                        />
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <Input
+                            label="Required Claim Name"
+                            value={protocolData.dynamicRegistrationRequiredClaim ?? ''}
+                            onChange={(e) => handleProtocolChange('dynamicRegistrationRequiredClaim', e.target.value || undefined)}
+                            placeholder="role"
+                            helperText="Claim that must be present in token"
+                          />
+                          <Input
+                            label="Required Claim Value"
+                            value={protocolData.dynamicRegistrationRequiredClaimValue ?? ''}
+                            onChange={(e) => handleProtocolChange('dynamicRegistrationRequiredClaimValue', e.target.value || undefined)}
+                            placeholder="admin"
+                            helperText="Value the claim must have (empty = any value)"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </CardContent>

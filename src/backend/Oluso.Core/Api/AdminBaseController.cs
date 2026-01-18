@@ -1,19 +1,21 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 
 namespace Oluso.Core.Api;
 
 /// <summary>
 /// Base controller for Admin API endpoints.
-/// Provides tenant context and admin user information for administrative operations.
+/// Provides tenant context, organization context, and admin user information for administrative operations.
 ///
 /// Tenant resolution for Admin API:
 /// 1. X-Tenant-Id header (preferred for SPA clients)
 /// 2. tenant_id claim in JWT token
 /// 3. Query parameter (for debugging only)
 ///
-/// Admin users can switch between tenants they have access to.
+/// Admin users can switch between tenants they have access to within their organization(s).
+/// The TenantResolutionMiddleware validates organization membership and sets context claims.
 /// </summary>
 [ApiController]
 [Authorize(Policy = "AdminApi")]
@@ -115,4 +117,117 @@ public abstract class AdminBaseController : ControllerBase
                    HasRole("super_admin") || HasRole("platform_admin");
         }
     }
+
+    #region Organization Context
+
+    /// <summary>
+    /// Gets the current organization ID for the tenant being accessed.
+    /// This is set by TenantResolutionMiddleware after validating organization membership.
+    /// Returns null if no organization context is available.
+    /// </summary>
+    protected string? CurrentOrganizationId =>
+        User.FindFirst("current_org_id")?.Value
+        ?? HttpContext.Items["CurrentOrgId"] as string;
+
+    /// <summary>
+    /// Gets the user's role in the current tenant's organization.
+    /// This is the role they have in the organization that owns the current tenant.
+    /// Returns null if no organization context is available.
+    /// </summary>
+    protected OrganizationRole? CurrentOrganizationRole
+    {
+        get
+        {
+            var roleStr = User.FindFirst("current_org_role")?.Value;
+            if (string.IsNullOrEmpty(roleStr))
+            {
+                // Try from HttpContext.Items
+                if (HttpContext.Items["CurrentOrgRole"] is OrganizationRole role)
+                    return role;
+                return null;
+            }
+
+            return Enum.TryParse<OrganizationRole>(roleStr, ignoreCase: true, out var parsedRole)
+                ? parsedRole
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the organization membership for the current context.
+    /// Returns null if not available (e.g., super admin or no org context).
+    /// </summary>
+    protected OrganizationMembership? CurrentOrganizationMembership =>
+        HttpContext.Items["CurrentOrgMembership"] as OrganizationMembership;
+
+    /// <summary>
+    /// Checks if the user is an owner in the current tenant's organization.
+    /// </summary>
+    protected bool IsCurrentOrgOwner => CurrentOrganizationRole == OrganizationRole.Owner;
+
+    /// <summary>
+    /// Checks if the user is an admin (owner or admin) in the current tenant's organization.
+    /// </summary>
+    protected bool IsCurrentOrgAdmin =>
+        CurrentOrganizationRole == OrganizationRole.Owner ||
+        CurrentOrganizationRole == OrganizationRole.Admin;
+
+    /// <summary>
+    /// Checks if the user has at least the specified role in the current tenant's organization.
+    /// Role hierarchy: Owner > Admin > Member
+    /// </summary>
+    protected bool HasCurrentOrgRole(OrganizationRole minimumRole)
+    {
+        var currentRole = CurrentOrganizationRole;
+        if (currentRole == null)
+            return false;
+
+        // Lower enum value = higher privilege
+        return currentRole <= minimumRole;
+    }
+
+    /// <summary>
+    /// Gets all organization IDs the user is a member of (from JWT claims).
+    /// This returns ALL organizations, not just the current one.
+    /// </summary>
+    protected IEnumerable<string> AllOrganizationIds =>
+        User.FindAll("org_id").Select(c => c.Value);
+
+    /// <summary>
+    /// Gets the user's role in a specific organization (from JWT claims).
+    /// Returns null if not a member of the organization.
+    /// </summary>
+    protected OrganizationRole? GetOrganizationRole(string organizationId)
+    {
+        // Look for org_role claim in format "org_id:role"
+        var roleClaimValue = User.FindAll("org_role")
+            .Select(c => c.Value)
+            .FirstOrDefault(v => v.StartsWith($"{organizationId}:", StringComparison.OrdinalIgnoreCase));
+
+        if (string.IsNullOrEmpty(roleClaimValue))
+            return null;
+
+        var rolePart = roleClaimValue.Substring(organizationId.Length + 1);
+        return Enum.TryParse<OrganizationRole>(rolePart, ignoreCase: true, out var role)
+            ? role
+            : null;
+    }
+
+    /// <summary>
+    /// Checks if the user is an admin (owner or admin) of the specified organization.
+    /// Use this when you need to check permissions for a specific org, not the current context.
+    /// </summary>
+    protected bool IsOrgAdmin(string organizationId)
+    {
+        var role = GetOrganizationRole(organizationId);
+        return role == OrganizationRole.Owner || role == OrganizationRole.Admin;
+    }
+
+    /// <summary>
+    /// Checks if the user is an org admin in any organization.
+    /// </summary>
+    protected bool IsAnyOrgAdmin =>
+        User.FindFirst("is_org_admin")?.Value == "true";
+
+    #endregion
 }

@@ -35,9 +35,10 @@ public static class OidcConstants
         public const string OfflineAccess = "offline_access";
 
         /// <summary>
-        /// Scope required for Dynamic Client Registration (RFC 7591)
+        /// When requested, includes the user's permissions (derived from roles) in the access token.
+        /// Enables client-side permission checks without database lookups.
         /// </summary>
-        public const string ClientRegistration = "oluso:client:register";
+        public const string Permissions = "permissions";
     }
 
     public static class TokenTypes
@@ -81,6 +82,9 @@ public static class OidcConstants
         // DPoP
         public const string UseDPoPNonce = "use_dpop_nonce";
         public const string InvalidDPoPProof = "invalid_dpop_proof";
+
+        // RFC 8707 Resource Indicators
+        public const string InvalidTarget = "invalid_target";
     }
 
     public static class EndpointNames
@@ -97,6 +101,30 @@ public static class OidcConstants
         public const string Jwks = ".well-known/jwks";
         public const string PushedAuthorization = "par";
         public const string BackchannelAuthentication = "ciba";
+        public const string Registration = "register";
+    }
+
+    /// <summary>
+    /// Persisted grant types for tokens and authorization artifacts
+    /// </summary>
+    public static class PersistedGrantTypes
+    {
+        public const string AuthorizationCode = "authorization_code";
+        public const string ReferenceToken = "reference_token";
+        public const string RefreshToken = "refresh_token";
+        public const string UserConsent = "user_consent";
+        public const string DeviceCode = "device_code";
+        public const string BackChannelAuthenticationRequest = "ciba";
+
+        /// <summary>
+        /// Initial access token for Dynamic Client Registration (RFC 7591)
+        /// </summary>
+        public const string InitialAccessToken = "initial_access_token";
+
+        /// <summary>
+        /// Registration access token for client management (RFC 7592)
+        /// </summary>
+        public const string RegistrationAccessToken = "registration_access_token";
     }
 
     public static class StandardClaims

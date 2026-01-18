@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Common;
+using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols.DPoP;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
@@ -25,17 +26,23 @@ public class TokenRequestValidator : ITokenRequestValidator
     private readonly IClientAuthenticator _clientAuthenticator;
     private readonly IScopeValidator _scopeValidator;
     private readonly IDPoPProofValidator _dpopValidator;
+    private readonly IResourceStore _resourceStore;
+    private readonly ITenantSettingsProvider _tenantSettingsProvider;
     private readonly ILogger<TokenRequestValidator> _logger;
 
     public TokenRequestValidator(
         IClientAuthenticator clientAuthenticator,
         IScopeValidator scopeValidator,
         IDPoPProofValidator dpopValidator,
+        IResourceStore resourceStore,
+        ITenantSettingsProvider tenantSettingsProvider,
         ILogger<TokenRequestValidator> logger)
     {
         _clientAuthenticator = clientAuthenticator;
         _scopeValidator = scopeValidator;
         _dpopValidator = dpopValidator;
+        _resourceStore = resourceStore;
+        _tenantSettingsProvider = tenantSettingsProvider;
         _logger = logger;
     }
 
@@ -156,6 +163,9 @@ public class TokenRequestValidator : ITokenRequestValidator
             CibaRequireUserCode = client.CibaRequireUserCode,
         };
 
+        // Get tenant protocol settings for enforcement
+        var protocolSettings = await _tenantSettingsProvider.GetProtocolSettingsAsync(cancellationToken);
+
         // 2. Validate grant_type
         var grantType = form["grant_type"].FirstOrDefault();
         if (string.IsNullOrEmpty(grantType))
@@ -165,6 +175,15 @@ public class TokenRequestValidator : ITokenRequestValidator
                 "grant_type is required");
         }
         tokenRequest.GrantType = grantType;
+
+        // Check if grant type is allowed for tenant
+        if (protocolSettings.AllowedGrantTypes?.Count > 0 &&
+            !protocolSettings.AllowedGrantTypes.Contains(grantType))
+        {
+            return ValidationResult<TokenRequest>.Failure(
+                OidcConstants.Errors.UnauthorizedClient,
+                $"Grant type '{grantType}' is not allowed for this tenant");
+        }
 
         // Check if grant type is allowed for client
         if (!tokenRequest.Client.AllowedGrantTypes.Contains(grantType))
@@ -217,7 +236,36 @@ public class TokenRequestValidator : ITokenRequestValidator
             }
         }
 
-        // 5. Validate DPoP proof
+        // 5. Parse and validate resource parameter (RFC 8707)
+        // The resource parameter can appear multiple times or as space-separated values
+        var resources = form["resource"].ToList();
+        if (resources.Count > 0)
+        {
+            // Parse all resource values (supporting both multiple params and space-separated)
+            var resourceUris = new List<string>();
+            foreach (var resourceValue in resources)
+            {
+                if (!string.IsNullOrEmpty(resourceValue))
+                {
+                    resourceUris.AddRange(resourceValue.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                }
+            }
+            tokenRequest.Resource = resourceUris.Distinct().ToList();
+        }
+
+        // Validate resource parameter based on tenant settings
+        var resourceValidation = await ValidateResourceParameterAsync(
+            tokenRequest.Resource,
+            protocolSettings,
+            cancellationToken);
+        if (!resourceValidation.IsValid)
+        {
+            return ValidationResult<TokenRequest>.Failure(
+                resourceValidation.Error!,
+                resourceValidation.ErrorDescription);
+        }
+
+        // 6. Validate DPoP proof
         // Per RFC 9449 Section 4.2: There MUST be exactly one DPoP header field
         var dpopHeaders = request.Headers["DPoP"];
         if (dpopHeaders.Count > 1)
@@ -228,11 +276,14 @@ public class TokenRequestValidator : ITokenRequestValidator
         }
         var dpopHeader = dpopHeaders.FirstOrDefault();
 
-        if (client.RequireDPoP && string.IsNullOrEmpty(dpopHeader))
+        // DPoP is required if tenant or client requires it
+        var requireDPoP = protocolSettings.RequireDPoP || client.RequireDPoP;
+        if (requireDPoP && string.IsNullOrEmpty(dpopHeader))
         {
+            var requirementSource = protocolSettings.RequireDPoP ? "tenant" : "client";
             return ValidationResult<TokenRequest>.Failure(
                 OidcConstants.Errors.InvalidRequest,
-                "DPoP proof is required for this client");
+                $"DPoP proof is required for this {requirementSource}");
         }
 
         if (!string.IsNullOrEmpty(dpopHeader))
@@ -245,7 +296,7 @@ public class TokenRequestValidator : ITokenRequestValidator
                 Proof = dpopHeader,
                 HttpMethod = request.Method,
                 HttpUri = tokenEndpointUrl,
-                RequireNonce = client.RequireDPoP,
+                RequireNonce = requireDPoP,
                 ClientId = client.ClientId,
                 // For refresh token grant, validate key matches original binding
                 ExpectedJwkThumbprint = tokenRequest.BoundDPoPJkt
@@ -390,6 +441,97 @@ public class TokenRequestValidator : ITokenRequestValidator
         }
 
         request.AuthReqId = authReqId;
+        return ValidationResult.Success();
+    }
+
+    #endregion
+
+    #region Resource Parameter Validation (RFC 8707)
+
+    /// <summary>
+    /// Validates the resource parameter per RFC 8707 based on tenant settings.
+    /// </summary>
+    private async Task<ValidationResult> ValidateResourceParameterAsync(
+        ICollection<string> resources,
+        TenantProtocolSettings protocolSettings,
+        CancellationToken cancellationToken)
+    {
+        var hasResources = resources != null && resources.Count > 0;
+
+        // Check if resource is required
+        if (protocolSettings.ResourceValidationMode == ResourceValidationMode.Strict ||
+            protocolSettings.RequireResourceParameter)
+        {
+            if (!hasResources)
+            {
+                return ValidationResult.Failure(
+                    OidcConstants.Errors.InvalidRequest,
+                    "The resource parameter is required");
+            }
+        }
+
+        // If no resources provided, nothing to validate
+        if (!hasResources)
+        {
+            return ValidationResult.Success();
+        }
+
+        // Validate each resource URI format per RFC 8707
+        foreach (var resourceUri in resources!)
+        {
+            // RFC 8707: Resource indicators MUST be absolute URIs
+            if (!Uri.TryCreate(resourceUri, UriKind.Absolute, out var uri))
+            {
+                return ValidationResult.Failure(
+                    OidcConstants.Errors.InvalidTarget,
+                    $"Invalid resource URI: '{resourceUri}'. Must be an absolute URI.");
+            }
+
+            // RFC 8707: Resource indicators MUST NOT contain a fragment component
+            if (!string.IsNullOrEmpty(uri.Fragment))
+            {
+                return ValidationResult.Failure(
+                    OidcConstants.Errors.InvalidTarget,
+                    $"Invalid resource URI: '{resourceUri}'. Fragment component is not allowed.");
+            }
+
+            // Only HTTP(S) schemes are allowed for security
+            if (uri.Scheme != "https" && uri.Scheme != "http")
+            {
+                return ValidationResult.Failure(
+                    OidcConstants.Errors.InvalidTarget,
+                    $"Invalid resource URI: '{resourceUri}'. Only HTTP(S) schemes are allowed.");
+            }
+        }
+
+        // Validate against registered resources if required
+        if (protocolSettings.ResourceValidationMode == ResourceValidationMode.ValidateAgainstRegistered ||
+            protocolSettings.ResourceValidationMode == ResourceValidationMode.Strict)
+        {
+            var registeredResources = await _resourceStore.FindResourcesByUrisAsync(resources, cancellationToken);
+            var registeredUris = new HashSet<string>(registeredResources.Select(r => r.Uri), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var resourceUri in resources)
+            {
+                if (!registeredUris.Contains(resourceUri))
+                {
+                    return ValidationResult.Failure(
+                        OidcConstants.Errors.InvalidTarget,
+                        $"Unknown resource: '{resourceUri}'. Resource is not registered.");
+                }
+
+                // Check if the registered resource is enabled
+                var resource = registeredResources.FirstOrDefault(r =>
+                    string.Equals(r.Uri, resourceUri, StringComparison.OrdinalIgnoreCase));
+                if (resource != null && !resource.Enabled)
+                {
+                    return ValidationResult.Failure(
+                        OidcConstants.Errors.InvalidTarget,
+                        $"Resource '{resourceUri}' is disabled.");
+                }
+            }
+        }
+
         return ValidationResult.Success();
     }
 

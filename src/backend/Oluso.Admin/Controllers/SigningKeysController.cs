@@ -150,7 +150,7 @@ public class SigningKeysController : AdminBaseController
             return Forbid();
         }
 
-        await _signingKeyService.RevokeKeyAsync(key.KeyId, request?.Reason ?? "Revoked by admin", cancellationToken);
+        await _signingKeyService.RevokeKeyAsync(key.Id, request?.Reason ?? "Revoked by admin", cancellationToken);
 
         _logger.LogWarning(
             "Admin revoked key {KeyId} for tenant {TenantId}. Reason: {Reason}",

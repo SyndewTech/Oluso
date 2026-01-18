@@ -112,6 +112,15 @@ public static class AzureKeyVaultExtensions
         builder.Services.RemoveAll<ISigningCredentialStore>();
         builder.Services.AddScoped<ISigningCredentialStore, SigningCredentialStore>();
 
+        // When UseAsDefault is true, configure certificate options to use Key Vault
+        if (options.UseAsDefault)
+        {
+            builder.Services.AddSingleton(new Oluso.Certificates.CertificateOptions
+            {
+                DefaultStorageProvider = KeyStorageProvider.AzureKeyVault
+            });
+        }
+
         return builder;
     }
 

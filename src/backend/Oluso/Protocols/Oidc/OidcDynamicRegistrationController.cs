@@ -1,49 +1,65 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
+using Oluso.Core.Protocols.DPoP;
 using Oluso.Core.Protocols.Models;
+using Oluso.Core.Protocols.Validation;
 
 namespace Oluso.Protocols.Oidc;
 
 /// <summary>
-/// OAuth 2.0 Dynamic Client Registration endpoint (RFC 7591).
+/// OAuth 2.0 Dynamic Client Registration endpoint (RFC 7591/7592).
 /// Route is configured via OidcEndpointRouteConvention.
+///
+/// This implementation properly integrates with the existing token validation infrastructure:
+/// - Uses IBearerTokenValidator for initial access token validation (supports JWT and reference tokens)
+/// - Stores registration access tokens in IPersistedGrantStore for proper lifecycle management
+/// - Supports DPoP-bound tokens for sender-constrained access
+/// - Uses IScopeValidator for consistent scope validation
 /// </summary>
 public class OidcDynamicRegistrationController : ControllerBase
 {
     private readonly IClientStore _clientStore;
+    private readonly IPersistedGrantStore _grantStore;
     private readonly ITenantContext _tenantContext;
     private readonly ITenantSettingsProvider _tenantSettings;
     private readonly IIssuerResolver _issuerResolver;
-    private readonly ISigningCredentialStore _signingCredentialStore;
+    private readonly IBearerTokenValidator _tokenValidator;
+    private readonly IDPoPProofValidator _dpopValidator;
     private readonly OidcEndpointConfiguration _endpointConfig;
     private readonly ILogger<OidcDynamicRegistrationController> _logger;
 
     private static readonly string[] DefaultScopes = ["openid", "profile", "email"];
     private static readonly string[] DefaultGrantTypes = ["authorization_code", "refresh_token"];
 
+    // Registration access token lifetime (default 24 hours, configurable)
+    private const int RegistrationAccessTokenLifetimeSeconds = 86400;
+
     public OidcDynamicRegistrationController(
         IClientStore clientStore,
+        IPersistedGrantStore grantStore,
         ITenantContext tenantContext,
         ITenantSettingsProvider tenantSettings,
         IIssuerResolver issuerResolver,
-        ISigningCredentialStore signingCredentialStore,
+        IBearerTokenValidator tokenValidator,
+        IDPoPProofValidator dpopValidator,
         IOptions<OidcEndpointConfiguration> endpointConfig,
         ILogger<OidcDynamicRegistrationController> logger)
     {
         _clientStore = clientStore;
+        _grantStore = grantStore;
         _tenantContext = tenantContext;
         _tenantSettings = tenantSettings;
         _issuerResolver = issuerResolver;
-        _signingCredentialStore = signingCredentialStore;
+        _tokenValidator = tokenValidator;
+        _dpopValidator = dpopValidator;
         _endpointConfig = endpointConfig.Value;
         _logger = logger;
     }
@@ -69,18 +85,21 @@ public class OidcDynamicRegistrationController : ControllerBase
             });
         }
 
-        // Check authentication for protected registration
+        // Validate initial access token for protected registration
+        string? dpopJkt = null;
         if (!protocolSettings.AllowOpenDynamicRegistration)
         {
-            var (tokenResult, tokenError) = await ValidateInitialAccessTokenAsync(cancellationToken);
+            var (tokenResult, tokenError) = await ValidateInitialAccessTokenAsync(protocolSettings, cancellationToken);
             if (tokenError != null)
             {
                 return tokenError;
             }
 
+            dpopJkt = tokenResult!.DPoPKeyThumbprint;
+
             _logger.LogInformation(
                 "Protected DCR request authorized by token from client {ClientId}",
-                tokenResult!.ClientId ?? "unknown");
+                tokenResult.ClientId ?? "unknown");
         }
 
         // Validate redirect URIs
@@ -174,7 +193,8 @@ public class OidcDynamicRegistrationController : ControllerBase
         var now = DateTime.UtcNow;
         var issuedAt = new DateTimeOffset(now).ToUnixTimeSeconds();
 
-        // Create the client
+        // Create the client with tenant protocol settings applied
+        // DCR clients inherit tenant-level security requirements
         var client = new Client
         {
             ClientId = clientId,
@@ -184,8 +204,14 @@ public class OidcDynamicRegistrationController : ControllerBase
             Enabled = true,
             IsDynamicallyRegistered = true,
             RequireClientSecret = requireSecret,
+            // PKCE settings from tenant DCR configuration
             RequirePkce = protocolSettings.DynamicRegistrationRequirePkce,
-            AllowPlainTextPkce = false,
+            // Only allow plain PKCE if tenant allows it (secure default: false)
+            AllowPlainTextPkce = protocolSettings.AllowPlainPkce,
+            // Inherit tenant-level DPoP requirement
+            RequireDPoP = protocolSettings.RequireDPoP,
+            // Inherit tenant-level PAR requirement
+            RequirePushedAuthorization = protocolSettings.RequirePushedAuthorizationRequests,
             AllowOfflineAccess = requestedGrantTypes.Contains("refresh_token"),
             Created = now,
             AllowedGrantTypes = requestedGrantTypes
@@ -220,12 +246,12 @@ public class OidcDynamicRegistrationController : ControllerBase
             client.ClientSecrets.Add(new ClientSecret { Value = hashedSecret });
         }
 
-        // Generate registration access token for client management
-        var registrationAccessToken = GenerateRegistrationAccessToken();
-        client.RegistrationAccessTokenHash = HashSecret(registrationAccessToken);
-
         // Save the client
         await _clientStore.AddClientAsync(client, cancellationToken);
+
+        // Generate and store registration access token in the grant store
+        var registrationAccessToken = await CreateRegistrationAccessTokenAsync(
+            clientId, dpopJkt, cancellationToken);
 
         _logger.LogInformation(
             "Dynamically registered client {ClientId} for tenant {TenantId}",
@@ -267,7 +293,7 @@ public class OidcDynamicRegistrationController : ControllerBase
     [HttpGet("{clientId}")]
     public async Task<IActionResult> GetClient(string clientId, CancellationToken cancellationToken)
     {
-        var (client, error) = await ValidateRegistrationAccessToken(clientId, cancellationToken);
+        var (client, error) = await ValidateRegistrationAccessTokenAsync(clientId, cancellationToken);
         if (error != null) return error;
 
         var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
@@ -286,7 +312,7 @@ public class OidcDynamicRegistrationController : ControllerBase
         [FromBody] DynamicRegistrationRequest request,
         CancellationToken cancellationToken)
     {
-        var (client, error) = await ValidateRegistrationAccessToken(clientId, cancellationToken);
+        var (client, error) = await ValidateRegistrationAccessTokenAsync(clientId, cancellationToken);
         if (error != null) return error;
 
         var protocolSettings = await _tenantSettings.GetProtocolSettingsAsync(cancellationToken);
@@ -364,8 +390,15 @@ public class OidcDynamicRegistrationController : ControllerBase
     [HttpDelete("{clientId}")]
     public async Task<IActionResult> DeleteClient(string clientId, CancellationToken cancellationToken)
     {
-        var (client, error) = await ValidateRegistrationAccessToken(clientId, cancellationToken);
+        var (client, error) = await ValidateRegistrationAccessTokenAsync(clientId, cancellationToken);
         if (error != null) return error;
+
+        // Remove all registration access tokens for this client
+        await _grantStore.RemoveAllAsync(new PersistedGrantFilter
+        {
+            ClientId = clientId,
+            Type = OidcConstants.PersistedGrantTypes.RegistrationAccessToken
+        }, cancellationToken);
 
         await _clientStore.DeleteClientAsync(client!.ClientId, cancellationToken);
 
@@ -374,7 +407,13 @@ public class OidcDynamicRegistrationController : ControllerBase
         return NoContent();
     }
 
-    private async Task<(InitialAccessTokenResult? result, IActionResult? error)> ValidateInitialAccessTokenAsync(
+    /// <summary>
+    /// Validates the initial access token for protected DCR registration.
+    /// Uses the shared IBearerTokenValidator for consistent validation of both JWT and reference tokens.
+    /// Scope/claim requirements are configurable per tenant via TenantProtocolSettings.
+    /// </summary>
+    private async Task<(BearerTokenValidationResult? result, IActionResult? error)> ValidateInitialAccessTokenAsync(
+        TenantProtocolSettings protocolSettings,
         CancellationToken cancellationToken)
     {
         // Get token from Authorization header
@@ -385,116 +424,102 @@ public class OidcDynamicRegistrationController : ControllerBase
             Response.Headers["WWW-Authenticate"] = $"Bearer realm=\"{issuer}\"";
             return (null, Unauthorized(new DynamicRegistrationError
             {
-                Error = "invalid_token",
+                Error = OidcConstants.Errors.InvalidToken,
                 ErrorDescription = "Initial access token required"
             }));
         }
 
         var token = authHeader["Bearer ".Length..];
 
-        // Validate JWT against tenant's signing keys
-        var handler = new JwtSecurityTokenHandler();
-        if (!handler.CanReadToken(token))
-        {
-            return (null, Unauthorized(new DynamicRegistrationError
-            {
-                Error = "invalid_token",
-                ErrorDescription = "Invalid token format"
-            }));
-        }
+        // Check for DPoP header
+        var dpopProof = Request.Headers["DPoP"].FirstOrDefault();
+        var httpUri = $"{Request.Scheme}://{Request.Host}{Request.Path}";
 
-        // Get tenant's validation keys
-        var validationKeys = await _signingCredentialStore.GetValidationKeysAsync(cancellationToken);
-        if (validationKeys == null || !validationKeys.Any())
-        {
-            _logger.LogError("No validation keys available for DCR token validation");
-            return (null, StatusCode(500, new DynamicRegistrationError
-            {
-                Error = "server_error",
-                ErrorDescription = "Token validation unavailable"
-            }));
-        }
+        // Build validation context with configurable scope requirement
+        var requiredScopes = !string.IsNullOrEmpty(protocolSettings.DynamicRegistrationRequiredScope)
+            ? new List<string> { protocolSettings.DynamicRegistrationRequiredScope }
+            : null;
 
-        var issuerUri = await _issuerResolver.GetIssuerAsync(cancellationToken);
-
-        var validationParameters = new TokenValidationParameters
+        var validationContext = new BearerTokenValidationContext
         {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKeys = validationKeys.Select(k => k.Key),
-            ValidateIssuer = true,
-            ValidIssuer = issuerUri,
-            ValidateAudience = false, // DCR tokens don't have a specific audience
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromMinutes(1)
+            Token = token,
+            RequiredScopes = requiredScopes,
+            RequireAllScopes = true,
+            DPoPProof = dpopProof,
+            HttpMethod = Request.Method,
+            HttpUri = httpUri
         };
 
-        try
-        {
-            var principal = handler.ValidateToken(token, validationParameters, out var validatedToken);
-            var jwt = validatedToken as JwtSecurityToken;
+        var result = await _tokenValidator.ValidateAsync(validationContext, cancellationToken);
 
-            if (jwt == null)
+        if (!result.IsValid)
+        {
+            var statusCode = result.Error == OidcConstants.Errors.InsufficientScope ? 403 : 401;
+
+            if (statusCode == 401)
             {
-                return (null, Unauthorized(new DynamicRegistrationError
-                {
-                    Error = "invalid_token",
-                    ErrorDescription = "Token validation failed"
-                }));
+                var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
+                Response.Headers["WWW-Authenticate"] = $"Bearer realm=\"{issuer}\", error=\"{result.Error}\"";
             }
 
-            // Check for required scope
-            var scopes = jwt.Claims
-                .Where(c => c.Type == "scope")
-                .SelectMany(c => c.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                .ToList();
-
-            if (!scopes.Contains(OidcConstants.Scopes.ClientRegistration))
+            return (null, StatusCode(statusCode, new DynamicRegistrationError
             {
+                Error = result.Error!,
+                ErrorDescription = result.ErrorDescription
+            }));
+        }
+
+        // Check for required claim if configured
+        if (!string.IsNullOrEmpty(protocolSettings.DynamicRegistrationRequiredClaim))
+        {
+            var claimName = protocolSettings.DynamicRegistrationRequiredClaim;
+            var requiredValue = protocolSettings.DynamicRegistrationRequiredClaimValue;
+
+            if (!result.Claims.TryGetValue(claimName, out var claimValue))
+            {
+                _logger.LogWarning(
+                    "Initial access token missing required claim '{ClaimName}' for DCR",
+                    claimName);
                 return (null, StatusCode(403, new DynamicRegistrationError
                 {
-                    Error = "insufficient_scope",
-                    ErrorDescription = $"Token must have '{OidcConstants.Scopes.ClientRegistration}' scope"
+                    Error = OidcConstants.Errors.AccessDenied,
+                    ErrorDescription = $"Token missing required claim: {claimName}"
                 }));
             }
 
-            var clientId = jwt.Claims.FirstOrDefault(c => c.Type == "client_id")?.Value;
+            // If a specific value is required, check it
+            if (!string.IsNullOrEmpty(requiredValue))
+            {
+                var hasMatchingValue = claimValue switch
+                {
+                    string s => s == requiredValue,
+                    string[] arr => arr.Contains(requiredValue),
+                    IEnumerable<object> enumerable => enumerable.Any(v => v?.ToString() == requiredValue),
+                    _ => claimValue?.ToString() == requiredValue
+                };
 
-            return (new InitialAccessTokenResult { ClientId = clientId, Scopes = scopes }, null);
+                if (!hasMatchingValue)
+                {
+                    _logger.LogWarning(
+                        "Initial access token claim '{ClaimName}' does not have required value '{RequiredValue}' for DCR",
+                        claimName, requiredValue);
+                    return (null, StatusCode(403, new DynamicRegistrationError
+                    {
+                        Error = OidcConstants.Errors.AccessDenied,
+                        ErrorDescription = $"Token claim '{claimName}' does not have required value"
+                    }));
+                }
+            }
         }
-        catch (SecurityTokenExpiredException)
-        {
-            return (null, Unauthorized(new DynamicRegistrationError
-            {
-                Error = "invalid_token",
-                ErrorDescription = "Token has expired"
-            }));
-        }
-        catch (SecurityTokenInvalidSignatureException)
-        {
-            return (null, Unauthorized(new DynamicRegistrationError
-            {
-                Error = "invalid_token",
-                ErrorDescription = "Token signature validation failed"
-            }));
-        }
-        catch (SecurityTokenException ex)
-        {
-            _logger.LogWarning(ex, "DCR token validation failed");
-            return (null, Unauthorized(new DynamicRegistrationError
-            {
-                Error = "invalid_token",
-                ErrorDescription = "Token validation failed"
-            }));
-        }
+
+        return (result, null);
     }
 
-    private class InitialAccessTokenResult
-    {
-        public string? ClientId { get; set; }
-        public List<string> Scopes { get; set; } = [];
-    }
-
-    private async Task<(Client? client, IActionResult? error)> ValidateRegistrationAccessToken(
+    /// <summary>
+    /// Validates the registration access token for client management operations.
+    /// Registration access tokens are stored in the persisted grant store.
+    /// </summary>
+    private async Task<(Client? client, IActionResult? error)> ValidateRegistrationAccessTokenAsync(
         string clientId,
         CancellationToken cancellationToken)
     {
@@ -504,7 +529,7 @@ public class OidcDynamicRegistrationController : ControllerBase
         {
             return (null, Unauthorized(new DynamicRegistrationError
             {
-                Error = "invalid_token",
+                Error = OidcConstants.Errors.InvalidToken,
                 ErrorDescription = "Registration access token required"
             }));
         }
@@ -522,29 +547,149 @@ public class OidcDynamicRegistrationController : ControllerBase
             }));
         }
 
-        // Validate the token
-        if (string.IsNullOrEmpty(client.RegistrationAccessTokenHash))
-        {
-            return (null, StatusCode(403, new DynamicRegistrationError
-            {
-                Error = "invalid_token",
-                ErrorDescription = "Client does not have a registration access token"
-            }));
-        }
+        // Look up the registration access token in the grant store
+        var tokenKey = ComputeRegistrationTokenKey(token);
+        var grant = await _grantStore.GetAsync(tokenKey, cancellationToken);
 
-        var tokenHash = HashSecret(token);
-        if (!CryptographicOperations.FixedTimeEquals(
-            System.Text.Encoding.UTF8.GetBytes(tokenHash),
-            System.Text.Encoding.UTF8.GetBytes(client.RegistrationAccessTokenHash)))
+        if (grant == null)
         {
+            _logger.LogWarning("Registration access token not found for client {ClientId}", clientId);
             return (null, Unauthorized(new DynamicRegistrationError
             {
-                Error = "invalid_token",
+                Error = OidcConstants.Errors.InvalidToken,
                 ErrorDescription = "Invalid registration access token"
             }));
         }
 
+        // Verify it's for the right client
+        if (grant.ClientId != clientId)
+        {
+            _logger.LogWarning(
+                "Registration access token client mismatch: expected {Expected}, got {Actual}",
+                clientId, grant.ClientId);
+            return (null, Unauthorized(new DynamicRegistrationError
+            {
+                Error = OidcConstants.Errors.InvalidToken,
+                ErrorDescription = "Invalid registration access token"
+            }));
+        }
+
+        // Check if consumed
+        if (grant.ConsumedTime.HasValue)
+        {
+            _logger.LogWarning("Registration access token has been revoked for client {ClientId}", clientId);
+            return (null, Unauthorized(new DynamicRegistrationError
+            {
+                Error = OidcConstants.Errors.InvalidToken,
+                ErrorDescription = "Registration access token has been revoked"
+            }));
+        }
+
+        // Check expiration
+        if (grant.Expiration.HasValue && grant.Expiration.Value < DateTime.UtcNow)
+        {
+            _logger.LogWarning("Registration access token has expired for client {ClientId}", clientId);
+            return (null, Unauthorized(new DynamicRegistrationError
+            {
+                Error = OidcConstants.Errors.InvalidToken,
+                ErrorDescription = "Registration access token has expired"
+            }));
+        }
+
+        // Validate DPoP if the token was bound
+        var dpopProof = Request.Headers["DPoP"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(grant.Data))
+        {
+            try
+            {
+                var data = JsonSerializer.Deserialize<RegistrationTokenData>(grant.Data);
+                if (!string.IsNullOrEmpty(data?.DPoPJkt))
+                {
+                    if (string.IsNullOrEmpty(dpopProof))
+                    {
+                        return (null, Unauthorized(new DynamicRegistrationError
+                        {
+                            Error = OidcConstants.Errors.InvalidToken,
+                            ErrorDescription = "DPoP proof required for this registration access token"
+                        }));
+                    }
+
+                    var httpUri = $"{Request.Scheme}://{Request.Host}{Request.Path}";
+                    var dpopContext = new DPoPValidationContext
+                    {
+                        Proof = dpopProof,
+                        HttpMethod = Request.Method,
+                        HttpUri = httpUri,
+                        ExpectedJwkThumbprint = data.DPoPJkt
+                    };
+
+                    var dpopResult = await _dpopValidator.ValidateAsync(dpopContext, cancellationToken);
+                    if (!dpopResult.IsValid)
+                    {
+                        return (null, Unauthorized(new DynamicRegistrationError
+                        {
+                            Error = dpopResult.Error ?? OidcConstants.Errors.InvalidDPoPProof,
+                            ErrorDescription = dpopResult.ErrorDescription
+                        }));
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore JSON parse errors - treat as no DPoP binding
+            }
+        }
+
         return (client, null);
+    }
+
+    /// <summary>
+    /// Creates a registration access token and stores it in the grant store.
+    /// </summary>
+    private async Task<string> CreateRegistrationAccessTokenAsync(
+        string clientId,
+        string? dpopJkt,
+        CancellationToken cancellationToken)
+    {
+        var token = GenerateRegistrationAccessToken();
+        var tokenKey = ComputeRegistrationTokenKey(token);
+        var now = DateTime.UtcNow;
+
+        var data = new RegistrationTokenData
+        {
+            DPoPJkt = dpopJkt,
+            CreatedAt = now
+        };
+
+        var grant = new PersistedGrant
+        {
+            Key = tokenKey,
+            Type = OidcConstants.PersistedGrantTypes.RegistrationAccessToken,
+            ClientId = clientId,
+            CreationTime = now,
+            Expiration = now.AddSeconds(RegistrationAccessTokenLifetimeSeconds),
+            Data = JsonSerializer.Serialize(data)
+        };
+
+        if (_tenantContext.HasTenant)
+        {
+            grant.TenantId = _tenantContext.TenantId;
+        }
+
+        await _grantStore.StoreAsync(grant, cancellationToken);
+
+        return token;
+    }
+
+    /// <summary>
+    /// Computes a key for storing/looking up registration access tokens.
+    /// Uses SHA-256 hash to avoid storing the raw token.
+    /// </summary>
+    private static string ComputeRegistrationTokenKey(string token)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(token);
+        var hash = SHA256.HashData(bytes);
+        return $"rat:{Convert.ToBase64String(hash)}";
     }
 
     private DynamicRegistrationResponse BuildClientResponse(Client client, string baseUrl)
@@ -676,6 +821,15 @@ public class OidcDynamicRegistrationController : ControllerBase
         }
 
         return responseTypes.Count > 0 ? responseTypes : ["code"];
+    }
+
+    /// <summary>
+    /// Data stored with registration access tokens
+    /// </summary>
+    private class RegistrationTokenData
+    {
+        public string? DPoPJkt { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 }
 

@@ -104,8 +104,8 @@ The sample seeds the following test accounts:
 
 | Email | Password | Role |
 |-------|----------|------|
-| `superadmin@localhost` | `Admin123!` | Super Admin |
-| `admin@localhost` | `Admin123!` | Admin |
+| `superadmin@oluso.local` | `SuperAdmin123!` | Super Admin |
+| `admin@default.local` | `TenantAdmin123!` | Tenant Admin |
 | `testuser@example.com` | `Password123!` | User |
 
 ## Test Endpoints

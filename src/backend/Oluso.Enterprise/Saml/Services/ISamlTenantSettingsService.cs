@@ -1,4 +1,5 @@
 using System.Security.Cryptography.X509Certificates;
+using Oluso.Core.Domain.Entities;
 using Oluso.Enterprise.Saml.Configuration;
 
 namespace Oluso.Enterprise.Saml.Services;
@@ -95,6 +96,8 @@ public class SamlCertificateInfo
     public DateTime? NotBefore { get; init; }
     public DateTime? NotAfter { get; init; }
     public string? Thumbprint { get; init; }
+    public SigningKeyStatus Status { get; init; } = SigningKeyStatus.Active;
+    public bool IsRevoked => Status == SigningKeyStatus.Revoked;
     public bool IsExpired => NotAfter.HasValue && NotAfter.Value < DateTime.UtcNow;
     public bool IsExpiringSoon => NotAfter.HasValue && NotAfter.Value < DateTime.UtcNow.AddDays(30);
 }

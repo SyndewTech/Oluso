@@ -9,7 +9,6 @@ import { tenantService } from '../services/tenantService';
 import type { Tenant, CreateTenantRequest } from '../types/tenant';
 import {
   PlusIcon,
-  PencilIcon,
   TrashIcon,
   Cog6ToothIcon,
 } from '@heroicons/react/24/outline';
@@ -142,18 +141,11 @@ export default function TenantsPage() {
       render: (tenant: Tenant) => (
         <div className="flex items-center justify-end gap-2">
           <button
-            onClick={() => navigate(`/tenants/${tenant.id}/settings`)}
+            onClick={() => navigate(`/tenants/${tenant.id}`)}
             className="p-1 text-gray-400 hover:text-blue-600"
             title="Settings"
           >
             <Cog6ToothIcon className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => navigate(`/tenants/${tenant.id}`)}
-            className="p-1 text-gray-400 hover:text-blue-600"
-            title="Edit tenant"
-          >
-            <PencilIcon className="h-4 w-4" />
           </button>
           <button
             onClick={() => openDeleteModal(tenant)}

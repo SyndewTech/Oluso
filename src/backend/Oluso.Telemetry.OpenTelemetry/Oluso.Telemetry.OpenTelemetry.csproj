@@ -20,6 +20,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="OpenTelemetry" Version="1.11.2" />
     <PackageReference Include="OpenTelemetry.Api" Version="1.11.2" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.11.2" />

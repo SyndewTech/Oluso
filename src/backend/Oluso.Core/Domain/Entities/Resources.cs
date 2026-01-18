@@ -1,64 +1,82 @@
 namespace Oluso.Core.Domain.Entities;
 
 /// <summary>
-/// API Resource - represents an API being protected
+/// Resource (RFC 8707) - represents a protected resource identified by an absolute URI.
+/// This replaces the Duende-style ApiResource with a spec-compliant implementation.
+///
+/// Per RFC 8707:
+/// - Resource indicators are absolute URIs without fragment components
+/// - Authorization servers MAY validate resources against known/registered resources
+/// - Tokens SHOULD be audience-restricted to the requested resource(s)
 /// </summary>
-public class ApiResource : TenantEntity
+public class Resource : TenantEntity
 {
     public int Id { get; set; }
+
+    /// <summary>
+    /// Whether this resource is enabled. Disabled resources will be rejected.
+    /// </summary>
     public bool Enabled { get; set; } = true;
-    public string Name { get; set; } = default!;
+
+    /// <summary>
+    /// The absolute URI identifying this resource (RFC 8707).
+    /// Must be a valid absolute URI without a fragment component.
+    /// Example: https://api.example.com or https://api.example.com/v1
+    /// </summary>
+    public string Uri { get; set; } = default!;
+
+    /// <summary>
+    /// Human-readable display name for the resource.
+    /// </summary>
     public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Description of the resource for admin UI.
+    /// </summary>
     public string? Description { get; set; }
-    public string? AllowedAccessTokenSigningAlgorithms { get; set; }
+
+    /// <summary>
+    /// Whether to show this resource in discovery document.
+    /// </summary>
     public bool ShowInDiscoveryDocument { get; set; } = true;
-    public bool RequireResourceIndicator { get; set; } = false;
+
+    /// <summary>
+    /// Scopes that are valid for this resource.
+    /// If empty, all scopes are allowed for this resource.
+    /// </summary>
+    public ICollection<ResourceScope> AllowedScopes { get; set; } = new List<ResourceScope>();
+
+    /// <summary>
+    /// Additional claims to include in tokens for this resource.
+    /// </summary>
+    public ICollection<ResourceClaim> UserClaims { get; set; } = new List<ResourceClaim>();
+
     public DateTime Created { get; set; } = DateTime.UtcNow;
     public DateTime? Updated { get; set; }
     public DateTime? LastAccessed { get; set; }
     public bool NonEditable { get; set; } = false;
-
-    public ICollection<ApiResourceSecret> Secrets { get; set; } = new List<ApiResourceSecret>();
-    public ICollection<ApiResourceScope> Scopes { get; set; } = new List<ApiResourceScope>();
-    public ICollection<ApiResourceClaim> UserClaims { get; set; } = new List<ApiResourceClaim>();
-    public ICollection<ApiResourceProperty> Properties { get; set; } = new List<ApiResourceProperty>();
 }
 
-public class ApiResourceSecret
+/// <summary>
+/// Scope allowed for a specific resource
+/// </summary>
+public class ResourceScope
 {
     public int Id { get; set; }
-    public int ApiResourceId { get; set; }
-    public ApiResource ApiResource { get; set; } = default!;
-    public string? Description { get; set; }
-    public string Value { get; set; } = default!;
-    public DateTime? Expiration { get; set; }
-    public string Type { get; set; } = "SharedSecret";
-    public DateTime Created { get; set; } = DateTime.UtcNow;
-}
-
-public class ApiResourceScope
-{
-    public int Id { get; set; }
-    public int ApiResourceId { get; set; }
-    public ApiResource ApiResource { get; set; } = default!;
+    public int ResourceId { get; set; }
+    public Resource Resource { get; set; } = default!;
     public string Scope { get; set; } = default!;
 }
 
-public class ApiResourceClaim
+/// <summary>
+/// Additional claim to include in tokens for a resource
+/// </summary>
+public class ResourceClaim
 {
     public int Id { get; set; }
-    public int ApiResourceId { get; set; }
-    public ApiResource ApiResource { get; set; } = default!;
+    public int ResourceId { get; set; }
+    public Resource Resource { get; set; } = default!;
     public string Type { get; set; } = default!;
-}
-
-public class ApiResourceProperty
-{
-    public int Id { get; set; }
-    public int ApiResourceId { get; set; }
-    public ApiResource ApiResource { get; set; } = default!;
-    public string Key { get; set; } = default!;
-    public string Value { get; set; } = default!;
 }
 
 /// <summary>

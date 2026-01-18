@@ -40,6 +40,29 @@ export interface LogEntry {
   spanId?: string;
 }
 
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  category: string;
+  action: string;
+  eventType: string;
+  subjectId?: string;
+  subjectType?: string;
+  subjectName?: string;
+  subjectEmail?: string;
+  success: boolean;
+  ipAddress?: string;
+  userAgent?: string;
+  resourceType?: string;
+  resourceId?: string;
+  resourceName?: string;
+  details?: Record<string, unknown>;
+  tenantId?: string;
+  clientId?: string;
+  activityId?: string;
+  errorMessage?: string;
+}
+
 export interface TraceSpan {
   traceId: string;
   spanId: string;
@@ -67,26 +90,6 @@ export interface Trace {
   startTime: string;
   serviceName: string;
   status: 'ok' | 'error' | 'unset';
-}
-
-export interface AuditLogEntry {
-  id: string;
-  timestamp: string;
-  eventType: string;
-  category: string;
-  action: string;
-  success: boolean;
-  subjectId?: string;
-  subjectName?: string;
-  subjectEmail?: string;
-  resourceType?: string;
-  resourceId?: string;
-  clientId?: string;
-  ipAddress?: string;
-  userAgent?: string;
-  details?: Record<string, unknown>;
-  errorMessage?: string;
-  activityId?: string;
 }
 
 export interface TelemetryQuery {
@@ -155,6 +158,11 @@ export const telemetryApi = {
     return response.data;
   },
 
+  // Real-time events (for live tail)
+  getLogsStreamUrl(): string {
+    return `${apiClient.defaults.baseURL}/telemetry/logs/stream`;
+  },
+
   // Audit logs
   async getAuditLogs(query: TelemetryQuery): Promise<PagedResult<AuditLogEntry>> {
     const response = await apiClient.get('/telemetry/audit', {
@@ -166,10 +174,5 @@ export const telemetryApi = {
   async getAuditCategories(): Promise<string[]> {
     const response = await apiClient.get('/telemetry/audit/categories');
     return response.data;
-  },
-
-  // Real-time events (for live tail)
-  getLogsStreamUrl(): string {
-    return `${apiClient.defaults.baseURL}/telemetry/logs/stream`;
   },
 };

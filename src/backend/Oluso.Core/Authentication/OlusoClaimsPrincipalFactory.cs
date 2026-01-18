@@ -3,11 +3,12 @@ using Microsoft.Extensions.Options;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace Oluso.Core.Authentication;
 
 /// <summary>
-/// Claims principal factory that adds tenant claims and plugin-provided claims to the user identity.
+/// Claims principal factory that adds tenant claims, organization claims, and plugin-provided claims to the user identity.
 /// This is used for cookie authentication (ASP.NET Identity Sign-In) flows.
 ///
 /// For token-based authentication (OIDC), claims are collected via IClaimsProviderRegistry in TokenService.
@@ -17,17 +18,20 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
 {
     private readonly ITenantContext _tenantContext;
     private readonly IClaimsProviderRegistry _claimsProviderRegistry;
+    private readonly IOrganizationMembershipStore? _organizationMembershipStore;
 
     public OlusoClaimsPrincipalFactory(
         UserManager<OlusoUser> userManager,
         RoleManager<OlusoRole> roleManager,
         IOptions<IdentityOptions> options,
         ITenantContext tenantContext,
-        IClaimsProviderRegistry claimsProviderRegistry)
+        IClaimsProviderRegistry claimsProviderRegistry,
+        IOrganizationMembershipStore? organizationMembershipStore = null)
         : base(userManager, roleManager, options)
     {
         _tenantContext = tenantContext;
         _claimsProviderRegistry = claimsProviderRegistry;
+        _organizationMembershipStore = organizationMembershipStore;
     }
 
     protected override async Task<ClaimsIdentity> GenerateClaimsAsync(OlusoUser user)
@@ -65,20 +69,27 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
         // Add claims from plugins via IClaimsProviderRegistry
         await AddPluginClaimsAsync(identity, user, tenantId);
 
+        // Add organization claims
+        await AddOrganizationClaimsAsync(identity, user);
+
         return identity;
     }
 
+    /// <summary>
+    /// Adds OIDC-standard profile claims.
+    /// Uses short claim names per OIDC Core spec (given_name, family_name, etc.)
+    /// SAML assertions use their own claim mapping in the SAML module.
+    /// </summary>
     private static void AddUserProfileClaims(ClaimsIdentity identity, OlusoUser user)
     {
+        // OIDC standard claims - https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims
         if (!string.IsNullOrEmpty(user.FirstName))
         {
-            identity.AddClaim(new Claim(ClaimTypes.GivenName, user.FirstName));
             identity.AddClaim(new Claim("given_name", user.FirstName));
         }
 
         if (!string.IsNullOrEmpty(user.LastName))
         {
-            identity.AddClaim(new Claim(ClaimTypes.Surname, user.LastName));
             identity.AddClaim(new Claim("family_name", user.LastName));
         }
 
@@ -109,9 +120,8 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
 
     private static void AddEmailClaims(ClaimsIdentity identity, OlusoUser user)
     {
-        if (!string.IsNullOrEmpty(user.Email) && !identity.HasClaim(c => c.Type == ClaimTypes.Email))
+        if (!string.IsNullOrEmpty(user.Email) && !identity.HasClaim(c => c.Type == "email"))
         {
-            identity.AddClaim(new Claim(ClaimTypes.Email, user.Email));
             identity.AddClaim(new Claim("email", user.Email));
             identity.AddClaim(new Claim("email_verified", user.EmailConfirmed.ToString().ToLowerInvariant()));
         }
@@ -186,6 +196,84 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
         catch
         {
             // Don't fail authentication if plugin claims fail
+            // The core authentication should still work
+        }
+    }
+
+    /// <summary>
+    /// Adds organization-related claims to the identity.
+    /// These claims enable organization-based access control and tenant switching.
+    /// </summary>
+    private async Task AddOrganizationClaimsAsync(ClaimsIdentity identity, OlusoUser user)
+    {
+        if (_organizationMembershipStore == null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Get all organizations the user is a member of
+            var memberships = await _organizationMembershipStore.GetByUserAsync(user.Id);
+            var membershipList = memberships.ToList();
+
+            if (membershipList.Count == 0)
+            {
+                return;
+            }
+
+            // Add organization IDs as a claim (multiple values if member of multiple orgs)
+            foreach (var membership in membershipList)
+            {
+                identity.AddClaim(new Claim("org_id", membership.OrganizationId));
+            }
+
+            // Add organization roles (format: org_id:role)
+            foreach (var membership in membershipList)
+            {
+                var roleValue = $"{membership.OrganizationId}:{membership.Role.ToString().ToLowerInvariant()}";
+                identity.AddClaim(new Claim("org_role", roleValue));
+            }
+
+            // Add organization names for display purposes
+            foreach (var membership in membershipList)
+            {
+                if (membership.Organization != null)
+                {
+                    identity.AddClaim(new Claim("org_name", membership.Organization.Name));
+                }
+            }
+
+            // Add allowed tenant IDs (aggregated from all memberships)
+            var allowedTenantIds = new HashSet<string>();
+            foreach (var membership in membershipList)
+            {
+                var tenantIds = await _organizationMembershipStore.GetAllowedTenantIdsAsync(
+                    user.Id, membership.OrganizationId);
+                foreach (var tenantId in tenantIds)
+                {
+                    allowedTenantIds.Add(tenantId);
+                }
+            }
+
+            if (allowedTenantIds.Count > 0)
+            {
+                // Add as JSON array for structured data
+                var tenantsJson = JsonSerializer.Serialize(allowedTenantIds);
+                identity.AddClaim(new Claim("allowed_tenants", tenantsJson));
+            }
+
+            // Check if user is an org admin (owner or admin in any org)
+            var isOrgAdmin = membershipList.Any(m =>
+                m.Role == OrganizationRole.Owner || m.Role == OrganizationRole.Admin);
+            if (isOrgAdmin)
+            {
+                identity.AddClaim(new Claim("is_org_admin", "true"));
+            }
+        }
+        catch
+        {
+            // Don't fail authentication if organization claims fail
             // The core authentication should still work
         }
     }

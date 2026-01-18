@@ -41,7 +41,6 @@ public class OlusoDbContext : IdentityDbContext<
 
     public OlusoDbContext(DbContextOptions<OlusoDbContext> options) : base(options)
     {
-        EnableWalModeIfSqlite();
     }
 
     /// <summary>
@@ -49,7 +48,6 @@ public class OlusoDbContext : IdentityDbContext<
     /// </summary>
     protected OlusoDbContext(DbContextOptions options) : base(options)
     {
-        EnableWalModeIfSqlite();
     }
 
     public OlusoDbContext(
@@ -58,22 +56,6 @@ public class OlusoDbContext : IdentityDbContext<
     {
         _tenantContext = tenantContext;
         _tenantId = tenantContext.TenantId;
-        EnableWalModeIfSqlite();
-    }
-
-    /// <summary>
-    /// Enables WAL mode for SQLite databases to prevent locking issues.
-    /// WAL mode allows concurrent reads and writes.
-    /// </summary>
-    private void EnableWalModeIfSqlite()
-    {
-        // Check if using SQLite by looking at the provider name
-        var providerName = Database.ProviderName;
-        if (providerName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            // Enable WAL mode for better concurrency
-            Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
-        }
     }
 
     // Client configuration
@@ -90,15 +72,17 @@ public class OlusoDbContext : IdentityDbContext<
     public DbSet<ClientAllowedRole> ClientAllowedRoles => Set<ClientAllowedRole>();
     public DbSet<ClientAllowedUser> ClientAllowedUsers => Set<ClientAllowedUser>();
 
-    // Resources
-    public DbSet<ApiResource> ApiResources => Set<ApiResource>();
-    public DbSet<ApiResourceSecret> ApiResourceSecrets => Set<ApiResourceSecret>();
-    public DbSet<ApiResourceScope> ApiResourceScopes => Set<ApiResourceScope>();
-    public DbSet<ApiResourceClaim> ApiResourceClaims => Set<ApiResourceClaim>();
-    public DbSet<ApiResourceProperty> ApiResourceProperties => Set<ApiResourceProperty>();
+    // Resources (RFC 8707)
+    public DbSet<Resource> Resources => Set<Resource>();
+    public DbSet<ResourceScope> ResourceScopes => Set<ResourceScope>();
+    public DbSet<ResourceClaim> ResourceClaims => Set<ResourceClaim>();
+
+    // API Scopes
     public DbSet<ApiScope> ApiScopes => Set<ApiScope>();
     public DbSet<ApiScopeClaim> ApiScopeClaims => Set<ApiScopeClaim>();
     public DbSet<ApiScopeProperty> ApiScopeProperties => Set<ApiScopeProperty>();
+
+    // Identity Resources
     public DbSet<IdentityResource> IdentityResources => Set<IdentityResource>();
     public DbSet<IdentityResourceClaim> IdentityResourceClaims => Set<IdentityResourceClaim>();
     public DbSet<IdentityResourceProperty> IdentityResourceProperties => Set<IdentityResourceProperty>();
@@ -114,6 +98,11 @@ public class OlusoDbContext : IdentityDbContext<
     // Multi-tenancy
     public DbSet<Tenant>? Tenants => Set<Tenant>();
 
+    // Organizations (multi-tenant management)
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<OrganizationMembership> OrganizationMemberships => Set<OrganizationMembership>();
+    public DbSet<OrganizationInvitation> OrganizationInvitations => Set<OrganizationInvitation>();
+
     // External identity providers
     public DbSet<IdentityProvider> IdentityProviders => Set<IdentityProvider>();
 
@@ -125,13 +114,13 @@ public class OlusoDbContext : IdentityDbContext<
     // Audit logs
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
+    // Telemetry logs (application logging)
+    public DbSet<TelemetryLog> TelemetryLogs => Set<TelemetryLog>();
+
     // Webhooks
     public DbSet<WebhookEndpointEntity> WebhookEndpoints => Set<WebhookEndpointEntity>();
     public DbSet<WebhookEventSubscriptionEntity> WebhookEventSubscriptions => Set<WebhookEventSubscriptionEntity>();
     public DbSet<WebhookDeliveryEntity> WebhookDeliveries => Set<WebhookDeliveryEntity>();
-
-    // FIDO2/Passkeys
-    public DbSet<Fido2CredentialEntity> Fido2Credentials => Set<Fido2CredentialEntity>();
 
     // Plugin metadata
     public DbSet<PluginMetadata> PluginMetadata => Set<PluginMetadata>();
@@ -166,7 +155,7 @@ public class OlusoDbContext : IdentityDbContext<
 
         // Apply Oluso entity configurations
         builder.ApplyConfiguration(new ClientConfiguration());
-        builder.ApplyConfiguration(new ApiResourceConfiguration());
+        builder.ApplyConfiguration(new ResourceConfiguration());
         builder.ApplyConfiguration(new ApiScopeConfiguration());
         builder.ApplyConfiguration(new IdentityResourceConfiguration());
         builder.ApplyConfiguration(new PersistedGrantConfiguration());
@@ -187,11 +176,16 @@ public class OlusoDbContext : IdentityDbContext<
         builder.ApplyConfiguration(new JourneyStateEntityConfiguration());
         builder.ApplyConfiguration(new JourneySubmissionEntityConfiguration());
         builder.ApplyConfiguration(new AuditLogConfiguration());
+        builder.ApplyConfiguration(new TelemetryLogConfiguration());
         builder.ApplyConfiguration(new WebhookEndpointConfiguration());
         builder.ApplyConfiguration(new WebhookEventSubscriptionConfiguration());
         builder.ApplyConfiguration(new WebhookDeliveryConfiguration());
-        builder.ApplyConfiguration(new Fido2CredentialEntityConfiguration());
         builder.ApplyConfiguration(new PluginMetadataConfiguration());
+
+        // Organization configurations
+        builder.ApplyConfiguration(new OrganizationConfiguration());
+        builder.ApplyConfiguration(new OrganizationMembershipConfiguration());
+        builder.ApplyConfiguration(new OrganizationInvitationConfiguration());
 
         // Apply global tenant filters to all tenant entities
         ApplyTenantQueryFilters(builder);

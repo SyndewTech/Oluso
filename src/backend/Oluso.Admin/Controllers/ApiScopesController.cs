@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -32,14 +33,11 @@ public class ApiScopesController : AdminBaseController
     /// Get all API scopes
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.ScopesRead)]
     public async Task<ActionResult<IEnumerable<ApiScopeDto>>> GetAll(CancellationToken cancellationToken)
     {
         var scopes = await _resourceStore.GetAllApiScopesAsync(cancellationToken);
-        var dtos = new List<ApiScopeDto>();
-        foreach (var scope in scopes)
-        {
-            dtos.Add(await MapToDtoWithResourcesAsync(scope, cancellationToken));
-        }
+        var dtos = scopes.Select(MapToDto);
         return Ok(dtos);
     }
 
@@ -47,19 +45,21 @@ public class ApiScopesController : AdminBaseController
     /// Get API scope by ID
     /// </summary>
     [HttpGet("{id:int}")]
+    [RequirePermission(AdminPermissions.ScopesRead)]
     public async Task<ActionResult<ApiScopeDto>> GetById(int id, CancellationToken cancellationToken)
     {
         var scope = await _resourceStore.GetApiScopeByIdAsync(id, cancellationToken);
         if (scope == null)
             return NotFound();
 
-        return Ok(await MapToDtoWithResourcesAsync(scope, cancellationToken));
+        return Ok(MapToDto(scope));
     }
 
     /// <summary>
     /// Get API scope by name
     /// </summary>
     [HttpGet("by-name/{name}")]
+    [RequirePermission(AdminPermissions.ScopesRead)]
     public async Task<ActionResult<ApiScopeDto>> GetByName(string name, CancellationToken cancellationToken)
     {
         var scopes = await _resourceStore.FindApiScopesByNameAsync(new[] { name }, cancellationToken);
@@ -74,6 +74,7 @@ public class ApiScopesController : AdminBaseController
     /// Create a new API scope
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.ScopesWrite)]
     public async Task<ActionResult<ApiScopeDto>> Create(
         [FromBody] CreateApiScopeRequest request,
         CancellationToken cancellationToken)
@@ -82,6 +83,13 @@ public class ApiScopesController : AdminBaseController
         if (existingScopes.Any())
         {
             return Conflict(new { error = $"API scope '{request.Name}' already exists" });
+        }
+
+        // Validate user claims don't contain protected claim types
+        var claimValidationError = ValidateUserClaims(request.UserClaims);
+        if (claimValidationError != null)
+        {
+            return BadRequest(new { error = claimValidationError });
         }
 
         var scope = new ApiScope
@@ -120,6 +128,7 @@ public class ApiScopesController : AdminBaseController
     /// Update an API scope
     /// </summary>
     [HttpPut("{id:int}")]
+    [RequirePermission(AdminPermissions.ScopesWrite)]
     public async Task<ActionResult<ApiScopeDto>> Update(
         int id,
         [FromBody] UpdateApiScopeRequest request,
@@ -128,6 +137,13 @@ public class ApiScopesController : AdminBaseController
         var existing = await _resourceStore.GetApiScopeByIdAsync(id, cancellationToken);
         if (existing == null)
             return NotFound();
+
+        // Validate user claims don't contain protected claim types
+        var claimValidationError = ValidateUserClaims(request.UserClaims);
+        if (claimValidationError != null)
+        {
+            return BadRequest(new { error = claimValidationError });
+        }
 
         if (request.DisplayName != null) existing.DisplayName = request.DisplayName;
         if (request.Description != null) existing.Description = request.Description;
@@ -147,12 +163,6 @@ public class ApiScopesController : AdminBaseController
 
         var updated = await _resourceStore.UpdateApiScopeAsync(existing, cancellationToken);
 
-        // Handle API resource associations if provided
-        if (request.ApiResourceNames != null)
-        {
-            await UpdateScopeResourceAssociationsAsync(existing.Name, request.ApiResourceNames, cancellationToken);
-        }
-
         _logger.LogInformation("Updated API scope: {Name}", updated.Name);
 
         // Raise audit event
@@ -167,47 +177,14 @@ public class ApiScopesController : AdminBaseController
             ApiScopeName = updated.Name
         }, cancellationToken);
 
-        return Ok(await MapToDtoWithResourcesAsync(updated, cancellationToken));
-    }
-
-    /// <summary>
-    /// Updates which API resources contain this scope
-    /// </summary>
-    private async Task UpdateScopeResourceAssociationsAsync(
-        string scopeName,
-        List<string> desiredResourceNames,
-        CancellationToken cancellationToken)
-    {
-        // Get all resources
-        var allResources = await _resourceStore.GetAllApiResourcesAsync(cancellationToken);
-
-        foreach (var resource in allResources)
-        {
-            var hasScope = resource.Scopes.Any(s => s.Scope == scopeName);
-            var shouldHaveScope = desiredResourceNames.Contains(resource.Name);
-
-            if (shouldHaveScope && !hasScope)
-            {
-                // Add scope to resource
-                resource.Scopes.Add(new ApiResourceScope { Scope = scopeName });
-                await _resourceStore.UpdateApiResourceAsync(resource, cancellationToken);
-                _logger.LogInformation("Added scope '{Scope}' to resource '{Resource}'", scopeName, resource.Name);
-            }
-            else if (!shouldHaveScope && hasScope)
-            {
-                // Remove scope from resource
-                var scopeToRemove = resource.Scopes.First(s => s.Scope == scopeName);
-                resource.Scopes.Remove(scopeToRemove);
-                await _resourceStore.UpdateApiResourceAsync(resource, cancellationToken);
-                _logger.LogInformation("Removed scope '{Scope}' from resource '{Resource}'", scopeName, resource.Name);
-            }
-        }
+        return Ok(MapToDto(updated));
     }
 
     /// <summary>
     /// Delete an API scope
     /// </summary>
     [HttpDelete("{id:int}")]
+    [RequirePermission(AdminPermissions.ScopesDelete)]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
         var existing = await _resourceStore.GetApiScopeByIdAsync(id, cancellationToken);
@@ -233,44 +210,6 @@ public class ApiScopesController : AdminBaseController
         return NoContent();
     }
 
-    /// <summary>
-    /// Get all available API resources that can have scopes assigned
-    /// </summary>
-    [HttpGet("available-resources")]
-    public async Task<ActionResult<IEnumerable<ApiResourceSummaryDto>>> GetAvailableResources(CancellationToken cancellationToken)
-    {
-        var resources = await _resourceStore.GetAllApiResourcesAsync(cancellationToken);
-        var summaries = resources.Select(r => new ApiResourceSummaryDto
-        {
-            Name = r.Name,
-            DisplayName = r.DisplayName,
-            Description = r.Description,
-            ScopeCount = r.Scopes.Count
-        });
-        return Ok(summaries);
-    }
-
-    private async Task<ApiScopeDto> MapToDtoWithResourcesAsync(ApiScope scope, CancellationToken cancellationToken)
-    {
-        // Get all resources that contain this scope
-        var resources = await _resourceStore.FindApiResourcesByScopeNameAsync(new[] { scope.Name }, cancellationToken);
-        var resourceNames = resources.Select(r => r.Name).ToList();
-
-        return new ApiScopeDto
-        {
-            Id = scope.Id,
-            Name = scope.Name,
-            DisplayName = scope.DisplayName,
-            Description = scope.Description,
-            Required = scope.Required,
-            Emphasize = scope.Emphasize,
-            ShowInDiscoveryDocument = scope.ShowInDiscoveryDocument,
-            Enabled = scope.Enabled,
-            UserClaims = scope.UserClaims.Select(c => c.Type).ToList(),
-            ApiResourceNames = resourceNames
-        };
-    }
-
     private static ApiScopeDto MapToDto(ApiScope scope) => new()
     {
         Id = scope.Id,
@@ -283,6 +222,31 @@ public class ApiScopesController : AdminBaseController
         Enabled = scope.Enabled,
         UserClaims = scope.UserClaims.Select(c => c.Type).ToList()
     };
+
+    /// <summary>
+    /// Validates that user claims don't contain protected claim types.
+    /// Protected claims include "permissions", "role", "tenant_id", etc.
+    /// Returns an error message if validation fails, null if successful.
+    /// </summary>
+    private static string? ValidateUserClaims(ICollection<string>? claims)
+    {
+        if (claims == null || claims.Count == 0)
+        {
+            return null;
+        }
+
+        var protectedClaims = claims
+            .Where(c => ReservedClaimTypes.IsProtectedFromClientClaims(c))
+            .Distinct()
+            .ToList();
+
+        if (protectedClaims.Count > 0)
+        {
+            return $"The following claim types are protected and cannot be added to API scopes: {string.Join(", ", protectedClaims)}";
+        }
+
+        return null;
+    }
 }
 
 #region DTOs
@@ -298,7 +262,6 @@ public class ApiScopeDto
     public bool ShowInDiscoveryDocument { get; set; }
     public bool Enabled { get; set; }
     public List<string> UserClaims { get; set; } = new();
-    public List<string> ApiResourceNames { get; set; } = new();
 }
 
 public class CreateApiScopeRequest
@@ -322,15 +285,6 @@ public class UpdateApiScopeRequest
     public bool? ShowInDiscoveryDocument { get; set; }
     public bool? Enabled { get; set; }
     public List<string>? UserClaims { get; set; }
-    public List<string>? ApiResourceNames { get; set; }
-}
-
-public class ApiResourceSummaryDto
-{
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public int ScopeCount { get; set; }
 }
 
 #endregion
