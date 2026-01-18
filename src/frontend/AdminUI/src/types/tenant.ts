@@ -83,3 +83,55 @@ export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
   lockoutDurationMinutes: 15,
   blockCommonPasswords: true,
 };
+
+export interface ProtocolConfiguration {
+  allowedGrantTypes?: string[];
+  allowedResponseTypes?: string[];
+  allowedTokenEndpointAuthMethods?: string[];
+  subjectTypesSupported?: string[];
+  idTokenSigningAlgValuesSupported?: string[];
+  codeChallengeMethodsSupported?: string[];
+  dPoPSigningAlgValuesSupported?: string[];
+  requirePushedAuthorizationRequests: boolean;
+  requirePkce: boolean;
+  allowPlainPkce: boolean;
+  requireDPoP: boolean;
+  claimsParameterSupported: boolean;
+  requestParameterSupported: boolean;
+  requestUriParameterSupported: boolean;
+  frontchannelLogoutSupported: boolean;
+  backchannelLogoutSupported: boolean;
+  // Dynamic Client Registration (RFC 7591)
+  enableDynamicClientRegistration: boolean;
+  allowOpenDynamicRegistration: boolean;
+  dynamicRegistrationAllowedScopes?: string[];
+  dynamicRegistrationAllowedGrantTypes?: string[];
+  dynamicRegistrationRequirePkce: boolean;
+  dynamicRegistrationMaxRedirectUris: number;
+  // Initial access token requirements (for protected registration)
+  dynamicRegistrationRequiredScope?: string;
+  dynamicRegistrationRequiredClaim?: string;
+  dynamicRegistrationRequiredClaimValue?: string;
+  created: string;
+  updated?: string;
+}
+
+export interface UpdateProtocolConfigurationRequest {
+  enableDynamicClientRegistration?: boolean;
+  allowOpenDynamicRegistration?: boolean;
+  dynamicRegistrationAllowedScopes?: string[];
+  dynamicRegistrationAllowedGrantTypes?: string[];
+  dynamicRegistrationRequirePkce?: boolean;
+  dynamicRegistrationMaxRedirectUris?: number;
+  // Initial access token requirements (for protected registration)
+  dynamicRegistrationRequiredScope?: string;
+  dynamicRegistrationRequiredClaim?: string;
+  dynamicRegistrationRequiredClaimValue?: string;
+}
+
+export const DEFAULT_PROTOCOL_CONFIGURATION: Partial<ProtocolConfiguration> = {
+  enableDynamicClientRegistration: false,
+  allowOpenDynamicRegistration: false,
+  dynamicRegistrationRequirePkce: true,
+  dynamicRegistrationMaxRedirectUris: 10,
+};

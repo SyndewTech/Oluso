@@ -1,5 +1,4 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Serialization;
 
 namespace Oluso.Core.Domain.Entities;
 
@@ -62,6 +61,17 @@ public class Client : TenantEntity
     public DateTime? LastAccessed { get; set; }
     public bool NonEditable { get; set; } = false;
 
+    /// <summary>
+    /// Whether this client was created via Dynamic Client Registration (RFC 7591).
+    /// </summary>
+    public bool IsDynamicallyRegistered { get; set; }
+
+    /// <summary>
+    /// Hashed registration access token for DCR client management (RFC 7591).
+    /// Used to authenticate GET/PUT/DELETE requests to /connect/register/{clientId}.
+    /// </summary>
+    public string? RegistrationAccessTokenHash { get; set; }
+
     // DPoP settings
     public bool RequireDPoP { get; set; } = false;
 
@@ -109,107 +119,4 @@ public class Client : TenantEntity
     /// Whether user code is required for CIBA
     /// </summary>
     public bool CibaRequireUserCode { get; set; } = false;
-}
-
-// Client-related entities
-public class ClientSecret
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string? Description { get; set; }
-
-    /// <summary>
-    /// Hashed secret value (SHA-256).
-    /// SECURITY: Never expose this in API responses.
-    /// </summary>
-    [JsonIgnore]
-    public string Value { get; set; } = default!;
-
-    public DateTime? Expiration { get; set; }
-    public string Type { get; set; } = "SharedSecret";
-    public DateTime Created { get; set; } = DateTime.UtcNow;
-}
-
-public class ClientGrantType
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string GrantType { get; set; } = default!;
-}
-
-public class ClientRedirectUri
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string RedirectUri { get; set; } = default!;
-}
-
-public class ClientPostLogoutRedirectUri
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string PostLogoutRedirectUri { get; set; } = default!;
-}
-
-public class ClientScope
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string Scope { get; set; } = default!;
-}
-
-public class ClientClaim
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string Type { get; set; } = default!;
-    public string Value { get; set; } = default!;
-}
-
-public class ClientCorsOrigin
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string Origin { get; set; } = default!;
-}
-
-public class ClientProperty
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string Key { get; set; } = default!;
-    public string Value { get; set; } = default!;
-}
-
-public class ClientIdPRestriction
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string Provider { get; set; } = default!;
-}
-
-public class ClientAllowedRole
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string Role { get; set; } = default!;
-}
-
-public class ClientAllowedUser
-{
-    public int Id { get; set; }
-    public int ClientId { get; set; }
-    public Client Client { get; set; } = default!;
-    public string SubjectId { get; set; } = default!;
-    public string? DisplayName { get; set; }
 }

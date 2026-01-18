@@ -26,6 +26,9 @@ get_context_config() {
         saml)
             echo "src/backend/Oluso.Enterprise/Saml|samples/Oluso.Sample|SamlDbContext"
             ;;
+        fido2|fido)
+            echo "src/backend/Oluso.Enterprise/Fido2|samples/Oluso.Sample|Fido2DbContext"
+            ;;
         *)
             echo ""
             ;;
@@ -42,6 +45,7 @@ get_context_name() {
         scim) echo "scim" ;;
         ldap) echo "ldap" ;;
         saml) echo "saml" ;;
+        fido2|fido) echo "fido2" ;;
         *) echo "" ;;
     esac
 }
@@ -207,7 +211,7 @@ case "$command" in
         fi
 
         echo "Adding migration '$migration_name' for all public contexts ($prov)..."
-        for ctx in oluso scim ldap saml; do
+        for ctx in oluso scim ldap saml fido2; do
             cfg=$(get_context_config "$ctx")
             IFS='|' read -r proj start base_ctx <<< "$cfg"
             provider_ctx=$(get_provider_context "$base_ctx" "$prov")
@@ -238,7 +242,7 @@ case "$command" in
         echo "  add-all [context] <name>          Add migration for all providers"
         echo "  add-all-contexts <name>           Add migration for all contexts (SQLite)"
         echo ""
-        echo "Contexts: oluso (default), scim, ldap, saml"
+        echo "Contexts: oluso (default), scim, ldap, saml, fido2"
         echo "Providers: Sqlite (default), SqlServer, Postgres"
         echo ""
         echo "Examples:"

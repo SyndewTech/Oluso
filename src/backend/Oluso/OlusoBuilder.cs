@@ -276,6 +276,7 @@ public class OlusoBuilder
         Services.AddScoped<IClientAuthenticator, ClientAuthenticator>();
         Services.AddScoped<IAuthorizeRequestValidator, AuthorizeRequestValidator>();
         Services.AddScoped<ITokenRequestValidator, TokenRequestValidator>();
+        Services.AddScoped<IBearerTokenValidator, BearerTokenValidator>();
 
         // Register DPoP services
         Services.AddSingleton<IDPoPNonceStore, InMemoryDPoPNonceStore>();

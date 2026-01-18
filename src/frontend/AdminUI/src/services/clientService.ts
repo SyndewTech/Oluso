@@ -46,8 +46,12 @@ export const clientService = {
     await api.delete(`/clients/${encodeURIComponent(clientId)}`);
   },
 
-  regenerateSecret: async (clientId: string): Promise<{ clientId: string; clientSecret: string }> => {
+  regenerateSecret: async (clientId: string): Promise<{ clientId: string; clientSecret: string; secretId: number }> => {
     const response = await api.post(`/clients/${encodeURIComponent(clientId)}/regenerate-secret`);
     return response.data;
+  },
+
+  deleteSecret: async (clientId: string, secretId: number): Promise<void> => {
+    await api.delete(`/clients/${encodeURIComponent(clientId)}/secrets/${secretId}`);
   },
 };

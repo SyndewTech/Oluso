@@ -55,6 +55,7 @@ export function createFido2Plugin(options: Fido2PluginOptions): AdminUIPlugin {
         icon: FingerPrintIcon,
         group: 'settings',
         order: 70,
+        permission: 'fido2.read',
         children: [
           {
             id: 'fido2-dashboard',

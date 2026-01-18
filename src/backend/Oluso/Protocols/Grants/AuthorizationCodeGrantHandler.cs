@@ -202,12 +202,22 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
             }
         }
 
+        // Collect permissions from user's roles only when the "permissions" scope is requested
+        var permissions = new List<string>();
+        if (!string.IsNullOrEmpty(authCode.SubjectId) && authCode.Scopes.Contains(OidcConstants.Scopes.Permissions))
+        {
+            var tenantId = claims.TryGetValue("tenant_id", out var tid) ? tid?.ToString() : null;
+            permissions = (await _profileService.GetUserPermissionsAsync(
+                authCode.SubjectId, tenantId, cancellationToken)).ToList();
+        }
+
         return new GrantResult
         {
             SubjectId = authCode.SubjectId,
             SessionId = authCode.SessionId,
             Scopes = authCode.Scopes,
-            Claims = claims
+            Claims = claims,
+            Permissions = permissions
         };
     }
 }

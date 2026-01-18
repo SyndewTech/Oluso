@@ -582,7 +582,7 @@ public class AdminAuditLogsPurgedEvent : AdminActionEvent
 }
 
 /// <summary>
-/// Raised when an admin creates an API resource
+/// Raised when an admin creates an API resource (legacy Duende-style)
 /// </summary>
 public class AdminApiResourceCreatedEvent : AdminActionEvent
 {
@@ -593,7 +593,7 @@ public class AdminApiResourceCreatedEvent : AdminActionEvent
 }
 
 /// <summary>
-/// Raised when an admin updates an API resource
+/// Raised when an admin updates an API resource (legacy Duende-style)
 /// </summary>
 public class AdminApiResourceUpdatedEvent : AdminActionEvent
 {
@@ -604,7 +604,7 @@ public class AdminApiResourceUpdatedEvent : AdminActionEvent
 }
 
 /// <summary>
-/// Raised when an admin deletes an API resource
+/// Raised when an admin deletes an API resource (legacy Duende-style)
 /// </summary>
 public class AdminApiResourceDeletedEvent : AdminActionEvent
 {
@@ -612,6 +612,39 @@ public class AdminApiResourceDeletedEvent : AdminActionEvent
     public override string? WebhookEventType => "admin.api_resource_deleted";
 
     public required string ApiResourceName { get; init; }
+}
+
+/// <summary>
+/// Raised when an admin creates a resource (RFC 8707)
+/// </summary>
+public class AdminResourceCreatedEvent : AdminActionEvent
+{
+    public override string ResourceType => "Resource";
+    public override string? WebhookEventType => "admin.resource_created";
+
+    public required string ResourceUri { get; init; }
+}
+
+/// <summary>
+/// Raised when an admin updates a resource (RFC 8707)
+/// </summary>
+public class AdminResourceUpdatedEvent : AdminActionEvent
+{
+    public override string ResourceType => "Resource";
+    public override string? WebhookEventType => "admin.resource_updated";
+
+    public required string ResourceUri { get; init; }
+}
+
+/// <summary>
+/// Raised when an admin deletes a resource (RFC 8707)
+/// </summary>
+public class AdminResourceDeletedEvent : AdminActionEvent
+{
+    public override string ResourceType => "Resource";
+    public override string? WebhookEventType => "admin.resource_deleted";
+
+    public required string ResourceUri { get; init; }
 }
 
 /// <summary>

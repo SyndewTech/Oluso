@@ -53,6 +53,17 @@ public class OlusoRole : IdentityRole
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    /// <summary>
+    /// Category for delegated administration (e.g., "system", "tenant", "hr", "finance")
+    /// </summary>
+    public string? Category { get; set; }
+
+    /// <summary>
+    /// The role that can manage this role (for delegated administration).
+    /// E.g., "HRAdmin" can manage "PayrollAdmin", "HRManager" etc.
+    /// </summary>
+    public string? ManagedByRole { get; set; }
+
     // Navigation properties
     public virtual ICollection<OlusoUserRole> UserRoles { get; set; } = new List<OlusoUserRole>();
     public virtual ICollection<OlusoRoleClaim> RoleClaims { get; set; } = new List<OlusoRoleClaim>();

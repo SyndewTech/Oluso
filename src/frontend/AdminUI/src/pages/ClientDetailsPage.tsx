@@ -31,6 +31,7 @@ import {
   ArrowRightOnRectangleIcon,
   ClipboardDocumentListIcon,
   AdjustmentsHorizontalIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 
 const COMMON_GRANT_TYPES = [
@@ -246,6 +247,14 @@ export default function ClientDetailsPage() {
     onSuccess: (result) => {
       setNewSecret(result.clientSecret);
       setShowSecretModal(true);
+      queryClient.invalidateQueries({ queryKey: ['client', id] });
+    },
+  });
+
+  const deleteSecretMutation = useMutation({
+    mutationFn: ({ clientId, secretId }: { clientId: string; secretId: number }) =>
+      clientService.deleteSecret(clientId, secretId),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['client', id] });
     },
   });
@@ -1277,20 +1286,76 @@ export default function ClientDetailsPage() {
 
               {client.requireClientSecret && !isEditing && (
                 <Card>
-                  <CardHeader title="Client Secret" />
-                  <CardContent>
-                    <div className="flex items-center gap-4">
-                      <p className="text-sm text-gray-600">
-                        The client secret is hashed and cannot be viewed. You can regenerate it if needed.
-                      </p>
+                  <CardHeader
+                    title="Client Secrets"
+                    action={
                       <Button
                         variant="secondary"
+                        size="sm"
                         onClick={() => regenerateSecretMutation.mutate(client.clientId)}
                         disabled={regenerateSecretMutation.isPending}
                       >
-                        {regenerateSecretMutation.isPending ? 'Regenerating...' : 'Regenerate Secret'}
+                        <PlusIcon className="h-4 w-4 mr-1" />
+                        {regenerateSecretMutation.isPending ? 'Adding...' : 'Add New Secret'}
                       </Button>
-                    </div>
+                    }
+                  />
+                  <CardContent>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Client secrets are hashed and cannot be viewed. You can add new secrets or remove existing ones.
+                    </p>
+                    {client.secrets && client.secrets.length > 0 ? (
+                      <div className="space-y-2">
+                        {client.secrets.map((secret) => (
+                          <div
+                            key={secret.id}
+                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                          >
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3">
+                                <KeyIcon className="h-5 w-5 text-gray-400" />
+                                <div>
+                                  <span className="text-sm font-medium text-gray-900">
+                                    Secret ending in ...{secret.lastThreeChars || '***'}
+                                  </span>
+                                  {secret.description && (
+                                    <span className="ml-2 text-sm text-gray-500">
+                                      ({secret.description})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="mt-1 text-xs text-gray-500 ml-8">
+                                Created: {new Date(secret.created).toLocaleDateString()}
+                                {secret.expiration && (
+                                  <span className="ml-2">
+                                    • Expires: {new Date(secret.expiration).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this secret?')) {
+                                  deleteSecretMutation.mutate({
+                                    clientId: client.clientId,
+                                    secretId: secret.id,
+                                  });
+                                }
+                              }}
+                              disabled={deleteSecretMutation.isPending || client.secrets.length <= 1}
+                              title={client.secrets.length <= 1 ? 'Cannot delete the last secret' : 'Delete secret'}
+                            >
+                              <TrashIcon className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">No secrets configured</p>
+                    )}
                   </CardContent>
                 </Card>
               )}

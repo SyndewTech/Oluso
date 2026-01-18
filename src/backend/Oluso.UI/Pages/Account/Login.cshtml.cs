@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Authentication;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Services;
@@ -20,7 +21,7 @@ public class LoginModel : PageModel
     private readonly IOlusoUserService _userService;
     private readonly IProtocolStateStore _protocolStateStore;
     private readonly ITenantContext? _tenantContext;
-    private readonly IFido2Service? _fido2Service;
+    private readonly IAuthenticationMethodRegistry? _authMethodRegistry;
     private readonly ILogger<LoginModel> _logger;
 
     public LoginModel(
@@ -28,12 +29,12 @@ public class LoginModel : PageModel
         IProtocolStateStore protocolStateStore,
         ILogger<LoginModel> logger,
         ITenantContext? tenantContext = null,
-        IFido2Service? fido2Service = null)
+        IAuthenticationMethodRegistry? authMethodRegistry = null)
     {
         _userService = userService;
         _protocolStateStore = protocolStateStore;
         _tenantContext = tenantContext;
-        _fido2Service = fido2Service;
+        _authMethodRegistry = authMethodRegistry;
         _logger = logger;
     }
 
@@ -54,24 +55,12 @@ public class LoginModel : PageModel
     public JourneyUiConfiguration? UiConfig { get; set; }
 
     /// <summary>
-    /// Whether passkey/FIDO2 login is available
+    /// Available passwordless authentication methods (passkey, etc.) discovered via registry.
+    /// Each provider specifies its own LoginUrl for handling the authentication flow.
     /// </summary>
-    public bool ShowPasskey => _fido2Service != null;
-
-    /// <summary>
-    /// FIDO2 assertion view model for passkey login (used to render the partial)
-    /// </summary>
-    public Fido2AssertionViewModel? Fido2AssertionViewModel { get; set; }
-
-    /// <summary>
-    /// FIDO2 assertion options for passkey login (serialized JSON) - kept for backwards compatibility
-    /// </summary>
-    public string? Fido2AssertionOptions { get; set; }
-
-    /// <summary>
-    /// FIDO2 assertion ID for verification
-    /// </summary>
-    public string? Fido2AssertionId { get; set; }
+    public IEnumerable<IAuthenticationMethodProvider> PasswordlessProviders =>
+        _authMethodRegistry?.GetAvailableLoginProviders()
+            .Where(p => p.Category == AuthenticationMethodCategories.Passwordless) ?? [];
 
     public async Task<IActionResult> OnGetAsync()
     {
@@ -122,17 +111,35 @@ public class LoginModel : PageModel
 
         _logger.LogDebug("Login attempt for user {Username}", Input.Username);
 
+        // Use tenant context from subdomain/domain if available
+        // This allows users with accounts in multiple tenants to login via tenant-specific URLs
+        var tenantId = _tenantContext?.HasTenant == true ? _tenantContext.TenantId : null;
+        if (!string.IsNullOrEmpty(tenantId))
+        {
+            _logger.LogDebug("Using tenant context for login: {TenantId}", tenantId);
+        }
+
         // Authenticate user
-        var result = await _userService.ValidateCredentialsAsync(Input.Username!, Input.Password!);
+        var result = await _userService.ValidateCredentialsAsync(Input.Username!, Input.Password!, tenantId);
 
         if (!result.Succeeded)
         {
             _logger.LogWarning("Login failed for user {Username}: {Error}", Input.Username, result.Error);
-            ErrorMessage = result.Error ?? "Invalid username or password";
 
-            if (result.IsLockedOut)
+            if (result.RequiresTenantQualifier)
+            {
+                // User has accounts in multiple tenants - guide them to use tenant-specific URL
+                _logger.LogWarning("Multiple accounts found for {Username} across tenants", Input.Username);
+                ErrorMessage = "Multiple accounts found with this email. Please access via your organization's login URL.";
+                // Could also show available tenants: result.AvailableTenants
+            }
+            else if (result.IsLockedOut)
             {
                 ErrorMessage = "Your account has been locked due to too many failed attempts. Please try again later.";
+            }
+            else
+            {
+                ErrorMessage = result.Error ?? "Invalid username or password";
             }
 
             return Page();
@@ -152,116 +159,6 @@ public class LoginModel : PageModel
 
         // Default: redirect to root
         return Redirect("/");
-    }
-
-    public async Task<IActionResult> OnPostPasskeyAsync()
-    {
-        if (_fido2Service == null)
-        {
-            ErrorMessage = "Passkey authentication is not available";
-            await LoadExternalProvidersAsync();
-            return Page();
-        }
-
-        try
-        {
-            // Create assertion options (usernameless - discoverable credentials)
-            var options = await _fido2Service.CreateAssertionOptionsAsync(null);
-
-            
-
-            Fido2AssertionId = options.AssertionId;
-
-            // Create view model for the Enterprise _Fido2Assertion partial
-            Fido2AssertionViewModel = new Fido2AssertionViewModel
-            {
-                Options = options,
-                AssertionId = options.AssertionId
-            };
-
-            // Also serialize for backwards compatibility with inline JavaScript
-            Fido2AssertionOptions = System.Text.Json.JsonSerializer.Serialize(options, new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-            });
-
-            _logger.LogInformation("Generated FIDO2 assertion options with ID {AssertionId}", options.AssertionId);
-
-            await LoadExternalProvidersAsync();
-            return Page();
-        }
-        catch (Fido2Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to create FIDO2 assertion options");
-            ErrorMessage = ex.Message;
-            await LoadExternalProvidersAsync();
-            return Page();
-        }
-    }
-
-    public async Task<IActionResult> OnPostPasskeyVerifyAsync(string assertionId, string assertionResponse)
-    {
-        if (_fido2Service == null)
-        {
-            ErrorMessage = "Passkey authentication is not available";
-            await LoadExternalProvidersAsync();
-            return Page();
-        }
-
-        if (string.IsNullOrEmpty(assertionId) || string.IsNullOrEmpty(assertionResponse))
-        {
-            ErrorMessage = "Invalid passkey response";
-            await LoadExternalProvidersAsync();
-            return Page();
-        }
-
-        try
-        {
-            var result = await _fido2Service.VerifyAssertionAsync(assertionId, assertionResponse);
-
-            if (!result.Succeeded)
-            {
-                _logger.LogWarning("FIDO2 assertion verification failed: {Error}", result.Error);
-                ErrorMessage = result.ErrorDescription ?? "Passkey verification failed";
-                await LoadExternalProvidersAsync();
-                return Page();
-            }
-
-            var user = await _userService.FindByIdAsync(result.UserId!);
-            if (user == null)
-            {
-                ErrorMessage = "User not found";
-                await LoadExternalProvidersAsync();
-                return Page();
-            }
-
-            if (!user.IsActive)
-            {
-                ErrorMessage = "Your account has been deactivated";
-                await LoadExternalProvidersAsync();
-                return Page();
-            }
-
-            _logger.LogInformation("User {UserId} logged in via passkey", user.Id);
-
-            // Sign in the user
-            await SignInUserAsync(user.Id, Input.RememberMe);
-
-            // Handle return URL
-            if (!string.IsNullOrEmpty(ReturnUrl) && IsAllowedReturnUrl(ReturnUrl))
-            {
-                return Redirect(ReturnUrl);
-            }
-
-            return Redirect("/");
-        }
-        catch (Fido2Exception ex)
-        {
-            _logger.LogError(ex, "FIDO2 assertion verification error");
-            ErrorMessage = ex.Message;
-            await LoadExternalProvidersAsync();
-            return Page();
-        }
     }
 
     public IActionResult OnPostExternalLogin(string provider, string? returnUrl, string? providerType)

@@ -1,9 +1,10 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/slices/authSlice';
+import { apiUrl, serverUrl } from '../config';
 
-let API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5050/api/admin';
-let API_BASE_ORIGIN = '';
+let API_BASE_URL = apiUrl;
+let API_BASE_ORIGIN = serverUrl;
 
 // Initialize base origin
 try {

@@ -79,61 +79,53 @@ public class ResourceStore : IResourceStore
         }
     }
 
-    // API Resources
-    public async Task<IEnumerable<ApiResource>> GetAllApiResourcesAsync(CancellationToken cancellationToken = default)
+    // Resources (RFC 8707)
+    public async Task<IEnumerable<Resource>> GetAllResourcesAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.ApiResources
-            .Include(r => r.Scopes)
+        return await _context.Resources
+            .Include(r => r.AllowedScopes)
             .Include(r => r.UserClaims)
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IEnumerable<ApiResource>> FindApiResourcesByScopeNameAsync(
-        IEnumerable<string> scopeNames,
-        CancellationToken cancellationToken = default)
+    public async Task<Resource?> GetResourceByIdAsync(int id, CancellationToken cancellationToken = default)
     {
-        var names = scopeNames.ToList();
-        return await _context.ApiResources
-            .Where(r => r.Scopes.Any(s => names.Contains(s.Scope)))
-            .Include(r => r.Scopes)
+        return await _context.Resources
+            .Include(r => r.AllowedScopes)
             .Include(r => r.UserClaims)
-            .Include(r => r.Secrets)
-            .ToListAsync(cancellationToken);
-    }
-
-    public async Task<IEnumerable<ApiResource>> FindApiResourcesByNameAsync(
-        IEnumerable<string> apiResourceNames,
-        CancellationToken cancellationToken = default)
-    {
-        var names = apiResourceNames.ToList();
-        return await _context.ApiResources
-            .Where(r => names.Contains(r.Name))
-            .Include(r => r.Scopes)
-            .Include(r => r.UserClaims)
-            .Include(r => r.Secrets)
-            .ToListAsync(cancellationToken);
-    }
-
-    public async Task<ApiResource?> GetApiResourceByIdAsync(int id, CancellationToken cancellationToken = default)
-    {
-        return await _context.ApiResources
-            .Include(r => r.Scopes)
-            .Include(r => r.UserClaims)
-            .Include(r => r.Secrets)
-            .Include(r => r.Properties)
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     }
 
-    public async Task<ApiResource> AddApiResourceAsync(ApiResource resource, CancellationToken cancellationToken = default)
+    public async Task<Resource?> FindResourceByUriAsync(string uri, CancellationToken cancellationToken = default)
+    {
+        return await _context.Resources
+            .Include(r => r.AllowedScopes)
+            .Include(r => r.UserClaims)
+            .FirstOrDefaultAsync(r => r.Uri == uri, cancellationToken);
+    }
+
+    public async Task<IEnumerable<Resource>> FindResourcesByUrisAsync(
+        IEnumerable<string> uris,
+        CancellationToken cancellationToken = default)
+    {
+        var uriList = uris.ToList();
+        return await _context.Resources
+            .Where(r => uriList.Contains(r.Uri))
+            .Include(r => r.AllowedScopes)
+            .Include(r => r.UserClaims)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<Resource> AddResourceAsync(Resource resource, CancellationToken cancellationToken = default)
     {
         // Always set TenantId from context to prevent bypass attacks
         resource.TenantId = _tenantContext.TenantId;
-        _context.ApiResources.Add(resource);
+        _context.Resources.Add(resource);
         await _context.SaveChangesAsync(cancellationToken);
         return resource;
     }
 
-    public async Task<ApiResource> UpdateApiResourceAsync(ApiResource resource, CancellationToken cancellationToken = default)
+    public async Task<Resource> UpdateResourceAsync(Resource resource, CancellationToken cancellationToken = default)
     {
         resource.Updated = DateTime.UtcNow;
 
@@ -141,19 +133,19 @@ public class ResourceStore : IResourceStore
         var entry = ((DbContext)_context).Entry(resource);
         if (entry.State == EntityState.Detached)
         {
-            _context.ApiResources.Update(resource);
+            _context.Resources.Update(resource);
         }
 
         await _context.SaveChangesAsync(cancellationToken);
         return resource;
     }
 
-    public async Task DeleteApiResourceAsync(int id, CancellationToken cancellationToken = default)
+    public async Task DeleteResourceAsync(int id, CancellationToken cancellationToken = default)
     {
-        var resource = await _context.ApiResources.FindAsync(new object[] { id }, cancellationToken);
+        var resource = await _context.Resources.FindAsync(new object[] { id }, cancellationToken);
         if (resource != null)
         {
-            _context.ApiResources.Remove(resource);
+            _context.Resources.Remove(resource);
             await _context.SaveChangesAsync(cancellationToken);
         }
     }

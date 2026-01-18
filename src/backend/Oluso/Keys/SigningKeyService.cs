@@ -39,10 +39,10 @@ public class SigningKeyService : ISigningKeyService
     {
         var tenantId = request.TenantId ?? _tenantContext.TenantId;
 
-        // Get the appropriate provider
-        var storageProvider = request.StorageProvider ?? KeyStorageProvider.Local;
-        var provider = _providerRegistry.GetProvider(storageProvider)
-            ?? _providerRegistry.GetDefaultProvider();
+        // Get the appropriate provider - use registry default if not specified
+        var provider = request.StorageProvider.HasValue
+            ? _providerRegistry.GetProvider(request.StorageProvider.Value) ?? _providerRegistry.GetDefaultProvider()
+            : _providerRegistry.GetDefaultProvider();
 
         _logger.LogInformation(
             "Generating new {KeyType} key for tenant {TenantId}, client {ClientId} using {Provider}",
@@ -191,18 +191,16 @@ public class SigningKeyService : ISigningKeyService
 
         _logger.LogInformation("Starting key rotation for tenant {TenantId}, client {ClientId}", tenantId, clientId);
 
-        // Get rotation config
+        // Get rotation config - null means use defaults from registry
         var config = await _keyStore.GetRotationConfigAsync(tenantId, clientId, cancellationToken);
-        if (config == null)
+        var hasExplicitConfig = config != null;
+        config ??= new KeyRotationConfig
         {
-            config = new KeyRotationConfig
-            {
-                TenantId = tenantId,
-                ClientId = clientId
-            };
-        }
+            TenantId = tenantId,
+            ClientId = clientId
+        };
 
-        // Generate new key using configured provider
+        // Generate new key - use explicit config's provider, or null to use registry default
         var newKey = await GenerateKeyAsync(new GenerateKeyRequest
         {
             TenantId = tenantId,
@@ -213,7 +211,7 @@ public class SigningKeyService : ISigningKeyService
             LifetimeDays = config.KeyLifetimeDays,
             ActivateImmediately = true,
             Priority = 200, // Higher priority for new keys
-            StorageProvider = config.PreferredStorageProvider
+            StorageProvider = hasExplicitConfig ? config.PreferredStorageProvider : null
         }, cancellationToken);
 
         // Demote existing active keys
@@ -241,7 +239,8 @@ public class SigningKeyService : ISigningKeyService
     /// <summary>
     /// Revoke a key (also revokes in provider if applicable)
     /// </summary>
-    public async Task RevokeKeyAsync(
+    /// <returns>True if key was revoked, false if key was not found</returns>
+    public async Task<bool> RevokeKeyAsync(
         string keyId,
         string reason,
         CancellationToken cancellationToken = default)
@@ -249,7 +248,8 @@ public class SigningKeyService : ISigningKeyService
         var key = await _keyStore.GetByIdAsync(keyId, cancellationToken);
         if (key == null)
         {
-            throw new InvalidOperationException($"Key {keyId} not found");
+            _logger.LogWarning("Attempted to revoke key {KeyId} but it was not found", keyId);
+            return false;
         }
 
         key.Status = SigningKeyStatus.Revoked;
@@ -260,6 +260,7 @@ public class SigningKeyService : ISigningKeyService
         await _keyStore.UpdateAsync(key, cancellationToken);
 
         _logger.LogWarning("Key {KeyId} revoked: {Reason}", keyId, reason);
+        return true;
     }
 
     /// <summary>

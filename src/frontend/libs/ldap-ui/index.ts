@@ -48,6 +48,7 @@ export function createLdapPlugin(options: LdapPluginOptions): AdminUIPlugin {
         icon: ServerIcon,
         group: 'settings',
         order: 70,
+        permission: 'ldap.read',
       },
     ],
 

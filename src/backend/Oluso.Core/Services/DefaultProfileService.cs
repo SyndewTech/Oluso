@@ -7,21 +7,25 @@ namespace Oluso.Core.Services;
 /// <summary>
 /// Default implementation of IProfileService that collects claims from plugins.
 /// Uses IClaimsProviderRegistry to gather claims from all enabled plugins.
+/// Implements IExtendedProfileService for role and permission retrieval.
 /// </summary>
-public class DefaultProfileService : IProfileService
+public class DefaultProfileService : IExtendedProfileService
 {
     private readonly IOlusoUserService _userService;
+    private readonly IRoleStore _roleStore;
     private readonly IClaimsProviderRegistry _claimsProviderRegistry;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<DefaultProfileService> _logger;
 
     public DefaultProfileService(
         IOlusoUserService userService,
+        IRoleStore roleStore,
         IClaimsProviderRegistry claimsProviderRegistry,
         ITenantContext tenantContext,
         ILogger<DefaultProfileService> logger)
     {
         _userService = userService;
+        _roleStore = roleStore;
         _claimsProviderRegistry = claimsProviderRegistry;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -73,6 +77,54 @@ public class DefaultProfileService : IProfileService
     {
         var user = await _userService.FindByIdAsync(context.SubjectId);
         context.IsActive = user?.IsActive ?? false;
+    }
+
+    public async Task<ICollection<string>> GetUserRolesAsync(string subjectId, CancellationToken cancellationToken = default)
+    {
+        var user = await _userService.FindByIdAsync(subjectId);
+        if (user?.Roles == null)
+        {
+            return Array.Empty<string>();
+        }
+
+        return user.Roles.ToList();
+    }
+
+    public async Task<ICollection<string>> GetUserPermissionsAsync(string subjectId, string? tenantId, CancellationToken cancellationToken = default)
+    {
+        var roles = await GetUserRolesAsync(subjectId, cancellationToken);
+        if (roles.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var allPermissions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var roleName in roles)
+        {
+            // Try tenant-specific role first
+            var role = await _roleStore.GetByNameAsync(roleName, tenantId);
+            if (role == null)
+            {
+                // Try global role
+                role = await _roleStore.GetByNameAsync(roleName, null);
+            }
+
+            if (role != null)
+            {
+                var permissions = role.GetPermissions();
+                foreach (var permission in permissions)
+                {
+                    allPermissions.Add(permission);
+                }
+            }
+        }
+
+        _logger.LogDebug(
+            "Collected {PermissionCount} permissions for user {SubjectId} from {RoleCount} roles",
+            allPermissions.Count, subjectId, roles.Count);
+
+        return allPermissions.ToList();
     }
 
     private static void AddStandardClaims(

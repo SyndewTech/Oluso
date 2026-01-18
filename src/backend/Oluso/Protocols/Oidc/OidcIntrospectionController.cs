@@ -107,9 +107,9 @@ public class OidcIntrospectionController : ControllerBase
     /// Check if the calling client is authorized to introspect a token.
     /// A client can introspect if:
     /// 1. It owns the token (is the client the token was issued to)
-    /// 2. It's an API resource that the token grants access to
+    /// 2. The calling client's ID is in the token's audience (RFC 8707 resource-based)
     /// </summary>
-    private async Task<bool> IsAuthorizedToIntrospectAsync(
+    private Task<bool> IsAuthorizedToIntrospectAsync(
         Client callingClient,
         string tokenClientId,
         string? tokenData,
@@ -118,26 +118,38 @@ public class OidcIntrospectionController : ControllerBase
         // Client owns the token
         if (callingClient.ClientId == tokenClientId)
         {
-            return true;
+            return Task.FromResult(true);
         }
 
-        // Check if calling client is an API resource the token grants access to
+        // Check if calling client is in the token's audience (RFC 8707)
+        // Per RFC 8707, resources become the audience in tokens
         if (!string.IsNullOrEmpty(tokenData))
         {
             try
             {
                 var data = JsonSerializer.Deserialize<Dictionary<string, object>>(tokenData);
-                if (data?.TryGetValue("Scopes", out var scopesObj) == true)
+
+                // Check if the calling client's ID is in the audience
+                if (data?.TryGetValue("Audience", out var audObj) == true)
                 {
-                    var scopes = JsonSerializer.Deserialize<List<string>>(scopesObj.ToString()!);
-                    if (scopes != null)
+                    var audiences = JsonSerializer.Deserialize<List<string>>(audObj.ToString()!);
+                    if (audiences != null && audiences.Contains(callingClient.ClientId))
                     {
-                        // Check if any scope belongs to an API resource that matches the calling client
-                        var apiResources = await _resourceStore.FindApiResourcesByScopeNameAsync(scopes, cancellationToken);
-                        if (apiResources.Any(r => r.Name == callingClient.ClientId))
-                        {
-                            return true;
-                        }
+                        return Task.FromResult(true);
+                    }
+                }
+
+                // Also check for Resources (RFC 8707 resource parameter values)
+                if (data?.TryGetValue("Resources", out var resObj) == true)
+                {
+                    var resources = JsonSerializer.Deserialize<List<string>>(resObj.ToString()!);
+                    // Check if calling client's ID matches any resource URI
+                    // This allows resource servers to introspect tokens for their resources
+                    if (resources != null && resources.Any(r =>
+                        r == callingClient.ClientId ||
+                        r.EndsWith($"/{callingClient.ClientId}", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return Task.FromResult(true);
                     }
                 }
             }
@@ -147,7 +159,7 @@ public class OidcIntrospectionController : ControllerBase
             }
         }
 
-        return false;
+        return Task.FromResult(false);
     }
 
     private IntrospectionResponse IntrospectReferenceToken(PersistedGrant grant)

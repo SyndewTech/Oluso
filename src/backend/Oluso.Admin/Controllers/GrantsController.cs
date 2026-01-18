@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -37,6 +38,7 @@ public class GrantsController : AdminBaseController
     /// Get all persisted grants with optional filtering
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.GrantsRead)]
     public async Task<ActionResult<PaginatedResult<PersistedGrantDto>>> GetGrants(
         [FromQuery] string? subjectId,
         [FromQuery] string? clientId,
@@ -75,6 +77,7 @@ public class GrantsController : AdminBaseController
     /// Get a specific persisted grant by key
     /// </summary>
     [HttpGet("{key}")]
+    [RequirePermission(AdminPermissions.GrantsRead)]
     public async Task<ActionResult<PersistedGrantDto>> GetGrant(string key, CancellationToken cancellationToken)
     {
         var grant = await _grantStore.GetAsync(key, cancellationToken);
@@ -88,6 +91,7 @@ public class GrantsController : AdminBaseController
     /// Revoke a persisted grant
     /// </summary>
     [HttpDelete("{key}")]
+    [RequirePermission(AdminPermissions.GrantsRevoke)]
     public async Task<IActionResult> RevokeGrant(string key, CancellationToken cancellationToken)
     {
         await _grantStore.RemoveAsync(key, cancellationToken);
@@ -99,6 +103,7 @@ public class GrantsController : AdminBaseController
     /// Revoke all grants for a subject
     /// </summary>
     [HttpDelete("by-subject/{subjectId}")]
+    [RequirePermission(AdminPermissions.GrantsRevoke)]
     public async Task<IActionResult> RevokeGrantsBySubject(string subjectId, CancellationToken cancellationToken)
     {
         await _grantStore.RemoveAllAsync(new PersistedGrantFilter { SubjectId = subjectId }, cancellationToken);
@@ -110,6 +115,7 @@ public class GrantsController : AdminBaseController
     /// Revoke all grants for a client
     /// </summary>
     [HttpDelete("by-client/{clientId}")]
+    [RequirePermission(AdminPermissions.GrantsRevoke)]
     public async Task<IActionResult> RevokeGrantsByClient(string clientId, CancellationToken cancellationToken)
     {
         await _grantStore.RemoveAllAsync(new PersistedGrantFilter { ClientId = clientId }, cancellationToken);
@@ -123,6 +129,7 @@ public class GrantsController : AdminBaseController
     /// Get all server-side sessions with optional filtering
     /// </summary>
     [HttpGet("sessions")]
+    [RequirePermission(AdminPermissions.SessionsRead)]
     public async Task<ActionResult<PaginatedResult<ServerSideSessionDto>>> GetSessions(
         [FromQuery] string? subjectId,
         [FromQuery] int pageNumber = 1,
@@ -180,6 +187,7 @@ public class GrantsController : AdminBaseController
     /// Get a specific session by key
     /// </summary>
     [HttpGet("sessions/{key}")]
+    [RequirePermission(AdminPermissions.SessionsRead)]
     public async Task<ActionResult<ServerSideSessionDto>> GetSession(string key, CancellationToken cancellationToken)
     {
         if (_sessionStore == null)
@@ -196,6 +204,7 @@ public class GrantsController : AdminBaseController
     /// Revoke a session by key (with optional backchannel logout)
     /// </summary>
     [HttpDelete("sessions/{key}")]
+    [RequirePermission(AdminPermissions.SessionsRevoke)]
     public async Task<IActionResult> RevokeSession(
         string key,
         [FromQuery] bool sendBackchannelLogout = true,
@@ -231,6 +240,7 @@ public class GrantsController : AdminBaseController
     /// Revoke all sessions for a subject (with optional backchannel logout)
     /// </summary>
     [HttpDelete("sessions/by-subject/{subjectId}")]
+    [RequirePermission(AdminPermissions.SessionsRevoke)]
     public async Task<IActionResult> RevokeSessionsBySubject(
         string subjectId,
         [FromQuery] bool sendBackchannelLogout = true,

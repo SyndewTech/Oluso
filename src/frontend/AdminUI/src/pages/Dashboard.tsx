@@ -15,7 +15,7 @@ import api from '../services/api';
 interface DashboardStats {
   clientsCount: number;
   usersCount: number;
-  apiResourcesCount: number;
+  resourcesCount: number;
   identityResourcesCount: number;
   activeSessionsCount: number;
   recentLoginsCount: number;
@@ -44,14 +44,14 @@ export default function Dashboard() {
       onClick: () => navigate('/users'),
     },
     {
-      label: 'Configure API resource',
+      label: 'Configure resource',
       icon: ServerStackIcon,
-      onClick: () => navigate('/api-resources/new'),
+      onClick: () => navigate('/resources/new'),
     },
     {
-      label: 'View audit logs',
+      label: 'View activity logs',
       icon: DocumentTextIcon,
-      onClick: () => navigate('/audit-logs'),
+      onClick: () => navigate('/activity-logs'),
     },
   ];
 
@@ -69,8 +69,8 @@ export default function Dashboard() {
       color: 'bg-green-500',
     },
     {
-      name: 'API Resources',
-      value: stats?.apiResourcesCount ?? 0,
+      name: 'Resources',
+      value: stats?.resourcesCount ?? 0,
       icon: ServerStackIcon,
       color: 'bg-purple-500',
     },

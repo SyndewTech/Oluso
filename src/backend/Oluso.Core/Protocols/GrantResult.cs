@@ -28,6 +28,13 @@ public class GrantResult : ValidationResult
     public ICollection<string> Scopes { get; set; } = new List<string>();
 
     /// <summary>
+    /// Permissions granted to the user based on their roles.
+    /// These are separate from claims and represent what the user can do.
+    /// Added to tokens as a dedicated "permissions" claim.
+    /// </summary>
+    public ICollection<string> Permissions { get; set; } = new List<string>();
+
+    /// <summary>
     /// Custom data for the grant
     /// </summary>
     public IDictionary<string, object> CustomData { get; set; } = new Dictionary<string, object>();

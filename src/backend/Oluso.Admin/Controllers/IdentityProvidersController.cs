@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -83,6 +84,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Get all identity providers
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.IdentityProvidersRead)]
     public async Task<ActionResult<IEnumerable<IdentityProviderDto>>> GetAll(CancellationToken cancellationToken)
     {
         var providers = await _providerStore.GetAllAsync(cancellationToken);
@@ -95,6 +97,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Secrets are masked - use GET /{id}/secret/{key} to reveal individual secrets.
     /// </summary>
     [HttpGet("{id:int}/edit")]
+    [RequirePermission(AdminPermissions.IdentityProvidersRead)]
     public async Task<ActionResult<IdentityProviderEditDto>> GetForEdit(int id, CancellationToken cancellationToken)
     {
         var provider = await _providerStore.GetByIdAsync(id, cancellationToken);
@@ -124,6 +127,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Requires admin authentication. Access is logged.
     /// </summary>
     [HttpGet("{id:int}/secret/{secretKey}")]
+    [RequirePermission(AdminPermissions.IdentityProvidersWrite)]
     public async Task<ActionResult<SecretRevealResponse>> RevealSecret(
         int id,
         string secretKey,
@@ -155,6 +159,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Get identity provider by ID
     /// </summary>
     [HttpGet("{id:int}")]
+    [RequirePermission(AdminPermissions.IdentityProvidersRead)]
     public async Task<ActionResult<IdentityProviderDto>> GetById(int id, CancellationToken cancellationToken)
     {
         var provider = await _providerStore.GetByIdAsync(id, cancellationToken);
@@ -168,6 +173,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Get identity provider by scheme
     /// </summary>
     [HttpGet("by-scheme/{scheme}")]
+    [RequirePermission(AdminPermissions.IdentityProvidersRead)]
     public async Task<ActionResult<IdentityProviderDto>> GetByScheme(string scheme, CancellationToken cancellationToken)
     {
         var provider = await _providerStore.GetBySchemeAsync(scheme, cancellationToken);
@@ -250,6 +256,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Create a new identity provider
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.IdentityProvidersWrite)]
     public async Task<ActionResult<IdentityProviderDto>> Create(
         [FromBody] CreateIdentityProviderRequest request,
         CancellationToken cancellationToken)
@@ -300,6 +307,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Update an identity provider
     /// </summary>
     [HttpPut("{id:int}")]
+    [RequirePermission(AdminPermissions.IdentityProvidersWrite)]
     public async Task<ActionResult<IdentityProviderDto>> Update(
         int id,
         [FromBody] UpdateIdentityProviderRequest request,
@@ -354,6 +362,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Delete an identity provider
     /// </summary>
     [HttpDelete("{id:int}")]
+    [RequirePermission(AdminPermissions.IdentityProvidersDelete)]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
         var existing = await _providerStore.GetByIdAsync(id, cancellationToken);
@@ -386,6 +395,7 @@ public class IdentityProvidersController : AdminBaseController
     /// Toggle provider enabled status
     /// </summary>
     [HttpPost("{id:int}/toggle")]
+    [RequirePermission(AdminPermissions.IdentityProvidersWrite)]
     public async Task<ActionResult<IdentityProviderDto>> Toggle(int id, CancellationToken cancellationToken)
     {
         var existing = await _providerStore.GetByIdAsync(id, cancellationToken);

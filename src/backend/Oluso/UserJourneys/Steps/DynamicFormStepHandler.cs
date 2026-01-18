@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 
 namespace Oluso.UserJourneys.Steps;
@@ -85,6 +87,95 @@ public class DynamicFormStepHandler : IStepHandler
                 });
             }
 
+            // Persist fields marked with persistToUser to user properties
+            var fieldsToSave = config.Fields.Where(f => f.PersistToUser).ToList();
+            if (fieldsToSave.Any() && !string.IsNullOrEmpty(context.UserId))
+            {
+                var userService = context.ServiceProvider.GetService<IOlusoUserService>();
+                if (userService != null)
+                {
+                    string? firstName = null, lastName = null, phoneNumber = null, picture = null;
+                    var customProperties = new Dictionary<string, string>();
+                    var updatedFields = new List<string>();
+
+                    foreach (var field in fieldsToSave)
+                    {
+                        if (context.UserInput.TryGetValue(field.Name, out var value))
+                        {
+                            var stringValue = value?.ToString();
+                            if (!string.IsNullOrEmpty(stringValue))
+                            {
+                                var propertyKey = field.UserPropertyName ?? field.ClaimType ?? field.Name;
+
+                                // Map to standard user properties if matching known fields
+                                switch (propertyKey.ToLowerInvariant())
+                                {
+                                    case "firstname":
+                                    case "given_name":
+                                    case "givenname":
+                                        firstName = stringValue;
+                                        updatedFields.Add("FirstName");
+                                        break;
+                                    case "lastname":
+                                    case "family_name":
+                                    case "familyname":
+                                        lastName = stringValue;
+                                        updatedFields.Add("LastName");
+                                        break;
+                                    case "phonenumber":
+                                    case "phone":
+                                    case "phone_number":
+                                        phoneNumber = stringValue;
+                                        updatedFields.Add("PhoneNumber");
+                                        break;
+                                    case "picture":
+                                    case "photo":
+                                    case "avatar":
+                                        picture = stringValue;
+                                        updatedFields.Add("Picture");
+                                        break;
+                                    default:
+                                        // Store as custom property
+                                        customProperties[propertyKey] = stringValue;
+                                        updatedFields.Add($"Custom:{propertyKey}");
+                                        break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (updatedFields.Any())
+                    {
+                        var updateRequest = new UpdateUserRequest
+                        {
+                            FirstName = firstName,
+                            LastName = lastName,
+                            PhoneNumber = phoneNumber,
+                            Picture = picture,
+                            CustomProperties = customProperties.Any() ? customProperties : null
+                        };
+
+                        var updateResult = await userService.UpdateUserAsync(
+                            context.UserId,
+                            updateRequest,
+                            cancellationToken);
+
+                        if (updateResult.Succeeded)
+                        {
+                            logger.LogInformation(
+                                "Persisted {Count} properties to user {UserId}: {Fields}",
+                                updatedFields.Count, context.UserId, string.Join(", ", updatedFields));
+                        }
+                        else
+                        {
+                            logger.LogWarning(
+                                "Failed to persist properties to user {UserId}: {Error}",
+                                context.UserId, updateResult.ErrorDescription);
+                        }
+                    }
+                }
+            }
+
             logger.LogInformation("Dynamic form collected {Count} values", outputData.Count);
 
             return StepHandlerResult.Success(outputData);
@@ -122,6 +213,8 @@ public class DynamicFormStepHandler : IStepHandler
 
     private DynamicFormConfig ParseConfiguration(StepExecutionContext context)
     {
+        var logger = context.ServiceProvider.GetRequiredService<ILogger<DynamicFormStepHandler>>();
+
         var config = new DynamicFormConfig
         {
             ViewName = context.GetConfig("viewName", "Journey/_DynamicForm"),
@@ -146,6 +239,24 @@ public class DynamicFormStepHandler : IStepHandler
                 if (field != null)
                 {
                     config.Fields.Add(field);
+                }
+            }
+        }
+
+        // Validate no duplicate user property names for persistToUser fields
+        var persistFields = config.Fields.Where(f => f.PersistToUser).ToList();
+        if (persistFields.Count > 0)
+        {
+            var propertyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var field in persistFields)
+            {
+                var propertyKey = field.UserPropertyName ?? field.ClaimType ?? field.Name;
+                if (!propertyNames.Add(propertyKey))
+                {
+                    logger.LogWarning(
+                        "Duplicate user property name '{PropertyKey}' detected in dynamic form config. " +
+                        "Field '{FieldName}' will overwrite previous value.",
+                        propertyKey, field.Name);
                 }
             }
         }
@@ -177,7 +288,9 @@ public class DynamicFormStepHandler : IStepHandler
             Rows = element.TryGetProperty("rows", out var rowsProp) ? rowsProp.GetInt32() : null,
             ReadOnly = element.TryGetProperty("readOnly", out var readOnlyProp) && readOnlyProp.GetBoolean(),
             Hidden = element.TryGetProperty("hidden", out var hiddenProp) && hiddenProp.GetBoolean(),
-            Group = element.TryGetProperty("group", out var groupProp) ? groupProp.GetString() : null
+            Group = element.TryGetProperty("group", out var groupProp) ? groupProp.GetString() : null,
+            PersistToUser = element.TryGetProperty("persistToUser", out var persistProp) && persistProp.GetBoolean(),
+            UserPropertyName = element.TryGetProperty("userPropertyName", out var propNameProp) ? propNameProp.GetString() : null
         };
 
         // Parse options for select/radio/checkbox fields
@@ -431,6 +544,14 @@ internal class FormFieldConfig
     public string? Group { get; set; }
     public List<FormFieldOption> Options { get; set; } = new();
     public FormFieldCondition? ShowWhen { get; set; }
+    /// <summary>
+    /// When true, the collected value will be saved to the user's CustomProperties
+    /// </summary>
+    public bool PersistToUser { get; set; }
+    /// <summary>
+    /// The property name to use when persisting to user. Defaults to ClaimType or Name.
+    /// </summary>
+    public string? UserPropertyName { get; set; }
 }
 
 internal class FormFieldOption

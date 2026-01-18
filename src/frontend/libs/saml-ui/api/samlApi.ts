@@ -122,6 +122,8 @@ export interface SamlCertificateInfo {
   notBefore?: string;
   notAfter?: string;
   thumbprint?: string;
+  status: string;
+  isRevoked: boolean;
   isExpired: boolean;
   isExpiringSoon: boolean;
   hasCertificate: boolean;

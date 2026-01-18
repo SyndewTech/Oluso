@@ -1,4 +1,5 @@
 using Oluso.Core.Domain.Entities;
+using Oluso.Enterprise.Fido2.Entities;
 
 namespace Oluso.Enterprise.Fido2.Services;
 

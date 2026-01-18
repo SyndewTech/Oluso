@@ -15,19 +15,16 @@ namespace Oluso.Enterprise.Fido2.Controllers;
 public class Fido2AdminController : AdminBaseController
 {
     private readonly IFido2Service _fido2Service;
-    private readonly IFido2CredentialStore _credentialStore;
     private readonly IOlusoUserService _userService;
     private readonly ILogger<Fido2AdminController> _logger;
 
     public Fido2AdminController(
         IFido2Service fido2Service,
-        IFido2CredentialStore credentialStore,
         IOlusoUserService userService,
         ILogger<Fido2AdminController> logger,
         ITenantContext tenantContext) : base(tenantContext)
     {
         _fido2Service = fido2Service;
-        _credentialStore = credentialStore;
         _userService = userService;
         _logger = logger;
     }

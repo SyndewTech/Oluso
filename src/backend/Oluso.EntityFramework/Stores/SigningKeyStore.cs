@@ -50,9 +50,11 @@ public class SigningKeyStore : ISigningKeyStore
         string? clientId = null,
         CancellationToken cancellationToken = default)
     {
+        var now = DateTime.UtcNow;
         var query = _context.SigningKeys
             .Where(k => k.Status == SigningKeyStatus.Active &&
-                        k.CanSign);
+                        (k.ActivatedAt == null || k.ActivatedAt <= now) &&
+                        (k.ExpiresAt == null || k.ExpiresAt > now));
 
         // Prefer client-specific, then tenant-specific, then global
         if (!string.IsNullOrEmpty(clientId))

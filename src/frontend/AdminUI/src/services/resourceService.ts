@@ -1,15 +1,14 @@
 import api from './api';
 import type {
-  ApiResource,
+  Resource,
   ApiScope,
   IdentityResource,
-  CreateApiResourceRequest,
-  UpdateApiResourceRequest,
+  CreateResourceRequest,
+  UpdateResourceRequest,
   CreateApiScopeRequest,
   UpdateApiScopeRequest,
   CreateIdentityResourceRequest,
   ApiScopeSummary,
-  ApiResourceSummary,
 } from '../types/resources';
 import type { PaginatedResult } from '../types/audit';
 
@@ -27,55 +26,60 @@ function wrapInPagination<T>(data: T[] | PaginatedResult<T>): PaginatedResult<T>
   return data;
 }
 
-export const apiResourceService = {
-  getAll: async (page = 1, pageSize = 10): Promise<PaginatedResult<ApiResource>> => {
-    const response = await api.get('/api-resources', {
+/**
+ * Service for managing RFC 8707 Resources (protected APIs identified by URI)
+ */
+export const resourceService = {
+  getAll: async (page = 1, pageSize = 10): Promise<PaginatedResult<Resource>> => {
+    const response = await api.get('/resources', {
       params: { pageNumber: page, pageSize },
     });
     return wrapInPagination(response.data);
   },
 
-  getById: async (id: number): Promise<ApiResource> => {
-    const response = await api.get(`/api-resources/${id}`);
+  getById: async (id: number): Promise<Resource> => {
+    const response = await api.get(`/resources/${id}`);
     return response.data;
   },
 
-  getByName: async (name: string): Promise<ApiResource> => {
-    const response = await api.get(`/api-resources/by-name/${encodeURIComponent(name)}`);
+  getByUri: async (uri: string): Promise<Resource> => {
+    const response = await api.get('/resources/by-uri', {
+      params: { uri },
+    });
     return response.data;
   },
 
-  create: async (data: CreateApiResourceRequest): Promise<ApiResource> => {
-    const response = await api.post('/api-resources', data);
+  create: async (data: CreateResourceRequest): Promise<Resource> => {
+    const response = await api.post('/resources', data);
     return response.data;
   },
 
-  update: async (id: number, data: UpdateApiResourceRequest): Promise<ApiResource> => {
-    const response = await api.put(`/api-resources/${id}`, data);
+  update: async (id: number, data: UpdateResourceRequest): Promise<Resource> => {
+    const response = await api.put(`/resources/${id}`, data);
     return response.data;
   },
 
   delete: async (id: number): Promise<void> => {
-    await api.delete(`/api-resources/${id}`);
+    await api.delete(`/resources/${id}`);
   },
 
   // Scope management for a resource
-  addScope: async (id: number, scopeName: string): Promise<ApiResource> => {
-    const response = await api.post(`/api-resources/${id}/scopes`, {
+  addScope: async (id: number, scopeName: string): Promise<Resource> => {
+    const response = await api.post(`/resources/${id}/scopes`, {
       scopeName,
     });
     return response.data;
   },
 
-  removeScope: async (id: number, scopeName: string): Promise<ApiResource> => {
+  removeScope: async (id: number, scopeName: string): Promise<Resource> => {
     const response = await api.delete(
-      `/api-resources/${id}/scopes/${encodeURIComponent(scopeName)}`
+      `/resources/${id}/scopes/${encodeURIComponent(scopeName)}`
     );
     return response.data;
   },
 
   getAvailableScopes: async (): Promise<ApiScopeSummary[]> => {
-    const response = await api.get('/api-resources/available-scopes');
+    const response = await api.get('/resources/available-scopes');
     return response.data;
   },
 };
@@ -110,11 +114,6 @@ export const apiScopeService = {
 
   delete: async (id: number): Promise<void> => {
     await api.delete(`/api-scopes/${id}`);
-  },
-
-  getAvailableResources: async (): Promise<ApiResourceSummary[]> => {
-    const response = await api.get('/api-scopes/available-resources');
-    return response.data;
   },
 };
 

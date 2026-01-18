@@ -52,6 +52,14 @@ public class TokenCreationRequest
     public IDictionary<string, object> Claims { get; set; } = new Dictionary<string, object>();
 
     /// <summary>
+    /// Permissions granted to the user based on their roles.
+    /// These are added to the access token as a dedicated "permissions" claim,
+    /// separate from identity claims. Enables client-side permission checks
+    /// and reduces database lookups for authorization.
+    /// </summary>
+    public ICollection<string> Permissions { get; set; } = new List<string>();
+
+    /// <summary>
     /// Access token lifetime in seconds
     /// </summary>
     public int Lifetime { get; set; }

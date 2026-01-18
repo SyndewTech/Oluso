@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\backend\Oluso\Oluso.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.EntityFramework\Oluso.EntityFramework.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.Admin\Oluso.Admin.csproj" />
   </ItemGroup>
 
 </Project>

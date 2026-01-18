@@ -120,6 +120,7 @@ public class TenantBrandingSettings
     public static TenantBrandingSettings Default => new();
 }
 
+//Fixme: Expand protocol settings and check it is not duplicate of other settings
 /// <summary>
 /// Protocol settings for a tenant (OIDC discovery document configuration).
 /// Controls what capabilities are advertised and enabled for this tenant.
@@ -213,6 +214,91 @@ public class TenantProtocolSettings
     /// </summary>
     public bool BackchannelLogoutSupported { get; set; } = true;
 
+    // ========================================
+    // Dynamic Client Registration (RFC 7591)
+    // ========================================
+
+    /// <summary>
+    /// Whether Dynamic Client Registration is enabled for this tenant.
+    /// </summary>
+    public bool EnableDynamicClientRegistration { get; set; }
+
+    /// <summary>
+    /// Whether unauthenticated (open) registration is allowed.
+    /// If false, an initial access token is required.
+    /// </summary>
+    public bool AllowOpenDynamicRegistration { get; set; }
+
+    /// <summary>
+    /// Scopes that dynamically registered clients are allowed to request.
+    /// Values must exist in tenant's configured scopes (ApiScope/IdentityResource).
+    /// If empty/null, defaults to openid, profile, email.
+    /// </summary>
+    public List<string>? DynamicRegistrationAllowedScopes { get; set; }
+
+    /// <summary>
+    /// Grant types that dynamically registered clients are allowed to use.
+    /// Values must be a subset of tenant's AllowedGrantTypes.
+    /// If empty/null, defaults to authorization_code and refresh_token.
+    /// </summary>
+    public List<string>? DynamicRegistrationAllowedGrantTypes { get; set; }
+
+    /// <summary>
+    /// Whether PKCE is required for dynamically registered clients.
+    /// Recommended: true for security.
+    /// </summary>
+    public bool DynamicRegistrationRequirePkce { get; set; } = true;
+
+    /// <summary>
+    /// Maximum number of redirect URIs allowed per dynamically registered client.
+    /// </summary>
+    public int DynamicRegistrationMaxRedirectUris { get; set; } = 10;
+
+    /// <summary>
+    /// Required scope for initial access tokens when protected registration is enabled.
+    /// If null/empty, any valid token is accepted.
+    /// Example: "client:register" or "dcr:create"
+    /// </summary>
+    public string? DynamicRegistrationRequiredScope { get; set; }
+
+    /// <summary>
+    /// Required claim name for initial access tokens when protected registration is enabled.
+    /// Used in conjunction with DynamicRegistrationRequiredClaimValue.
+    /// If null/empty, no claim check is performed.
+    /// Example: "role" or "permission"
+    /// </summary>
+    public string? DynamicRegistrationRequiredClaim { get; set; }
+
+    /// <summary>
+    /// Required claim value for initial access tokens when protected registration is enabled.
+    /// The token must have the claim specified by DynamicRegistrationRequiredClaim with this value.
+    /// If null/empty but DynamicRegistrationRequiredClaim is set, only claim presence is checked.
+    /// Example: "admin" or "dcr-allowed"
+    /// </summary>
+    public string? DynamicRegistrationRequiredClaimValue { get; set; }
+
+    // ========================================
+    // Resource Indicators (RFC 8707)
+    // ========================================
+
+    /// <summary>
+    /// Resource validation mode per RFC 8707.
+    /// Controls how the authorization server validates the resource parameter.
+    /// </summary>
+    public ResourceValidationMode ResourceValidationMode { get; set; } = ResourceValidationMode.Optional;
+
+    /// <summary>
+    /// Whether the resource parameter is required on authorization/token requests.
+    /// When true, requests without a resource parameter will be rejected.
+    /// </summary>
+    public bool RequireResourceParameter { get; set; }
+
+    /// <summary>
+    /// Default resource URI to use when none is specified in the request.
+    /// Only applies when RequireResourceParameter is false.
+    /// </summary>
+    public string? DefaultResourceUri { get; set; }
+
     public static TenantProtocolSettings Default => new();
 }
 
@@ -238,4 +324,31 @@ public interface IIssuerResolver
     /// Priority: Tenant IssuerUri > Tenant CustomDomain > Server config > Request host
     /// </summary>
     Task<string> GetIssuerAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Resource validation mode per RFC 8707.
+/// Controls how the authorization server validates resource parameters.
+/// </summary>
+public enum ResourceValidationMode
+{
+    /// <summary>
+    /// Resource parameter is optional and not validated.
+    /// Any absolute URI without fragment is accepted.
+    /// </summary>
+    Optional,
+
+    /// <summary>
+    /// Resource parameter is validated against registered resources.
+    /// Per RFC 8707: "authorization servers MAY validate resource values against
+    /// known/registered resources to ensure proper audience scoping."
+    /// Unregistered resources are rejected.
+    /// </summary>
+    ValidateAgainstRegistered,
+
+    /// <summary>
+    /// Strict mode: resource parameter is required and must match a registered resource.
+    /// Combines RequireResourceParameter with validation against registered resources.
+    /// </summary>
+    Strict
 }

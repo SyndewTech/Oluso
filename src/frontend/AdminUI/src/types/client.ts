@@ -3,6 +3,15 @@ export interface AllowedUser {
   displayName?: string;
 }
 
+export interface ClientSecret {
+  id: number;
+  description?: string;
+  expiration?: string;
+  type: string;
+  created: string;
+  lastThreeChars?: string;
+}
+
 export interface ClientClaim {
   type: string;
   value: string;
@@ -39,6 +48,9 @@ export interface Client {
   created: string;
   updated?: string;
   lastAccessed?: string;
+
+  // Client secrets
+  secrets: ClientSecret[];
 
   // Authentication settings
   requireClientSecret: boolean;

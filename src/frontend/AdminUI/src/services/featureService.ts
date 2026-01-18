@@ -1,4 +1,4 @@
-import api, { absoluteUrl } from './api';
+import api from './api';
 import type {
   TenantFeaturesResponse,
   FeatureCheckResponse,
@@ -6,13 +6,13 @@ import type {
   FeatureDefinitionsResponse,
 } from '../types/features';
 
-// These endpoints use /api/tenant (NOT /api/admin), so we need absolute URLs
+// These endpoints use /api/admin/features (Admin API)
 export const featureService = {
   /**
    * Get all features and limits for the current tenant
    */
   async getTenantFeatures(): Promise<TenantFeaturesResponse> {
-    const response = await api.get<TenantFeaturesResponse>(absoluteUrl('/api/tenant/features'));
+    const response = await api.get<TenantFeaturesResponse>('/features');
     return response.data;
   },
 
@@ -20,7 +20,7 @@ export const featureService = {
    * Check if a specific feature is available
    */
   async checkFeature(featureKey: string): Promise<FeatureCheckResponse> {
-    const response = await api.get<FeatureCheckResponse>(absoluteUrl(`/api/tenant/features/${featureKey}`));
+    const response = await api.get<FeatureCheckResponse>(`/features/${featureKey}`);
     return response.data;
   },
 
@@ -28,7 +28,7 @@ export const featureService = {
    * Check if the tenant is within a specific limit
    */
   async checkLimit(limitType: string, requestedAmount = 1): Promise<LimitCheckResponse> {
-    const response = await api.get<LimitCheckResponse>(absoluteUrl(`/api/tenant/features/limits/${limitType}`), {
+    const response = await api.get<LimitCheckResponse>(`/features/limits/${limitType}`, {
       params: { requestedAmount },
     });
     return response.data;
@@ -38,7 +38,7 @@ export const featureService = {
    * Get all feature and limit definitions
    */
   async getDefinitions(): Promise<FeatureDefinitionsResponse> {
-    const response = await api.get<FeatureDefinitionsResponse>(absoluteUrl('/api/tenant/features/definitions'));
+    const response = await api.get<FeatureDefinitionsResponse>('/features/definitions');
     return response.data;
   },
 };

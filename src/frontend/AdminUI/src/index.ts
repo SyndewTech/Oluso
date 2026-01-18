@@ -3,13 +3,14 @@ export { default as AdminApp } from './App';
 
 // ============ Layout Components ============
 export { default as MainLayout } from './components/layout/MainLayout';
+export { TenantSwitcher } from './components/layout/TenantSwitcher';
 
 // ============ Page Components ============
 export { default as Dashboard } from './pages/Dashboard';
 export { default as ClientsPage } from './pages/ClientsPage';
 export { default as ClientDetailsPage } from './pages/ClientDetailsPage';
-export { default as ApiResourcesPage } from './pages/ApiResourcesPage';
-export { default as ApiResourceDetailsPage } from './pages/ApiResourceDetailsPage';
+export { default as ResourcesPage } from './pages/ResourcesPage';
+export { default as ResourceDetailsPage } from './pages/ResourceDetailsPage';
 export { default as ApiScopesPage } from './pages/ApiScopesPage';
 export { default as ApiScopeDetailsPage } from './pages/ApiScopeDetailsPage';
 export { default as IdentityResourcesPage } from './pages/IdentityResourcesPage';
@@ -69,6 +70,7 @@ export { useEnumSource } from './hooks/useEnumSource';
 
 // ============ Services ============
 export { apiClient, setApiBaseUrl } from './services/api';
+export { contextService } from './services/contextService';
 
 // ============ Store ============
 export { useAuthStore } from './store/slices/authSlice';
@@ -83,3 +85,14 @@ export type {
   PageSlot,
   DashboardWidget,
 } from '@oluso/ui-core';
+
+// Export context types
+export type {
+  AdminContext,
+  TenantSummary,
+  OrganizationSummary,
+  OrganizationMembershipSummary,
+  TenantSwitch,
+  OrganizationSwitch,
+  TenantDetail,
+} from './types/context';

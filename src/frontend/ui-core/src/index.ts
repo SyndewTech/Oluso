@@ -60,10 +60,23 @@ export type {
   AccountNavItem,
   AccountRoute,
   AccountPluginOptions,
+  // Workspace Plugin types
+  WorkspaceUIPlugin,
+  WorkspaceNavItem,
+  WorkspaceRoute,
+  WorkspaceDashboardWidget,
+  WorkspaceWidgetSlot,
+  WorkspaceWidgetProps,
+  WorkspaceStatItem,
+  WorkspaceUser,
+  WorkspaceQuickAction,
+  WorkspacePluginOptions,
+  WorkspaceFilterOptions,
+  ApprovalRequestType,
 } from './types/plugin';
 
 // Plugin helpers
-export { defineAccountPlugin, defineAdminPlugin } from './types/plugin';
+export { defineAccountPlugin, defineAdminPlugin, defineWorkspacePlugin } from './types/plugin';
 
 export type {
   // Renderer types

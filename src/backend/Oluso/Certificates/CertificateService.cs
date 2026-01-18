@@ -86,11 +86,11 @@ public class CertificateService : ICertificateService
     {
         request.TenantId ??= _tenantContext?.TenantId;
 
-        var provider = _providerRegistry.GetProvider(request.StorageProvider);
-        if (provider == null)
-        {
-            throw new InvalidOperationException($"No certificate provider available for: {request.StorageProvider}");
-        }
+        // Use default provider if Local is specified (allows registry default to take precedence)
+        var provider = request.StorageProvider == KeyStorageProvider.Local
+            ? _providerRegistry.GetDefaultProvider()
+            : _providerRegistry.GetProvider(request.StorageProvider)
+                ?? throw new InvalidOperationException($"No certificate provider available for: {request.StorageProvider}");
 
         var genParams = new CertificateGenerationParams
         {
@@ -122,7 +122,7 @@ public class CertificateService : ICertificateService
                 ? SigningKeyUse.Encryption
                 : SigningKeyUse.Signing,
             KeySize = request.KeySize,
-            StorageProvider = request.StorageProvider,
+            StorageProvider = provider.ProviderType,
             PrivateKeyData = result.EncryptedPrivateKey ?? "",
             PublicKeyData = result.CertificateData,
             KeyVaultUri = result.KeyVaultUri,
@@ -418,6 +418,7 @@ public class CertificateService : ICertificateService
 public interface ICertificateMaterialProviderRegistry
 {
     ICertificateMaterialProvider? GetProvider(KeyStorageProvider providerType);
+    ICertificateMaterialProvider GetDefaultProvider();
     IEnumerable<ICertificateMaterialProvider> GetAllProviders();
 }
 
@@ -427,15 +428,26 @@ public interface ICertificateMaterialProviderRegistry
 public class CertificateMaterialProviderRegistry : ICertificateMaterialProviderRegistry
 {
     private readonly Dictionary<KeyStorageProvider, ICertificateMaterialProvider> _providers;
+    private readonly KeyStorageProvider _defaultProvider;
 
-    public CertificateMaterialProviderRegistry(IEnumerable<ICertificateMaterialProvider> providers)
+    public CertificateMaterialProviderRegistry(
+        IEnumerable<ICertificateMaterialProvider> providers,
+        KeyStorageProvider defaultProvider = KeyStorageProvider.Local)
     {
         _providers = providers.ToDictionary(p => p.ProviderType);
+        _defaultProvider = defaultProvider;
     }
 
     public ICertificateMaterialProvider? GetProvider(KeyStorageProvider providerType)
     {
         return _providers.GetValueOrDefault(providerType);
+    }
+
+    public ICertificateMaterialProvider GetDefaultProvider()
+    {
+        return GetProvider(_defaultProvider)
+            ?? _providers.Values.FirstOrDefault()
+            ?? throw new InvalidOperationException("No certificate material providers registered");
     }
 
     public IEnumerable<ICertificateMaterialProvider> GetAllProviders()

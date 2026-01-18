@@ -62,8 +62,8 @@ const defaultSteps: Partial<Record<string, Partial<JourneyStep>>> = {
   },
   Mfa: { displayName: 'MFA', configuration: { required: false, methods: ['totp', 'phone', 'email'] } },
   Consent: { displayName: 'Consent', configuration: { allowRemember: true } },
-  ClaimsCollection: {
-    displayName: 'Collect User Info',
+  DynamicForm: {
+    displayName: 'Dynamic Form',
     configuration: {
       title: 'Additional Information',
       fields: []
@@ -788,9 +788,9 @@ function StepConfigEditor({
         </label>
       </div>
 
-      {/* Specialized editor for ClaimsCollection - supports both PascalCase and snake_case */}
-      {(step.type === 'ClaimsCollection' || step.type === 'claims_collection') && (
-        <ClaimsCollectionEditor
+      {/* Specialized editor for DynamicForm - supports both PascalCase and snake_case */}
+      {(step.type === 'DynamicForm' || step.type === 'dynamic_form') && (
+        <DynamicFormEditor
           configuration={step.configuration || {}}
           onChange={(config) => onChange({ configuration: config })}
         />
@@ -805,7 +805,7 @@ function StepConfigEditor({
       )}
 
       {/* Generic config editor for other step types - uses SchemaFormRenderer for x-enumSource support */}
-      {!['ClaimsCollection', 'claims_collection', 'ApiCall', 'api_call'].includes(step.type) && Object.keys(configSchema).length > 0 && (
+      {!['DynamicForm', 'dynamic_form', 'ApiCall', 'api_call'].includes(step.type) && Object.keys(configSchema).length > 0 && (
         <div className="border-t pt-4">
           <h4 className="text-sm font-medium text-gray-700 mb-3">Configuration</h4>
           <SchemaFormRenderer
@@ -1068,8 +1068,8 @@ function StepConfigEditor({
   );
 }
 
-// Specialized editor for ClaimsCollection fields
-function ClaimsCollectionEditor({
+// Specialized editor for DynamicForm fields
+function DynamicFormEditor({
   configuration,
   onChange
 }: {
@@ -1346,7 +1346,33 @@ function ClaimsCollectionEditor({
                       />
                       <span className="ml-2 text-xs text-gray-600">Hidden</span>
                     </label>
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={field.persistToUser || false}
+                        onChange={(e) => updateField(index, { persistToUser: e.target.checked })}
+                        className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <span className="ml-2 text-xs text-gray-600">Save to User</span>
+                    </label>
                   </div>
+
+                  {/* User Property Name - shown when persistToUser is enabled */}
+                  {field.persistToUser && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600">User Property Name</label>
+                      <input
+                        type="text"
+                        value={field.userPropertyName || ''}
+                        onChange={(e) => updateField(index, { userPropertyName: e.target.value })}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        placeholder="e.g., firstName, lastName, phoneNumber, or custom key"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Standard: firstName, lastName, phoneNumber, picture. Others saved as custom properties.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Validation */}
                   <div className="grid grid-cols-2 gap-3">

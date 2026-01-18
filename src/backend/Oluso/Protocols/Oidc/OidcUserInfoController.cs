@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Services;
 
@@ -15,13 +16,16 @@ namespace Oluso.Protocols.Oidc;
 public class OidcUserInfoController : ControllerBase
 {
     private readonly IProfileService _profileService;
+    private readonly ITenantContext _tenantContext;
     private readonly ILogger<OidcUserInfoController> _logger;
 
     public OidcUserInfoController(
         IProfileService profileService,
+        ITenantContext tenantContext,
         ILogger<OidcUserInfoController> logger)
     {
         _profileService = profileService;
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -65,6 +69,16 @@ public class OidcUserInfoController : ControllerBase
         if (!claims.ContainsKey(OidcConstants.StandardClaims.Subject))
         {
             claims[OidcConstants.StandardClaims.Subject] = subjectClaim.Value;
+        }
+
+        // Include permissions if the "permissions" scope was granted in the token
+        if (scopeClaims.Contains(OidcConstants.Scopes.Permissions))
+        {
+            var tenantId = _tenantContext.HasTenant ? _tenantContext.TenantId : null;
+            var permissions = await _profileService.GetUserPermissionsAsync(
+                subjectClaim.Value, tenantId, cancellationToken);
+            // Ensure distinct (case-insensitive)
+            claims["permissions"] = permissions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         return Ok(claims);

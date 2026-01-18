@@ -20,7 +20,7 @@ const ProviderIcon = ({ type, iconUrl }: { type: ExternalProviderType; iconUrl?:
   }
 
   // Built-in icons for known providers
-  const icons: Partial<Record<number, JSX.Element>> = {
+  const icons: Partial<Record<number, React.JSX.Element>> = {
     [ProviderTypes.Google]: (
       <svg className="h-6 w-6" viewBox="0 0 24 24">
         <path

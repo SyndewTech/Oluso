@@ -5,13 +5,17 @@ import { Table } from '../components/common/Table';
 import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
 import { roleService } from '../services/userService';
+import { permissionsService } from '../services/permissionsService';
 import type { Role, CreateRoleRequest, UpdateRoleRequest, RoleClaim } from '../types/user';
+import type { PermissionCategory } from '../types/permissions';
 import {
   PlusIcon,
   PencilIcon,
   TrashIcon,
   UsersIcon,
   ShieldCheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 
 interface RoleFormData {
@@ -22,33 +26,13 @@ interface RoleFormData {
   claims: RoleClaim[];
 }
 
-const AVAILABLE_PERMISSIONS = [
-  'users.read',
-  'users.write',
-  'users.delete',
-  'roles.read',
-  'roles.write',
-  'roles.delete',
-  'clients.read',
-  'clients.write',
-  'clients.delete',
-  'scopes.read',
-  'scopes.write',
-  'scopes.delete',
-  'settings.read',
-  'settings.write',
-  'audit.read',
-  'journeys.read',
-  'journeys.write',
-  'journeys.delete',
-];
-
 export default function RolesPage() {
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isUsersModalOpen, setIsUsersModalOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<RoleFormData>({
     name: '',
     displayName: '',
@@ -62,6 +46,12 @@ export default function RolesPage() {
   const { data: roles, isLoading } = useQuery({
     queryKey: ['roles'],
     queryFn: () => roleService.getAll(),
+  });
+
+  // Fetch available permissions from API
+  const { data: permissionsData, isLoading: isLoadingPermissions } = useQuery({
+    queryKey: ['permissions'],
+    queryFn: () => permissionsService.getAll(),
   });
 
   const { data: usersInRole, isLoading: isLoadingUsers } = useQuery({
@@ -105,6 +95,10 @@ export default function RolesPage() {
       permissions: [],
       claims: [],
     });
+    // Expand all categories by default when creating
+    if (permissionsData?.categories) {
+      setExpandedCategories(new Set(permissionsData.categories.map(c => c.name)));
+    }
     setIsModalOpen(true);
   };
 
@@ -117,6 +111,15 @@ export default function RolesPage() {
       permissions: role.permissions || [],
       claims: role.claims || [],
     });
+    // Expand categories that have selected permissions
+    if (permissionsData?.categories) {
+      const categoriesWithSelectedPerms = new Set(
+        permissionsData.categories
+          .filter(cat => cat.permissions.some(p => role.permissions?.includes(p.name)))
+          .map(c => c.name)
+      );
+      setExpandedCategories(categoriesWithSelectedPerms.size > 0 ? categoriesWithSelectedPerms : new Set(permissionsData.categories.map(c => c.name)));
+    }
     setIsModalOpen(true);
   };
 
@@ -135,6 +138,7 @@ export default function RolesPage() {
     setSelectedRole(null);
     setNewClaimType('');
     setNewClaimValue('');
+    setExpandedCategories(new Set());
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -167,6 +171,30 @@ export default function RolesPage() {
       permissions: prev.permissions.includes(permission)
         ? prev.permissions.filter((p) => p !== permission)
         : [...prev.permissions, permission],
+    }));
+  };
+
+  const toggleCategory = (categoryName: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(categoryName)) {
+        next.delete(categoryName);
+      } else {
+        next.add(categoryName);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllInCategory = (category: PermissionCategory) => {
+    const categoryPermissions = category.permissions.map(p => p.name);
+    const allSelected = categoryPermissions.every(p => formData.permissions.includes(p));
+
+    setFormData((prev) => ({
+      ...prev,
+      permissions: allSelected
+        ? prev.permissions.filter(p => !categoryPermissions.includes(p))
+        : [...new Set([...prev.permissions, ...categoryPermissions])],
     }));
   };
 
@@ -339,21 +367,98 @@ export default function RolesPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <ShieldCheckIcon className="h-4 w-4 inline mr-1" />
-              Permissions
+              Permissions ({formData.permissions.length} selected)
             </label>
-            <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-md p-2">
-              {AVAILABLE_PERMISSIONS.map((permission) => (
-                <label key={permission} className="flex items-center space-x-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={formData.permissions.includes(permission)}
-                    onChange={() => togglePermission(permission)}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>{permission}</span>
-                </label>
-              ))}
-            </div>
+            {isLoadingPermissions ? (
+              <div className="text-sm text-gray-500 p-4">Loading permissions...</div>
+            ) : permissionsData?.categories && permissionsData.categories.length > 0 ? (
+              <div className="border rounded-md max-h-64 overflow-y-auto">
+                {permissionsData.categories.map((category) => {
+                  const categoryPermissions = category.permissions.map(p => p.name);
+                  const selectedCount = categoryPermissions.filter(p => formData.permissions.includes(p)).length;
+                  const allSelected = selectedCount === category.permissions.length;
+                  const someSelected = selectedCount > 0 && !allSelected;
+                  const isExpanded = expandedCategories.has(category.name);
+
+                  return (
+                    <div key={category.name} className="border-b last:border-b-0">
+                      <div
+                        className="flex items-center px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                        onClick={() => toggleCategory(category.name)}
+                      >
+                        <button
+                          type="button"
+                          className="mr-2 text-gray-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(category.name);
+                          }}
+                        >
+                          {isExpanded ? (
+                            <ChevronDownIcon className="h-4 w-4" />
+                          ) : (
+                            <ChevronRightIcon className="h-4 w-4" />
+                          )}
+                        </button>
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someSelected;
+                          }}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleAllInCategory(category);
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 mr-2"
+                        />
+                        <span className="font-medium text-sm text-gray-700 flex-1">
+                          {category.name}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {selectedCount}/{category.permissions.length}
+                        </span>
+                      </div>
+                      {isExpanded && (
+                        <div className="px-3 py-2 space-y-1">
+                          {category.permissions.map((permission) => (
+                            <label
+                              key={permission.name}
+                              className="flex items-start space-x-2 text-sm py-1 px-2 hover:bg-gray-50 rounded cursor-pointer"
+                              title={permission.description}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={formData.permissions.includes(permission.name)}
+                                onChange={() => togglePermission(permission.name)}
+                                className="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900">
+                                  {permission.displayName}
+                                  {permission.requiresSuperAdmin && (
+                                    <span className="ml-2 text-xs bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">
+                                      SuperAdmin
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-gray-500 truncate">
+                                  {permission.name}
+                                </div>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500 p-4 border rounded-md">
+                No permissions available
+              </div>
+            )}
           </div>
 
           <div>

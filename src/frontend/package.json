@@ -4,6 +4,7 @@
   "workspaces": [
     "AdminUI",
     "AccountUI",
+    "WorkspacePortal",
     "ui-core",
     "libs/fido2-ui",
     "libs/saml-ui",
@@ -11,6 +12,7 @@
     "libs/ldap-ui",
     "libs/telemetry-ui",
     "shells/admin-standalone",
-    "shells/account-standalone"
+    "shells/account-standalone",
+    "shells/workspace-standalone"
   ]
 }

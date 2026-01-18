@@ -38,7 +38,8 @@ public interface ISigningKeyService
     /// <summary>
     /// Revoke a key (also revokes in provider if applicable)
     /// </summary>
-    Task RevokeKeyAsync(string keyId, string reason, CancellationToken cancellationToken = default);
+    /// <returns>True if key was revoked, false if key was not found</returns>
+    Task<bool> RevokeKeyAsync(string keyId, string reason, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Process automatic key rotation for expiring keys

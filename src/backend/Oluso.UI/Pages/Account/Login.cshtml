@@ -1,5 +1,5 @@
 @page "/account/login"
-@using Oluso.Core.Services
+@using Oluso.Core.Authentication
 @using Oluso.UI.ViewModels
 @model Oluso.UI.Pages.Account.LoginModel
 @{
@@ -33,20 +33,6 @@
         </div>
     }
 
-    @* When passkey authentication is initiated, show the passkey UI instead of the login form *@
-    @if (Model.Fido2AssertionViewModel != null)
-    {
-        <div class="auth-card">
-            @{
-                ViewData["FormHandler"] = "PasskeyVerify";
-                ViewData["ReturnUrl"] = Model.ReturnUrl;
-                ViewData["CancelUrl"] = $"/account/login?returnUrl={Uri.EscapeDataString(Model.ReturnUrl ?? "")}";
-            }
-            <partial name="_PasskeyAssertion" model="Model.Fido2AssertionViewModel" view-data="ViewData" />
-        </div>
-    }
-    else
-    {
     <div class="auth-card">
         <h1 class="auth-title">Sign In</h1>
         <p class="auth-subtitle">Enter your credentials to continue</p>
@@ -107,20 +93,24 @@
             <button type="submit" class="btn btn-primary btn-block">Sign In</button>
         </form>
 
-        @if (Model.ShowPasskey)
+        @if (Model.PasswordlessProviders.Any())
         {
-            <div class="passkey-section">
+            <div class="passwordless-section">
                 <div class="divider"><span>or</span></div>
-                <form method="post" asp-page-handler="Passkey" id="passkeyForm">
-                    <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
-                    <button type="submit" class="btn btn-outline btn-block btn-passkey">
-                        <svg class="passkey-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
-                        </svg>
-                        Sign in with Passkey
-                    </button>
-                </form>
-                <p class="passkey-hint">Use your fingerprint, face, or security key</p>
+                @foreach (var provider in Model.PasswordlessProviders)
+                {
+                    <a href="@provider.LoginUrl?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "/")" class="btn btn-outline btn-block btn-passwordless">
+                        @if (!string.IsNullOrEmpty(provider.LoginButtonIcon))
+                        {
+                            @Html.Raw(provider.LoginButtonIcon)
+                        }
+                        @(provider.LoginButtonText ?? $"Sign in with {provider.DisplayName}")
+                    </a>
+                    @if (!string.IsNullOrEmpty(provider.LoginHint))
+                    {
+                        <p class="passwordless-hint">@provider.LoginHint</p>
+                    }
+                }
             </div>
         }
 
@@ -189,7 +179,6 @@
             </p>
         }
     </div>
-    } @* end else - login form *@
 </div>
 
 <style>
@@ -474,24 +463,25 @@
     flex-shrink: 0;
 }
 
-.passkey-section {
+.passwordless-section {
     margin-top: 0.5rem;
 }
 
-.btn-passkey {
+.btn-passwordless {
     gap: 0.5rem;
+    margin-bottom: 0.5rem;
 }
 
-.passkey-icon {
+.btn-passwordless svg {
     flex-shrink: 0;
 }
 
-.passkey-hint {
+.passwordless-hint {
     text-align: center;
     color: #6c757d;
     font-size: 0.875rem;
-    margin-top: 0.5rem;
-    margin-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
 }
 </style>
 

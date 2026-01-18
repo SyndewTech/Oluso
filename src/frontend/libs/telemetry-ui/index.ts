@@ -10,10 +10,10 @@ export type {
   MetricDataPoint,
   MetricSeries,
   LogEntry,
+  AuditLogEntry,
   TraceSpan,
   TraceEvent,
   Trace,
-  AuditLogEntry,
   TelemetryQuery,
   PagedResult,
 } from './api/telemetryApi';
@@ -24,13 +24,11 @@ export { MetricCard } from './components/MetricCard';
 export { SimpleBarChart, SimpleLineChart } from './components/SimpleChart';
 export { LogViewer } from './components/LogViewer';
 export { TraceViewer, TraceList } from './components/TraceViewer';
-export { AuditLogViewer } from './components/AuditLogViewer';
 
 // Lazy load pages for code splitting
 const TelemetryDashboardPage = lazy(() => import('./pages/TelemetryDashboardPage'));
 const LogsPage = lazy(() => import('./pages/LogsPage'));
 const TracesPage = lazy(() => import('./pages/TracesPage'));
-const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'));
 
 /**
  * Configuration options for the Telemetry plugin
@@ -56,7 +54,9 @@ export function createTelemetryPlugin(options: TelemetryPluginOptions): AdminUIP
         name: 'Telemetry',
         href: '/telemetry',
         icon: ChartBarIcon,
-        order: 10,
+        group: 'settings',
+        order: 50,
+        permission: 'telemetry.read',
         children: [
           {
             id: 'telemetry-dashboard',
@@ -79,13 +79,6 @@ export function createTelemetryPlugin(options: TelemetryPluginOptions): AdminUIP
             icon: ChartBarIcon,
             order: 2,
           },
-          {
-            id: 'telemetry-audit',
-            name: 'Audit Logs',
-            href: '/telemetry/audit',
-            icon: ChartBarIcon,
-            order: 3,
-          },
         ],
       },
     ],
@@ -106,10 +99,6 @@ export function createTelemetryPlugin(options: TelemetryPluginOptions): AdminUIP
       {
         path: '/telemetry/traces/:traceId',
         component: TracesPage,
-      },
-      {
-        path: '/telemetry/audit',
-        component: AuditLogsPage,
       },
     ],
 

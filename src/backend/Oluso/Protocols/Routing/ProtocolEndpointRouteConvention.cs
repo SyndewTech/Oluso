@@ -122,6 +122,13 @@ public class OidcEndpointRouteConvention : ProtocolEndpointRouteConvention
                 EndpointType.Metadata,
                 supportsPolicyParam: false,
                 "GET"),
+
+            // Dynamic Client Registration (RFC 7591)
+            ["OidcDynamicRegistrationController"] = ProtocolRouteInfo.Create(
+                config.RegistrationEndpoint,
+                EndpointType.Registration,
+                supportsPolicyParam: false,
+                "POST"),
         };
     }
 }

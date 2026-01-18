@@ -4,25 +4,26 @@ using Oluso.Core.Domain.Entities;
 
 namespace Oluso.EntityFramework.Configuration;
 
-public class ApiResourceConfiguration : IEntityTypeConfiguration<ApiResource>
+/// <summary>
+/// Entity Framework configuration for Resource (RFC 8707)
+/// </summary>
+public class ResourceConfiguration : IEntityTypeConfiguration<Resource>
 {
-    public void Configure(EntityTypeBuilder<ApiResource> builder)
+    public void Configure(EntityTypeBuilder<Resource> builder)
     {
-        builder.ToTable("ApiResources");
+        builder.ToTable("Resources");
         builder.HasKey(r => r.Id);
 
         builder.Property(r => r.TenantId).HasMaxLength(128);
-        builder.Property(r => r.Name).IsRequired().HasMaxLength(200);
+        builder.Property(r => r.Uri).IsRequired().HasMaxLength(2000);
         builder.Property(r => r.DisplayName).HasMaxLength(200);
         builder.Property(r => r.Description).HasMaxLength(1000);
-        builder.Property(r => r.AllowedAccessTokenSigningAlgorithms).HasMaxLength(100);
 
-        builder.HasIndex(r => new { r.TenantId, r.Name }).IsUnique();
+        // Unique index on URI within tenant (resources are identified by URI per RFC 8707)
+        builder.HasIndex(r => new { r.TenantId, r.Uri }).IsUnique();
 
-        builder.HasMany(r => r.Secrets).WithOne(s => s.ApiResource).HasForeignKey(s => s.ApiResourceId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasMany(r => r.Scopes).WithOne(s => s.ApiResource).HasForeignKey(s => s.ApiResourceId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasMany(r => r.UserClaims).WithOne(c => c.ApiResource).HasForeignKey(c => c.ApiResourceId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasMany(r => r.Properties).WithOne(p => p.ApiResource).HasForeignKey(p => p.ApiResourceId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasMany(r => r.AllowedScopes).WithOne(s => s.Resource).HasForeignKey(s => s.ResourceId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasMany(r => r.UserClaims).WithOne(c => c.Resource).HasForeignKey(c => c.ResourceId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -63,4 +64,3 @@ public class IdentityResourceConfiguration : IEntityTypeConfiguration<IdentityRe
         builder.HasMany(r => r.Properties).WithOne(p => p.IdentityResource).HasForeignKey(p => p.IdentityResourceId).OnDelete(DeleteBehavior.Cascade);
     }
 }
-

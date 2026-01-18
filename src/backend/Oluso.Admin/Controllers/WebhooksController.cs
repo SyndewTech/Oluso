@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
@@ -40,6 +41,7 @@ public class WebhooksController : AdminBaseController
     /// Get all available webhook event types that can be subscribed to
     /// </summary>
     [HttpGet("events")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
     public ActionResult<WebhookEventsResponse> GetAvailableEvents()
     {
         var events = _dispatcher.GetAvailableEventTypes();
@@ -62,6 +64,7 @@ public class WebhooksController : AdminBaseController
     /// Get events grouped by category for display in UI
     /// </summary>
     [HttpGet("events/grouped")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
     public ActionResult<Dictionary<string, List<WebhookEventInfo>>> GetEventsGrouped()
     {
         var events = _dispatcher.GetAvailableEventTypes();
@@ -90,6 +93,7 @@ public class WebhooksController : AdminBaseController
     /// Get all webhook endpoints for the current tenant
     /// </summary>
     [HttpGet("endpoints")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
     public async Task<ActionResult<IEnumerable<WebhookEndpointDto>>> GetEndpoints(
         CancellationToken cancellationToken)
     {
@@ -102,6 +106,7 @@ public class WebhooksController : AdminBaseController
     /// Get a specific webhook endpoint
     /// </summary>
     [HttpGet("endpoints/{endpointId}")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
     public async Task<ActionResult<WebhookEndpointDto>> GetEndpoint(
         string endpointId,
         CancellationToken cancellationToken)
@@ -121,6 +126,7 @@ public class WebhooksController : AdminBaseController
     /// Create a new webhook endpoint
     /// </summary>
     [HttpPost("endpoints")]
+    [RequirePermission(AdminPermissions.WebhooksWrite)]
     public async Task<ActionResult<WebhookEndpointDto>> CreateEndpoint(
         [FromBody] CreateWebhookEndpointRequest request,
         CancellationToken cancellationToken)
@@ -179,6 +185,7 @@ public class WebhooksController : AdminBaseController
     /// Update a webhook endpoint
     /// </summary>
     [HttpPut("endpoints/{endpointId}")]
+    [RequirePermission(AdminPermissions.WebhooksWrite)]
     public async Task<ActionResult<WebhookEndpointDto>> UpdateEndpoint(
         string endpointId,
         [FromBody] UpdateWebhookEndpointRequest request,
@@ -234,6 +241,7 @@ public class WebhooksController : AdminBaseController
     /// Delete a webhook endpoint
     /// </summary>
     [HttpDelete("endpoints/{endpointId}")]
+    [RequirePermission(AdminPermissions.WebhooksDelete)]
     public async Task<IActionResult> DeleteEndpoint(
         string endpointId,
         CancellationToken cancellationToken)
@@ -267,6 +275,7 @@ public class WebhooksController : AdminBaseController
     /// Rotate the secret for a webhook endpoint
     /// </summary>
     [HttpPost("endpoints/{endpointId}/rotate-secret")]
+    [RequirePermission(AdminPermissions.WebhooksWrite)]
     public async Task<ActionResult<RotateSecretResponse>> RotateSecret(
         string endpointId,
         CancellationToken cancellationToken)
@@ -289,6 +298,7 @@ public class WebhooksController : AdminBaseController
     /// Test a webhook endpoint by sending a test event
     /// </summary>
     [HttpPost("endpoints/{endpointId}/test")]
+    [RequirePermission(AdminPermissions.WebhooksWrite)]
     public async Task<ActionResult<TestWebhookResponse>> TestEndpoint(
         string endpointId,
         CancellationToken cancellationToken)
@@ -330,6 +340,7 @@ public class WebhooksController : AdminBaseController
     /// Get delivery history for a webhook endpoint
     /// </summary>
     [HttpGet("endpoints/{endpointId}/deliveries")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
     public async Task<ActionResult<IEnumerable<WebhookDeliveryDto>>> GetDeliveries(
         string endpointId,
         [FromQuery] int limit = 50,
@@ -350,6 +361,7 @@ public class WebhooksController : AdminBaseController
     /// Get a specific delivery
     /// </summary>
     [HttpGet("deliveries/{deliveryId}")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
     public async Task<ActionResult<WebhookDeliveryDto>> GetDelivery(
         string deliveryId,
         CancellationToken cancellationToken)
@@ -370,6 +382,7 @@ public class WebhooksController : AdminBaseController
     /// Retry a failed delivery
     /// </summary>
     [HttpPost("deliveries/{deliveryId}/retry")]
+    [RequirePermission(AdminPermissions.WebhooksWrite)]
     public async Task<ActionResult<RetryDeliveryResponse>> RetryDelivery(
         string deliveryId,
         CancellationToken cancellationToken)

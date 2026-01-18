@@ -41,6 +41,18 @@ public class TenantStore : ITenantStore
         return await _context.Tenants.ToListAsync(cancellationToken);
     }
 
+    public async Task<IEnumerable<Tenant>> GetByOrganizationAsync(string organizationId, CancellationToken cancellationToken = default)
+    {
+        if (_context.Tenants == null)
+            return Enumerable.Empty<Tenant>();
+
+        return await _context.Tenants
+            .Where(t => t.OrganizationId == organizationId)
+            .OrderBy(t => t.Environment)
+            .ThenBy(t => t.Name)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<Tenant> CreateAsync(Tenant tenant, CancellationToken cancellationToken = default)
     {
         if (_context.Tenants == null)

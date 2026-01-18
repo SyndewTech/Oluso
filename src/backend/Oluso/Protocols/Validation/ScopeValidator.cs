@@ -46,9 +46,6 @@ public class ScopeValidator : IScopeValidator
         var apiScopes = await _resourceStore.GetAllApiScopesAsync(cancellationToken);
         var apiScopeNames = apiScopes.Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
 
-        // Get API resources for resource indicators
-        var apiResources = await _resourceStore.GetAllApiResourcesAsync(cancellationToken);
-
         foreach (var scope in requested)
         {
             // Check if client is allowed to request this scope
@@ -71,19 +68,8 @@ public class ScopeValidator : IScopeValidator
             {
                 result.ApiScopes.Add(scope);
                 result.ValidScopes.Add(scope);
-
-                // Find associated API resources
-                var associatedResources = apiResources
-                    .Where(r => r.Scopes.Any(s => s.Scope == scope))
-                    .Select(r => r.Name);
-
-                foreach (var resource in associatedResources)
-                {
-                    if (!result.ApiResources.Contains(resource))
-                    {
-                        result.ApiResources.Add(resource);
-                    }
-                }
+                // Note: With RFC 8707, resources are identified by the 'resource' parameter,
+                // not derived from scopes. The result.ApiResources collection is no longer populated here.
             }
             else
             {

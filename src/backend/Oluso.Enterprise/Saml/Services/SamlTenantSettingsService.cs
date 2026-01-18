@@ -405,7 +405,8 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
             Issuer = certInfo.Issuer,
             NotBefore = certInfo.NotBefore,
             NotAfter = certInfo.NotAfter,
-            Thumbprint = certInfo.Thumbprint
+            Thumbprint = certInfo.Thumbprint,
+            Status = certInfo.Status
         };
     }
 }

@@ -107,8 +107,9 @@ public interface IProfileService
 }
 
 /// <summary>
-/// Extended profile service interface that supports role retrieval.
-/// Implement this interface to enable AllowedRoles client restrictions.
+/// Extended profile service interface that supports role and permission retrieval.
+/// Implement this interface to enable AllowedRoles client restrictions and
+/// permission-based authorization.
 /// </summary>
 public interface IExtendedProfileService : IProfileService
 {
@@ -116,6 +117,12 @@ public interface IExtendedProfileService : IProfileService
     /// Gets the roles assigned to a user
     /// </summary>
     Task<ICollection<string>> GetUserRolesAsync(string subjectId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets all permissions for a user based on their roles.
+    /// Permissions are aggregated from all roles the user belongs to.
+    /// </summary>
+    Task<ICollection<string>> GetUserPermissionsAsync(string subjectId, string? tenantId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -158,6 +165,25 @@ public static class ProfileServiceExtensions
                 return new[] { roleString };
         }
 
+        return Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// Gets all permissions for a user based on their roles.
+    /// If the profile service implements IExtendedProfileService, it will use that.
+    /// </summary>
+    public static async Task<ICollection<string>> GetUserPermissionsAsync(
+        this IProfileService profileService,
+        string subjectId,
+        string? tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        if (profileService is IExtendedProfileService extendedService)
+        {
+            return await extendedService.GetUserPermissionsAsync(subjectId, tenantId, cancellationToken);
+        }
+
+        // No fallback for permissions - they must come from the extended service
         return Array.Empty<string>();
     }
 

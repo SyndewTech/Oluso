@@ -7,8 +7,8 @@ import MainLayout from './components/layout/MainLayout';
 import Dashboard from './pages/Dashboard';
 import ClientsPage from './pages/ClientsPage';
 import ClientDetailsPage from './pages/ClientDetailsPage';
-import ApiResourcesPage from './pages/ApiResourcesPage';
-import ApiResourceDetailsPage from './pages/ApiResourceDetailsPage';
+import ResourcesPage from './pages/ResourcesPage';
+import ResourceDetailsPage from './pages/ResourceDetailsPage';
 import ApiScopesPage from './pages/ApiScopesPage';
 import ApiScopeDetailsPage from './pages/ApiScopeDetailsPage';
 import IdentityResourcesPage from './pages/IdentityResourcesPage';
@@ -81,8 +81,8 @@ function AppRoutes() {
       <Route path="/" element={<Dashboard />} />
       <Route path="/clients" element={<ClientsPage />} />
       <Route path="/clients/:id" element={<ClientDetailsPage />} />
-      <Route path="/api-resources" element={<ApiResourcesPage />} />
-      <Route path="/api-resources/:id" element={<ApiResourceDetailsPage />} />
+      <Route path="/resources" element={<ResourcesPage />} />
+      <Route path="/resources/:id" element={<ResourceDetailsPage />} />
       <Route path="/api-scopes" element={<ApiScopesPage />} />
       <Route path="/api-scopes/:id" element={<ApiScopeDetailsPage />} />
       <Route path="/identity-resources" element={<IdentityResourcesPage />} />
@@ -101,11 +101,10 @@ function AppRoutes() {
         <>
           <Route path="/tenants" element={<TenantsPage />} />
           <Route path="/tenants/:tenantId" element={<TenantSettingsPage />} />
-          <Route path="/tenants/:tenantId/settings" element={<TenantSettingsPage />} />
         </>
       )}
       <Route path="/webhooks" element={<WebhooksPage />} />
-      <Route path="/audit-logs" element={<AuditLogsPage />} />
+      <Route path="/activity-logs" element={<AuditLogsPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       {/* Plugin routes - rendered inline */}
       {pluginRoutes.map((route) => (

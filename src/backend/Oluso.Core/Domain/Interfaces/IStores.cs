@@ -15,11 +15,11 @@ public interface IClientStore
 }
 
 /// <summary>
-/// Store for API and identity resources
+/// Store for resources (RFC 8707), identity resources, and scopes
 /// </summary>
 public interface IResourceStore
 {
-    // Identity Resources
+    // Identity Resources (OIDC standard - profile, email, etc.)
     Task<IEnumerable<IdentityResource>> GetAllIdentityResourcesAsync(CancellationToken cancellationToken = default);
     Task<IEnumerable<IdentityResource>> FindIdentityResourcesByScopeNameAsync(IEnumerable<string> scopeNames, CancellationToken cancellationToken = default);
     Task<IdentityResource?> GetIdentityResourceByIdAsync(int id, CancellationToken cancellationToken = default);
@@ -27,16 +27,16 @@ public interface IResourceStore
     Task<IdentityResource> UpdateIdentityResourceAsync(IdentityResource resource, CancellationToken cancellationToken = default);
     Task DeleteIdentityResourceAsync(int id, CancellationToken cancellationToken = default);
 
-    // API Resources
-    Task<IEnumerable<ApiResource>> GetAllApiResourcesAsync(CancellationToken cancellationToken = default);
-    Task<IEnumerable<ApiResource>> FindApiResourcesByScopeNameAsync(IEnumerable<string> scopeNames, CancellationToken cancellationToken = default);
-    Task<IEnumerable<ApiResource>> FindApiResourcesByNameAsync(IEnumerable<string> apiResourceNames, CancellationToken cancellationToken = default);
-    Task<ApiResource?> GetApiResourceByIdAsync(int id, CancellationToken cancellationToken = default);
-    Task<ApiResource> AddApiResourceAsync(ApiResource resource, CancellationToken cancellationToken = default);
-    Task<ApiResource> UpdateApiResourceAsync(ApiResource resource, CancellationToken cancellationToken = default);
-    Task DeleteApiResourceAsync(int id, CancellationToken cancellationToken = default);
+    // Resources (RFC 8707 - protected resources identified by URIs)
+    Task<IEnumerable<Resource>> GetAllResourcesAsync(CancellationToken cancellationToken = default);
+    Task<Resource?> GetResourceByIdAsync(int id, CancellationToken cancellationToken = default);
+    Task<Resource?> FindResourceByUriAsync(string uri, CancellationToken cancellationToken = default);
+    Task<IEnumerable<Resource>> FindResourcesByUrisAsync(IEnumerable<string> uris, CancellationToken cancellationToken = default);
+    Task<Resource> AddResourceAsync(Resource resource, CancellationToken cancellationToken = default);
+    Task<Resource> UpdateResourceAsync(Resource resource, CancellationToken cancellationToken = default);
+    Task DeleteResourceAsync(int id, CancellationToken cancellationToken = default);
 
-    // API Scopes
+    // API Scopes (permissions that can be requested by clients)
     Task<IEnumerable<ApiScope>> GetAllApiScopesAsync(CancellationToken cancellationToken = default);
     Task<IEnumerable<ApiScope>> FindApiScopesByNameAsync(IEnumerable<string> scopeNames, CancellationToken cancellationToken = default);
     Task<ApiScope?> GetApiScopeByIdAsync(int id, CancellationToken cancellationToken = default);
@@ -138,9 +138,60 @@ public interface ITenantStore
     Task<Tenant?> GetByIdAsync(string tenantId, CancellationToken cancellationToken = default);
     Task<Tenant?> GetByIdentifierAsync(string identifier, CancellationToken cancellationToken = default);
     Task<IEnumerable<Tenant>> GetAllAsync(CancellationToken cancellationToken = default);
+    Task<IEnumerable<Tenant>> GetByOrganizationAsync(string organizationId, CancellationToken cancellationToken = default);
     Task<Tenant> CreateAsync(Tenant tenant, CancellationToken cancellationToken = default);
     Task<Tenant> UpdateAsync(Tenant tenant, CancellationToken cancellationToken = default);
     Task DeleteAsync(string tenantId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Store for organizations
+/// </summary>
+public interface IOrganizationStore
+{
+    Task<Organization?> GetByIdAsync(string organizationId, CancellationToken cancellationToken = default);
+    Task<Organization?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default);
+    Task<IEnumerable<Organization>> GetAllAsync(bool includeDisabled = false, CancellationToken cancellationToken = default);
+    Task<Organization> CreateAsync(Organization organization, CancellationToken cancellationToken = default);
+    Task<Organization> UpdateAsync(Organization organization, CancellationToken cancellationToken = default);
+    Task DeleteAsync(string organizationId, CancellationToken cancellationToken = default);
+    Task<bool> SlugExistsAsync(string slug, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Store for organization memberships
+/// </summary>
+public interface IOrganizationMembershipStore
+{
+    Task<OrganizationMembership?> GetByIdAsync(string membershipId, CancellationToken cancellationToken = default);
+    Task<OrganizationMembership?> GetByUserAndOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken = default);
+    Task<IEnumerable<OrganizationMembership>> GetByOrganizationAsync(string organizationId, CancellationToken cancellationToken = default);
+    Task<IEnumerable<OrganizationMembership>> GetByUserAsync(string userId, CancellationToken cancellationToken = default);
+    Task<IEnumerable<Organization>> GetUserOrganizationsAsync(string userId, CancellationToken cancellationToken = default);
+    Task<IEnumerable<string>> GetAllowedTenantIdsAsync(string userId, string organizationId, CancellationToken cancellationToken = default);
+    Task<OrganizationMembership> CreateAsync(OrganizationMembership membership, CancellationToken cancellationToken = default);
+    Task<OrganizationMembership> UpdateAsync(OrganizationMembership membership, CancellationToken cancellationToken = default);
+    Task DeleteAsync(string membershipId, CancellationToken cancellationToken = default);
+    Task<int> GetMemberCountAsync(string organizationId, CancellationToken cancellationToken = default);
+    Task<bool> IsOwnerAsync(string userId, string organizationId, CancellationToken cancellationToken = default);
+    Task<bool> IsAdminAsync(string userId, string organizationId, CancellationToken cancellationToken = default);
+    Task<bool> IsMemberAsync(string userId, string organizationId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Store for organization invitations
+/// </summary>
+public interface IOrganizationInvitationStore
+{
+    Task<OrganizationInvitation?> GetByIdAsync(string invitationId, CancellationToken cancellationToken = default);
+    Task<OrganizationInvitation?> GetByTokenAsync(string token, CancellationToken cancellationToken = default);
+    Task<IEnumerable<OrganizationInvitation>> GetByOrganizationAsync(string organizationId, InvitationStatus? status = null, CancellationToken cancellationToken = default);
+    Task<IEnumerable<OrganizationInvitation>> GetByEmailAsync(string email, InvitationStatus? status = null, CancellationToken cancellationToken = default);
+    Task<OrganizationInvitation?> GetPendingByEmailAndOrganizationAsync(string email, string organizationId, CancellationToken cancellationToken = default);
+    Task<OrganizationInvitation> CreateAsync(OrganizationInvitation invitation, CancellationToken cancellationToken = default);
+    Task<OrganizationInvitation> UpdateAsync(OrganizationInvitation invitation, CancellationToken cancellationToken = default);
+    Task DeleteAsync(string invitationId, CancellationToken cancellationToken = default);
+    Task<int> CleanupExpiredAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -470,54 +521,85 @@ public enum WebhookDeliveryStatus
     Retrying
 }
 
+#region Telemetry Logs
+
 /// <summary>
-/// Store for FIDO2/WebAuthn credentials
+/// Application log entry stored in the database for telemetry purposes
 /// </summary>
-public interface IFido2CredentialStore
+public class TelemetryLog : Oluso.Core.Domain.Entities.TenantEntity
+{
+    public long Id { get; set; }
+    public DateTime Timestamp { get; set; }
+    public string Level { get; set; } = null!; // Trace, Debug, Information, Warning, Error, Critical
+    public string Message { get; set; } = null!;
+    public string Category { get; set; } = null!; // Logger category (e.g., "Oluso.Token", "Microsoft.AspNetCore")
+    public string? Exception { get; set; }
+    public string? ExceptionType { get; set; }
+    public string? StackTrace { get; set; }
+    public string? TraceId { get; set; }
+    public string? SpanId { get; set; }
+    public string? RequestPath { get; set; }
+    public string? RequestMethod { get; set; }
+    public string? UserId { get; set; }
+    public string? ClientId { get; set; }
+    public string? MachineName { get; set; }
+    public string? Properties { get; set; } // JSON-serialized additional properties
+}
+
+/// <summary>
+/// Service for querying telemetry logs (read-only)
+/// </summary>
+public interface ITelemetryLogService
+{
+    bool IsEnabled { get; }
+    Task<TelemetryLogQueryResult> QueryAsync(TelemetryLogQuery query, CancellationToken cancellationToken = default);
+    Task<TelemetryLog?> GetByIdAsync(long id, CancellationToken cancellationToken = default);
+    Task<IEnumerable<string>> GetCategoriesAsync(string? tenantId, CancellationToken cancellationToken = default);
+    Task<int> PurgeOldLogsAsync(string? tenantId, DateTime cutoffDate, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Store for writing telemetry logs
+/// </summary>
+public interface ITelemetryLogStore
 {
     /// <summary>
-    /// Get a credential by its ID
+    /// Writes a telemetry log entry
     /// </summary>
-    Task<Fido2CredentialEntity?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
+    Task WriteAsync(TelemetryLog log, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Get a credential by its credential ID (from the authenticator)
+    /// Writes multiple telemetry log entries (for batch processing)
     /// </summary>
-    Task<Fido2CredentialEntity?> GetByCredentialIdAsync(string credentialId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Get all credentials for a user
-    /// </summary>
-    Task<IReadOnlyList<Fido2CredentialEntity>> GetByUserIdAsync(string userId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Get all active credentials for a user
-    /// </summary>
-    Task<IReadOnlyList<Fido2CredentialEntity>> GetActiveByUserIdAsync(string userId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Check if a credential ID already exists
-    /// </summary>
-    Task<bool> ExistsAsync(string credentialId, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Store a new credential
-    /// </summary>
-    Task AddAsync(Fido2CredentialEntity credential, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Update an existing credential (counter, last used, etc.)
-    /// </summary>
-    Task UpdateAsync(Fido2CredentialEntity credential, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Remove a credential
-    /// </summary>
-    Task RemoveAsync(string id, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Update the signature counter and last used timestamp
-    /// </summary>
-    Task UpdateCounterAsync(string credentialId, uint newCounter, CancellationToken cancellationToken = default);
+    Task WriteBatchAsync(IEnumerable<TelemetryLog> logs, CancellationToken cancellationToken = default);
 }
+
+public class TelemetryLogQuery
+{
+    public string? TenantId { get; set; }
+    public string? Level { get; set; }
+    public string? Category { get; set; }
+    public string? SearchTerm { get; set; }
+    public string? TraceId { get; set; }
+    public string? UserId { get; set; }
+    public string? ClientId { get; set; }
+    public bool? HasException { get; set; }
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+    public string SortBy { get; set; } = "Timestamp";
+    public bool SortDescending { get; set; } = true;
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
+public class TelemetryLogQueryResult
+{
+    public IEnumerable<TelemetryLog> Items { get; set; } = new List<TelemetryLog>();
+    public int TotalCount { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
+}
+
+#endregion
 

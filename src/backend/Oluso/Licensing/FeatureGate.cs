@@ -14,7 +14,7 @@ namespace Oluso.Licensing;
 /// 1. Platform License (ILicenseValidator) - Is this feature in your Oluso license?
 /// 2. Feature Providers (IFeatureAvailabilityProvider) - Extensible for additional checks
 /// </summary>
-public class FeatureGate : IFeatureGate
+public class FeatureGate : Core.Licensing.IFeatureGate
 {
     private readonly ILicenseValidator? _licenseValidator;
     private readonly IEnumerable<IFeatureAvailabilityProvider> _featureProviders;
@@ -132,36 +132,6 @@ public class FeatureGate : IFeatureGate
 }
 
 /// <summary>
-/// Result of a feature gate check
-/// </summary>
-public record FeatureGateResult
-{
-    public bool IsAllowed { get; init; }
-    public FeatureDenialReason? Reason { get; init; }
-    public string? Message { get; init; }
-
-    public static FeatureGateResult Allowed() => new() { IsAllowed = true };
-
-    public static FeatureGateResult Denied(FeatureDenialReason reason, string? message = null) =>
-        new() { IsAllowed = false, Reason = reason, Message = message };
-}
-
-/// <summary>
-/// Reason why a feature was denied
-/// </summary>
-public enum FeatureDenialReason
-{
-    /// <summary>Platform Oluso license doesn't include this feature</summary>
-    PlatformLicense,
-
-    /// <summary>A feature provider denied access</summary>
-    ProviderDenied,
-
-    /// <summary>Feature is disabled by administrator</summary>
-    AdminDisabled
-}
-
-/// <summary>
 /// Attribute to require a feature for a controller or action
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true)]
@@ -185,7 +155,7 @@ public static class FeatureGateExtensions
     /// </summary>
     public static IServiceCollection AddFeatureGate(this IServiceCollection services)
     {
-        services.AddScoped<IFeatureGate, FeatureGate>();
+        services.AddScoped<Core.Licensing.IFeatureGate, FeatureGate>();
         return services;
     }
 

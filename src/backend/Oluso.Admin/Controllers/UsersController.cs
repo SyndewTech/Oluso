@@ -36,6 +36,7 @@ public class UsersController : AdminBaseController
     /// Get all users for the current tenant
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.UsersRead)]
     public async Task<ActionResult<PagedResult<UserDto>>> GetUsers(
         [FromQuery] string? search = null,
         [FromQuery] string? role = null,
@@ -88,6 +89,7 @@ public class UsersController : AdminBaseController
     /// Get a specific user by ID
     /// </summary>
     [HttpGet("{userId}")]
+    [RequirePermission(AdminPermissions.UsersRead)]
     public async Task<ActionResult<UserDetailDto>> GetUser(string userId, CancellationToken cancellationToken)
     {
         var user = await _userService.FindByIdAsync(userId, cancellationToken);
@@ -122,6 +124,7 @@ public class UsersController : AdminBaseController
             TwoFactorEnabled = user.TwoFactorEnabled,
             Roles = roles.ToList(),
             Claims = claims.Select(c => new UserClaimDto { Type = c.Type, Value = c.Value }).ToList(),
+            CustomProperties = user.CustomProperties?.ToDictionary(k => k.Key, v => v.Value),
             LastLoginAt = user.LastLoginAt
         });
     }
@@ -130,6 +133,7 @@ public class UsersController : AdminBaseController
     /// Create a new user
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.UsersWrite)]
     public async Task<ActionResult<UserDto>> CreateUser(
         [FromBody] CreateUserRequest request,
         CancellationToken cancellationToken)
@@ -190,6 +194,7 @@ public class UsersController : AdminBaseController
     /// Update a user
     /// </summary>
     [HttpPut("{userId}")]
+    [RequirePermission(AdminPermissions.UsersWrite)]
     public async Task<ActionResult<UserDto>> UpdateUser(
         string userId,
         [FromBody] UpdateUserRequest request,
@@ -259,6 +264,7 @@ public class UsersController : AdminBaseController
     /// Delete a user
     /// </summary>
     [HttpDelete("{userId}")]
+    [RequirePermission(AdminPermissions.UsersDelete)]
     public async Task<IActionResult> DeleteUser(string userId, CancellationToken cancellationToken)
     {
         var user = await _userService.FindByIdAsync(userId, cancellationToken);
@@ -302,6 +308,7 @@ public class UsersController : AdminBaseController
     /// Get roles assigned to a user
     /// </summary>
     [HttpGet("{userId}/roles")]
+    [RequirePermission(AdminPermissions.UsersRead)]
     public async Task<ActionResult<IEnumerable<string>>> GetUserRoles(string userId, CancellationToken cancellationToken)
     {
         var user = await _userService.FindByIdAsync(userId, cancellationToken);
@@ -329,6 +336,7 @@ public class UsersController : AdminBaseController
     /// Tenant admins can only assign tenant-scoped roles.
     /// </remarks>
     [HttpPut("{userId}/roles")]
+    [RequirePermission(AdminPermissions.UsersManageRoles)]
     public async Task<IActionResult> SetUserRoles(
         string userId,
         [FromBody] SetUserRolesRequest request,
@@ -406,6 +414,7 @@ public class UsersController : AdminBaseController
     /// Reset a user's password (admin action)
     /// </summary>
     [HttpPost("{userId}/reset-password")]
+    [RequirePermission(AdminPermissions.UsersWrite)]
     public async Task<IActionResult> ResetPassword(
         string userId,
         [FromBody] ResetPasswordRequest request,
@@ -451,6 +460,7 @@ public class UsersController : AdminBaseController
     /// Check if user has MFA enabled
     /// </summary>
     [HttpGet("{userId}/mfa")]
+    [RequirePermission(AdminPermissions.UsersRead)]
     public async Task<ActionResult<MfaStatusDto>> GetMfaStatus(string userId, CancellationToken cancellationToken)
     {
         var user = await _userService.FindByIdAsync(userId, cancellationToken);
@@ -478,6 +488,7 @@ public class UsersController : AdminBaseController
     /// Get external logins linked to a user
     /// </summary>
     [HttpGet("{userId}/external-logins")]
+    [RequirePermission(AdminPermissions.UsersRead)]
     public async Task<ActionResult<IEnumerable<ExternalLoginDto>>> GetExternalLogins(
         string userId,
         CancellationToken cancellationToken)
@@ -508,6 +519,7 @@ public class UsersController : AdminBaseController
     /// Remove an external login from a user
     /// </summary>
     [HttpDelete("{userId}/external-logins/{provider}")]
+    [RequirePermission(AdminPermissions.UsersWrite)]
     public async Task<IActionResult> RemoveExternalLogin(
         string userId,
         string provider,
@@ -542,6 +554,7 @@ public class UsersController : AdminBaseController
     /// Get active sessions for a user
     /// </summary>
     [HttpGet("{userId}/sessions")]
+    [RequirePermission(AdminPermissions.SessionsRead)]
     public async Task<ActionResult<IEnumerable<UserSessionDto>>> GetUserSessions(
         string userId,
         CancellationToken cancellationToken)
@@ -583,6 +596,7 @@ public class UsersController : AdminBaseController
     /// Revoke a specific session for a user
     /// </summary>
     [HttpDelete("{userId}/sessions/{sessionId}")]
+    [RequirePermission(AdminPermissions.SessionsRevoke)]
     public async Task<IActionResult> RevokeSession(
         string userId,
         string sessionId,
@@ -616,6 +630,7 @@ public class UsersController : AdminBaseController
     /// Revoke all sessions for a user
     /// </summary>
     [HttpDelete("{userId}/sessions")]
+    [RequirePermission(AdminPermissions.SessionsRevoke)]
     public async Task<IActionResult> RevokeAllSessions(
         string userId,
         CancellationToken cancellationToken)
@@ -682,6 +697,7 @@ public class UserDetailDto : UserDto
 {
     public int AccessFailedCount { get; set; }
     public List<UserClaimDto> Claims { get; set; } = new();
+    public Dictionary<string, string>? CustomProperties { get; set; }
     public string? ExternalId { get; set; }
     public string? ExternalProvider { get; set; }
 }

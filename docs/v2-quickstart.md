@@ -165,7 +165,6 @@ This registers all built-in step handlers:
 - `link_account` - Account linking
 - `terms_acceptance` - Terms acceptance step
 - `dynamic_form` - Custom form collection
-- `claims_collection` - Claims gathering
 - `captcha` - CAPTCHA verification
 
 **Logic Steps (no UI):**
@@ -1701,7 +1700,7 @@ builder.Services.AddOluso(builder.Configuration)
     .AddUserJourneysWithDefaults();
 ```
 
-**Or with LDAP server (acting as an LDAP IdP):**
+**Or with LDAP Server (act as LDAP IdP):**
 
 ```csharp
 builder.Services.AddOluso(builder.Configuration)

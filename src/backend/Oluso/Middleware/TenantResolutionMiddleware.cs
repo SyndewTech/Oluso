@@ -3,12 +3,16 @@ using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using System.Security.Claims;
 
 namespace Oluso.Middleware;
 
 /// <summary>
-/// Middleware that resolves the current tenant from the request
+/// Middleware that resolves the current tenant from the request and validates access.
+/// For Admin API requests, validates that the authenticated user has access to the tenant
+/// based on their organization membership.
 /// </summary>
 public class TenantResolutionMiddleware
 {
@@ -38,17 +42,44 @@ public class TenantResolutionMiddleware
         }
 
         var tenantIdentifier = ResolveTenantIdentifier(context, options);
+        Tenant? resolvedTenant = null;
 
         if (!string.IsNullOrEmpty(tenantIdentifier))
         {
             var tenantStore = context.RequestServices.GetService<ITenantStore>();
             if (tenantStore != null)
             {
-                var tenant = await tenantStore.GetByIdentifierAsync(tenantIdentifier);
-                if (tenant != null && tenant.Enabled)
+                resolvedTenant = await tenantStore.GetByIdentifierAsync(tenantIdentifier);
+                if (resolvedTenant != null && resolvedTenant.Enabled)
                 {
-                    tenantAccessor.SetTenant(tenant);
-                    _logger.LogDebug("Resolved tenant: {TenantId} ({TenantIdentifier})", tenant.Id, tenant.Identifier);
+                    // Validate tenant access for Admin API requests
+                    if (IsAdminApiRequest(context) && context.User.Identity?.IsAuthenticated == true)
+                    {
+                        var accessResult = await ValidateTenantAccessAsync(context, resolvedTenant);
+                        if (!accessResult.HasAccess)
+                        {
+                            _logger.LogWarning(
+                                "User {UserId} denied access to tenant {TenantId}: {Reason}",
+                                context.User.FindFirst("sub")?.Value ?? "unknown",
+                                resolvedTenant.Id,
+                                accessResult.Reason);
+
+                            context.Response.StatusCode = 403;
+                            context.Response.ContentType = "application/json";
+                            await context.Response.WriteAsync(
+                                $"{{\"error\": \"access_denied\", \"error_description\": \"{accessResult.Reason}\"}}");
+                            return;
+                        }
+
+                        // Add organization context claims for this tenant's organization
+                        if (accessResult.Membership != null)
+                        {
+                            AddOrganizationContextClaims(context, accessResult.Membership, resolvedTenant);
+                        }
+                    }
+
+                    tenantAccessor.SetTenant(resolvedTenant);
+                    _logger.LogDebug("Resolved tenant: {TenantId} ({TenantIdentifier})", resolvedTenant.Id, resolvedTenant.Identifier);
                 }
                 else
                 {
@@ -80,6 +111,129 @@ public class TenantResolutionMiddleware
         }
     }
 
+    /// <summary>
+    /// Determines if the request is for the Admin API
+    /// </summary>
+    private static bool IsAdminApiRequest(HttpContext context)
+    {
+        var path = context.Request.Path.Value ?? "";
+        return path.StartsWith("/api/admin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validates that the authenticated user has access to the specified tenant
+    /// based on their organization membership.
+    /// </summary>
+    private async Task<TenantAccessResult> ValidateTenantAccessAsync(HttpContext context, Tenant tenant)
+    {
+        var userId = context.User.FindFirst("sub")?.Value
+            ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrEmpty(userId))
+        {
+            return TenantAccessResult.Denied("User ID not found in token");
+        }
+
+        // Super admins bypass organization checks
+        if (IsSuperAdmin(context.User))
+        {
+            _logger.LogDebug("Super admin {UserId} granted access to tenant {TenantId}", userId, tenant.Id);
+            return TenantAccessResult.Granted(null);
+        }
+
+        // Get the organization membership store
+        var membershipStore = context.RequestServices.GetService<IOrganizationMembershipStore>();
+        if (membershipStore == null)
+        {
+            // Organization management not enabled, allow access (backward compatibility)
+            _logger.LogDebug("Organization membership store not available, allowing access");
+            return TenantAccessResult.Granted(null);
+        }
+
+        // Check if tenant has an organization
+        if (string.IsNullOrEmpty(tenant.OrganizationId))
+        {
+            // Tenant not associated with an organization - could be a legacy tenant
+            // Log warning but allow access for backward compatibility
+            _logger.LogWarning("Tenant {TenantId} has no organization association", tenant.Id);
+            return TenantAccessResult.Granted(null);
+        }
+
+        // Get user's membership in the tenant's organization
+        var membership = await membershipStore.GetByUserAndOrganizationAsync(userId, tenant.OrganizationId);
+
+        if (membership == null)
+        {
+            return TenantAccessResult.Denied($"User is not a member of organization {tenant.OrganizationId}");
+        }
+
+        // Check if user has access to this specific tenant
+        var allowedTenantIds = await membershipStore.GetAllowedTenantIdsAsync(userId, tenant.OrganizationId);
+        if (!allowedTenantIds.Contains(tenant.Id))
+        {
+            return TenantAccessResult.Denied($"User does not have access to tenant {tenant.Id} in organization {tenant.OrganizationId}");
+        }
+
+        _logger.LogDebug(
+            "User {UserId} granted access to tenant {TenantId} with role {Role} in organization {OrganizationId}",
+            userId, tenant.Id, membership.Role, tenant.OrganizationId);
+
+        return TenantAccessResult.Granted(membership);
+    }
+
+    /// <summary>
+    /// Adds claims to the current request context that indicate the user's role
+    /// in the current tenant's organization. This allows downstream code to
+    /// check permissions scoped to the current context.
+    /// </summary>
+    private static void AddOrganizationContextClaims(
+        HttpContext context,
+        OrganizationMembership membership,
+        Tenant tenant)
+    {
+        // Add items to HttpContext.Items for use in current request
+        // These are NOT added to the JWT - they're request-scoped context
+        context.Items["CurrentOrgId"] = tenant.OrganizationId;
+        context.Items["CurrentOrgRole"] = membership.Role;
+        context.Items["CurrentOrgMembership"] = membership;
+
+        // Also add as claims to the current identity for easier access in controllers
+        if (context.User.Identity is ClaimsIdentity identity)
+        {
+            // Remove any existing current_org claims to avoid duplicates
+            var existingOrgIdClaim = identity.FindFirst("current_org_id");
+            var existingOrgRoleClaim = identity.FindFirst("current_org_role");
+            if (existingOrgIdClaim != null) identity.RemoveClaim(existingOrgIdClaim);
+            if (existingOrgRoleClaim != null) identity.RemoveClaim(existingOrgRoleClaim);
+
+            // Add current context claims
+            identity.AddClaim(new Claim("current_org_id", tenant.OrganizationId));
+            identity.AddClaim(new Claim("current_org_role", membership.Role.ToString().ToLowerInvariant()));
+        }
+    }
+
+    /// <summary>
+    /// Checks if the user is a super admin (platform-wide access)
+    /// </summary>
+    private static bool IsSuperAdmin(ClaimsPrincipal user)
+    {
+        // Check for super_admin claim
+        var superAdminClaim = user.FindFirst("super_admin")?.Value;
+        if (superAdminClaim is "true" or "1")
+            return true;
+
+        // Check for SuperAdmin or SystemAdmin role (with null tenant_id)
+        var userTenantId = user.FindFirst("tenant_id")?.Value
+            ?? user.FindFirst("tid")?.Value;
+
+        // Only users with no tenant scope can be SuperAdmin
+        if (!string.IsNullOrEmpty(userTenantId))
+            return false;
+
+        return user.IsInRole("SuperAdmin") || user.IsInRole("SystemAdmin") ||
+               user.IsInRole("super_admin") || user.IsInRole("platform_admin");
+    }
+
     private static string? ResolveTenantIdentifier(HttpContext context, MultiTenancyOptions options)
     {
         // Try strategies in order of preference, falling back to next if not found
@@ -106,7 +260,24 @@ public class TenantResolutionMiddleware
                 return tenantId;
         }
 
+        // For Admin API requests from authenticated users, use tenant_id from JWT token
+        // This allows tenant admins to access their tenant without explicit header
+        if (IsAdminApiRequest(context) && context.User.Identity?.IsAuthenticated == true)
+        {
+            tenantId = ResolveFromToken(context);
+            if (!string.IsNullOrEmpty(tenantId))
+                return tenantId;
+        }
+
         return null;
+    }
+
+    private static string? ResolveFromToken(HttpContext context)
+    {
+        // Get tenant_id claim from JWT token
+        return context.User.FindFirst("tenant_id")?.Value
+            ?? context.User.FindFirst("tid")?.Value
+            ?? context.User.FindFirst("http://schemas.oluso.io/claims/tenant")?.Value;
     }
 
     private static string? ResolveFromDomain(HttpContext context)
@@ -418,4 +589,28 @@ public class HostValidationCacheInvalidator : IHostValidationCacheInvalidator
             await _cache.RemoveAsync(CacheKey, cancellationToken);
         }
     }
+}
+
+/// <summary>
+/// Result of tenant access validation
+/// </summary>
+internal class TenantAccessResult
+{
+    public bool HasAccess { get; private init; }
+    public string? Reason { get; private init; }
+    public OrganizationMembership? Membership { get; private init; }
+
+    private TenantAccessResult() { }
+
+    public static TenantAccessResult Granted(OrganizationMembership? membership) => new()
+    {
+        HasAccess = true,
+        Membership = membership
+    };
+
+    public static TenantAccessResult Denied(string reason) => new()
+    {
+        HasAccess = false,
+        Reason = reason
+    };
 }

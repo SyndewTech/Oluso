@@ -31,7 +31,7 @@ public class AzureKeyVaultCertificateProvider : ICertificateMaterialProvider
         _configuration = configuration;
         _logger = logger;
 
-        _vaultUri = configuration["AzureKeyVault:VaultUri"];
+        _vaultUri = configuration["Oluso:AzureKeyVault:VaultUri"];
         _isConfigured = !string.IsNullOrEmpty(_vaultUri);
 
         if (_isConfigured)

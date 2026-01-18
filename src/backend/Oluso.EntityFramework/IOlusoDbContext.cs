@@ -24,15 +24,17 @@ public interface IOlusoDbContext
     DbSet<ClientAllowedRole> ClientAllowedRoles { get; }
     DbSet<ClientAllowedUser> ClientAllowedUsers { get; }
 
-    // Resources
-    DbSet<ApiResource> ApiResources { get; }
-    DbSet<ApiResourceSecret> ApiResourceSecrets { get; }
-    DbSet<ApiResourceScope> ApiResourceScopes { get; }
-    DbSet<ApiResourceClaim> ApiResourceClaims { get; }
-    DbSet<ApiResourceProperty> ApiResourceProperties { get; }
+    // Resources (RFC 8707)
+    DbSet<Resource> Resources { get; }
+    DbSet<ResourceScope> ResourceScopes { get; }
+    DbSet<ResourceClaim> ResourceClaims { get; }
+
+    // API Scopes
     DbSet<ApiScope> ApiScopes { get; }
     DbSet<ApiScopeClaim> ApiScopeClaims { get; }
     DbSet<ApiScopeProperty> ApiScopeProperties { get; }
+
+    // Identity Resources
     DbSet<IdentityResource> IdentityResources { get; }
     DbSet<IdentityResourceClaim> IdentityResourceClaims { get; }
     DbSet<IdentityResourceProperty> IdentityResourceProperties { get; }
@@ -48,6 +50,11 @@ public interface IOlusoDbContext
     // Multi-tenancy (optional - null if not using multi-tenancy)
     DbSet<Tenant>? Tenants { get; }
 
+    // Organizations (multi-tenant management)
+    DbSet<Organization> Organizations { get; }
+    DbSet<OrganizationMembership> OrganizationMemberships { get; }
+    DbSet<OrganizationInvitation> OrganizationInvitations { get; }
+
     // External identity providers
     DbSet<IdentityProvider> IdentityProviders { get; }
 
@@ -59,13 +66,13 @@ public interface IOlusoDbContext
     // Audit logs
     DbSet<AuditLog> AuditLogs { get; }
 
+    // Telemetry logs (application logging)
+    DbSet<TelemetryLog> TelemetryLogs { get; }
+
     // Webhooks
     DbSet<WebhookEndpointEntity> WebhookEndpoints { get; }
     DbSet<WebhookEventSubscriptionEntity> WebhookEventSubscriptions { get; }
     DbSet<WebhookDeliveryEntity> WebhookDeliveries { get; }
-
-    // FIDO2/Passkeys
-    DbSet<Fido2CredentialEntity> Fido2Credentials { get; }
 
     // Plugin metadata
     DbSet<PluginMetadata> PluginMetadata { get; }

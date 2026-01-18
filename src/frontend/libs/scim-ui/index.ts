@@ -49,6 +49,7 @@ export function createScimPlugin(options: ScimPluginOptions): AdminUIPlugin {
         icon: CloudArrowUpIcon,
         group: 'settings',
         order: 75,
+        permission: 'scim.read',
         children: [
           {
             id: 'scim-clients',

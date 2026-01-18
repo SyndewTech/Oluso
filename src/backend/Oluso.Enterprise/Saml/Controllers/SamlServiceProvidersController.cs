@@ -681,6 +681,8 @@ public class SamlServiceProvidersController : AdminBaseController
         NotBefore = certInfo.NotBefore,
         NotAfter = certInfo.NotAfter,
         Thumbprint = certInfo.Thumbprint,
+        Status = certInfo.Status.ToString(),
+        IsRevoked = certInfo.IsRevoked,
         IsExpired = certInfo.IsExpired,
         IsExpiringSoon = certInfo.IsExpiringSoon,
         HasCertificate = true
@@ -888,6 +890,8 @@ public class SamlCertificateInfoDto
     public DateTime? NotBefore { get; set; }
     public DateTime? NotAfter { get; set; }
     public string? Thumbprint { get; set; }
+    public string Status { get; set; } = "Active";
+    public bool IsRevoked { get; set; }
     public bool IsExpired { get; set; }
     public bool IsExpiringSoon { get; set; }
     public bool HasCertificate { get; set; }

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -13,17 +14,20 @@ namespace Oluso.Admin.Controllers;
 public class ClientsController : AdminBaseController
 {
     private readonly IClientStore _clientStore;
+    private readonly ITenantSettingsProvider _tenantSettingsProvider;
     private readonly IOlusoEventService _eventService;
     private readonly ILogger<ClientsController> _logger;
 
     public ClientsController(
         ITenantContext tenantContext,
         IClientStore clientStore,
+        ITenantSettingsProvider tenantSettingsProvider,
         IOlusoEventService eventService,
         ILogger<ClientsController> logger)
         : base(tenantContext)
     {
         _clientStore = clientStore;
+        _tenantSettingsProvider = tenantSettingsProvider;
         _eventService = eventService;
         _logger = logger;
     }
@@ -32,6 +36,7 @@ public class ClientsController : AdminBaseController
     /// Get all clients for the current tenant
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.ClientsRead)]
     public async Task<ActionResult<IEnumerable<ClientListDto>>> GetClients(CancellationToken cancellationToken)
     {
         var clients = await _clientStore.GetAllClientsAsync(cancellationToken);
@@ -56,6 +61,7 @@ public class ClientsController : AdminBaseController
     /// Get a specific client by ID
     /// </summary>
     [HttpGet("{clientId}")]
+    [RequirePermission(AdminPermissions.ClientsRead)]
     public async Task<ActionResult<ClientDetailDto>> GetClient(string clientId, CancellationToken cancellationToken)
     {
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
@@ -72,6 +78,7 @@ public class ClientsController : AdminBaseController
     /// Create a new client
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.ClientsWrite)]
     public async Task<ActionResult<ClientDetailDto>> CreateClient(
         [FromBody] CreateClientRequest request,
         CancellationToken cancellationToken)
@@ -81,6 +88,21 @@ public class ClientsController : AdminBaseController
         if (existing != null)
         {
             return BadRequest(new { error = "Client with this ID already exists" });
+        }
+
+        // Validate client configuration against tenant protocol settings
+        var protocolSettings = await _tenantSettingsProvider.GetProtocolSettingsAsync(cancellationToken);
+        var validationError = ValidateClientAgainstTenantSettings(request, protocolSettings);
+        if (validationError != null)
+        {
+            return BadRequest(new { error = validationError });
+        }
+
+        // Validate client claims don't contain protected claim types
+        var claimValidationError = ValidateClientClaims(request.Claims);
+        if (claimValidationError != null)
+        {
+            return BadRequest(new { error = claimValidationError });
         }
 
         var client = new Client
@@ -157,7 +179,11 @@ public class ClientsController : AdminBaseController
         {
             client.ClientSecrets = new List<ClientSecret>
             {
-                new ClientSecret { Value = HashSecret(request.ClientSecret) }
+                new ClientSecret
+                {
+                    Value = HashSecret(request.ClientSecret),
+                    LastThreeChars = GetLastThreeChars(request.ClientSecret)
+                }
             };
         }
 
@@ -185,6 +211,7 @@ public class ClientsController : AdminBaseController
     /// Update a client
     /// </summary>
     [HttpPut("{clientId}")]
+    [RequirePermission(AdminPermissions.ClientsWrite)]
     public async Task<ActionResult<ClientDetailDto>> UpdateClient(
         string clientId,
         [FromBody] UpdateClientRequest request,
@@ -195,6 +222,21 @@ public class ClientsController : AdminBaseController
         if (client == null)
         {
             return NotFound();
+        }
+
+        // Validate client configuration against tenant protocol settings
+        var protocolSettings = await _tenantSettingsProvider.GetProtocolSettingsAsync(cancellationToken);
+        var validationError = ValidateClientAgainstTenantSettings(request, protocolSettings, client);
+        if (validationError != null)
+        {
+            return BadRequest(new { error = validationError });
+        }
+
+        // Validate client claims don't contain protected claim types
+        var claimValidationError = ValidateClientClaims(request.Claims);
+        if (claimValidationError != null)
+        {
+            return BadRequest(new { error = claimValidationError });
         }
 
         // Update basic settings
@@ -295,6 +337,7 @@ public class ClientsController : AdminBaseController
     /// Delete a client
     /// </summary>
     [HttpDelete("{clientId}")]
+    [RequirePermission(AdminPermissions.ClientsDelete)]
     public async Task<IActionResult> DeleteClient(string clientId, CancellationToken cancellationToken)
     {
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
@@ -327,6 +370,7 @@ public class ClientsController : AdminBaseController
     /// Regenerate client secret
     /// </summary>
     [HttpPost("{clientId}/regenerate-secret")]
+    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
     public async Task<ActionResult<RegenerateSecretResponse>> RegenerateSecret(
         string clientId,
         CancellationToken cancellationToken)
@@ -343,12 +387,13 @@ public class ClientsController : AdminBaseController
             return BadRequest(new { error = "Client does not require a secret" });
         }
 
-        // Generate new secret
+        // Generate new secret and add it (keeping existing secrets)
         var newSecret = GenerateClientSecret();
-        client.ClientSecrets = new List<ClientSecret>
+        client.ClientSecrets.Add(new ClientSecret
         {
-            new ClientSecret { Value = HashSecret(newSecret) }
-        };
+            Value = HashSecret(newSecret),
+            LastThreeChars = GetLastThreeChars(newSecret)
+        });
 
         await _clientStore.UpdateClientAsync(client, cancellationToken);
 
@@ -357,8 +402,46 @@ public class ClientsController : AdminBaseController
         return Ok(new RegenerateSecretResponse
         {
             ClientId = clientId,
-            ClientSecret = newSecret // Only time we return the plain secret
+            ClientSecret = newSecret, // Only time we return the plain secret
+            SecretId = client.ClientSecrets.Last().Id // Return the new secret's ID
         });
+    }
+
+    /// <summary>
+    /// Delete a specific client secret
+    /// </summary>
+    [HttpDelete("{clientId}/secrets/{secretId}")]
+    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
+    public async Task<ActionResult> DeleteSecret(
+        string clientId,
+        int secretId,
+        CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
+
+        if (client == null)
+        {
+            return NotFound();
+        }
+
+        var secret = client.ClientSecrets.FirstOrDefault(s => s.Id == secretId);
+        if (secret == null)
+        {
+            return NotFound(new { error = "Secret not found" });
+        }
+
+        // Ensure at least one secret remains if client requires secret
+        if (client.RequireClientSecret && client.ClientSecrets.Count <= 1)
+        {
+            return BadRequest(new { error = "Cannot delete the last secret for a client that requires a secret" });
+        }
+
+        client.ClientSecrets.Remove(secret);
+        await _clientStore.UpdateClientAsync(client, cancellationToken);
+
+        _logger.LogInformation("Deleted secret {SecretId} from client {ClientId}", secretId, clientId);
+
+        return NoContent();
     }
 
     private static void MapCollectionsToClient(Client client, IClientCollections request)
@@ -457,6 +540,17 @@ public class ClientsController : AdminBaseController
         Updated = client.Updated,
         LastAccessed = client.LastAccessed,
 
+        // Client secrets (metadata only, no hashed values)
+        Secrets = client.ClientSecrets.Select(s => new ClientSecretDto
+        {
+            Id = s.Id,
+            Description = s.Description,
+            Expiration = s.Expiration,
+            Type = s.Type,
+            Created = s.Created,
+            LastThreeChars = s.LastThreeChars
+        }).ToList(),
+
         // Authentication settings
         RequireClientSecret = client.RequireClientSecret,
         RequirePkce = client.RequirePkce,
@@ -540,6 +634,112 @@ public class ClientsController : AdminBaseController
         rng.GetBytes(bytes);
         return Convert.ToBase64String(bytes);
     }
+
+    private static string? GetLastThreeChars(string secret)
+    {
+        if (string.IsNullOrEmpty(secret) || secret.Length < 3)
+            return secret;
+        return secret[^3..];
+    }
+
+    /// <summary>
+    /// Validates client configuration against tenant protocol settings.
+    /// Returns an error message if validation fails, null if successful.
+    /// </summary>
+    private static string? ValidateClientAgainstTenantSettings(
+        IClientCollections request,
+        TenantProtocolSettings protocolSettings,
+        Client? existingClient = null)
+    {
+        // Get the effective grant types (from request or existing client)
+        var grantTypes = request.AllowedGrantTypes ?? existingClient?.AllowedGrantTypes.Select(g => g.GrantType).ToList();
+
+        // Validate grant types against tenant restrictions
+        if (grantTypes != null && protocolSettings.AllowedGrantTypes?.Count > 0)
+        {
+            var disallowedGrantTypes = grantTypes
+                .Where(g => !protocolSettings.AllowedGrantTypes.Contains(g))
+                .ToList();
+
+            if (disallowedGrantTypes.Any())
+            {
+                return $"The following grant types are not allowed for this tenant: {string.Join(", ", disallowedGrantTypes)}";
+            }
+        }
+
+        // Determine effective client settings (request values or existing client values)
+        var requirePkce = (request as CreateClientRequest)?.RequirePkce
+            ?? (request as UpdateClientRequest)?.RequirePkce
+            ?? existingClient?.RequirePkce
+            ?? true;
+
+        var allowPlainTextPkce = (request as CreateClientRequest)?.AllowPlainTextPkce
+            ?? (request as UpdateClientRequest)?.AllowPlainTextPkce
+            ?? existingClient?.AllowPlainTextPkce
+            ?? false;
+
+        var requireDPoP = (request as CreateClientRequest)?.RequireDPoP
+            ?? (request as UpdateClientRequest)?.RequireDPoP
+            ?? existingClient?.RequireDPoP
+            ?? false;
+
+        var requirePushedAuthorization = (request as CreateClientRequest)?.RequirePushedAuthorization
+            ?? (request as UpdateClientRequest)?.RequirePushedAuthorization
+            ?? existingClient?.RequirePushedAuthorization
+            ?? false;
+
+        // Validate PKCE requirement - if tenant requires PKCE, client cannot disable it
+        if (protocolSettings.RequirePkce && requirePkce == false)
+        {
+            return "Cannot disable PKCE requirement: tenant requires PKCE for all clients";
+        }
+
+        // Validate plain PKCE - if tenant disallows plain PKCE, client cannot enable it
+        if (!protocolSettings.AllowPlainPkce && allowPlainTextPkce == true)
+        {
+            return "Cannot allow plain PKCE: tenant prohibits plain PKCE for security reasons";
+        }
+
+        // Validate DPoP requirement - if tenant requires DPoP, client cannot disable it
+        if (protocolSettings.RequireDPoP && requireDPoP == false)
+        {
+            return "Cannot disable DPoP requirement: tenant requires DPoP for all clients";
+        }
+
+        // Validate PAR requirement - if tenant requires PAR, client cannot disable it
+        if (protocolSettings.RequirePushedAuthorizationRequests && requirePushedAuthorization == false)
+        {
+            return "Cannot disable PAR requirement: tenant requires Pushed Authorization Requests for all clients";
+        }
+
+        return null; // Validation passed
+    }
+
+    /// <summary>
+    /// Validates that client claims don't contain protected claim types.
+    /// Protected claims include system claims like "permissions", "role", "tenant_id", etc.
+    /// Returns an error message if validation fails, null if successful.
+    /// </summary>
+    private static string? ValidateClientClaims(ICollection<ClientClaimDto>? claims)
+    {
+        if (claims == null || claims.Count == 0)
+        {
+            return null;
+        }
+
+        var protectedClaims = claims
+            .Where(c => ReservedClaimTypes.IsProtectedFromClientClaims(c.Type))
+            .Select(c => c.Type)
+            .Distinct()
+            .ToList();
+
+        if (protectedClaims.Count > 0)
+        {
+            return $"The following claim types are protected and cannot be set via client claims: {string.Join(", ", protectedClaims)}";
+        }
+
+        return null;
+    }
 }
 
 #region DTOs
@@ -575,12 +775,29 @@ public class ClientListDto
     public DateTime? Updated { get; set; }
 }
 
+public class ClientSecretDto
+{
+    public int Id { get; set; }
+    public string? Description { get; set; }
+    public DateTime? Expiration { get; set; }
+    public string Type { get; set; } = "SharedSecret";
+    public DateTime Created { get; set; }
+    /// <summary>
+    /// Last 3 characters of the unhashed secret value, for identification.
+    /// Note: This is stored separately at secret creation time, not derived from the hash.
+    /// </summary>
+    public string? LastThreeChars { get; set; }
+}
+
 public class ClientDetailDto : ClientListDto
 {
     // Basic settings
     public string? ClientUri { get; set; }
     public string? LogoUri { get; set; }
     public DateTime? LastAccessed { get; set; }
+
+    // Client secrets (hashed values not exposed, only metadata)
+    public List<ClientSecretDto> Secrets { get; set; } = new();
 
     // Authentication settings
     public bool AllowPlainTextPkce { get; set; }
@@ -810,6 +1027,7 @@ public class RegenerateSecretResponse
 {
     public string ClientId { get; set; } = null!;
     public string ClientSecret { get; set; } = null!;
+    public int SecretId { get; set; }
 }
 
 #endregion
