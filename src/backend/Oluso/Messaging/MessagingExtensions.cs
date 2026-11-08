@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Oluso.Core.Integrations;
 using Oluso.Core.Services;
 
 namespace Oluso.Messaging;
@@ -21,7 +22,7 @@ public static class MessagingExtensions
     /// {
     ///   "Email": {
     ///     "Provider": "SendGrid",
-    ///     "FromAddress": "noreply@example.com",
+    ///     "FromAddress": "noreply@oluso.io",
     ///     "FromName": "My App",
     ///     "SendGrid": {
     ///       "ApiKey": "SG.xxxxx"
@@ -145,6 +146,42 @@ public static class MessagingExtensions
     }
 
     /// <summary>
+    /// Adds WhatsApp sender with configuration from appsettings
+    /// </summary>
+    public static IServiceCollection AddWhatsAppSender(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var section = configuration.GetSection(WhatsAppOptions.SectionName);
+        services.Configure<WhatsAppOptions>(section);
+
+        var options = section.Get<WhatsAppOptions>() ?? new WhatsAppOptions();
+        if (!string.Equals(options.Provider, "Meta", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Oluso:Messaging:WhatsApp:Provider '{options.Provider}' is not supported. Only 'Meta' (WhatsApp Cloud API) is implemented.");
+        }
+
+        // Tenant credentials (access token, app secret) live in the encrypted
+        // "WhatsApp" tenant section. Registering the key here means every
+        // save through ITenantConfigurationService is DataProtection-wrapped.
+        services.Configure<TenantConfigurationOptions>(o => o.EncryptedSections.Add(WhatsAppSettings.SectionKey));
+
+        services.AddHttpClient<Messaging.WhatsApp.MetaGraphClient>(client =>
+        {
+            client.DefaultRequestHeaders.Add("Accept", "application/json");
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        services.TryAddScoped<Messaging.WhatsApp.IWhatsAppSettingsResolver, Messaging.WhatsApp.WhatsAppSettingsResolver>();
+        services.TryAddScoped<Messaging.WhatsApp.IWhatsAppContactService, Messaging.WhatsApp.WhatsAppContactService>();
+        services.TryAddScoped<Messaging.WhatsApp.IWhatsAppWebhookProcessor, Messaging.WhatsApp.WhatsAppWebhookProcessor>();
+        services.TryAddScoped<Messaging.WhatsApp.IWhatsAppTemplateService, Messaging.WhatsApp.WhatsAppTemplateService>();
+        services.TryAddScoped<IWhatsAppSender, MetaWhatsAppSender>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Adds both email and SMS senders with configuration from appsettings
     /// </summary>
     /// <param name="services">The service collection</param>
@@ -156,24 +193,70 @@ public static class MessagingExtensions
     {
         services.AddEmailSender(configuration);
         services.AddSmsSender(configuration);
+
+        // Per-tenant integration credential store (WhatsApp/SMS/email provider
+        // configs in Tenant.Configuration). Platform infra — wired here at the
+        // host, not piggybacked on a feature module.
+        services.AddIntegrationTenantSettings();
+
+        // Always register the WhatsApp sender — it resolves credentials per
+        // tenant at send time (the tenant's whatsapp-meta integration config),
+        // so a tenant can bring its own creds even when no global WhatsApp
+        // section exists. The appsettings section is the optional fallback.
+        services.AddWhatsAppSender(configuration);
+
+        // Platform email templates that ship with Oluso. A template
+        // bootstrapper, when registered, resolves every IPlatformTemplateSeeder at
+        // startup and persists the templates under the "_platform" tenant.
+        // Registered as a transient because it's just a stateless seed
+        // catalogue — and as IEnumerable<IPlatformTemplateSeeder> so a
+        // consumer can add their own seeders alongside.
+        services.AddTransient<IPlatformTemplateSeeder, OlusoAuthEmailTemplates>();
+
+        // Starter template — per-tenant scope, NOT _platform. Lands in
+        // each tenant's own template table on creation via
+        // TenantSeedEventSink, so tenant admins can see + duplicate it
+        // without any access to platform-tenant rows.
+        services.AddTransient<ICoreEmailTemplateSeeder, OlusoStarterEmailTemplates>();
+
+        // Security notifications (module admin assigned) — per-tenant, each
+        // with its auto-created workflow on the triggering event.
+        services.AddTransient<ICoreEmailTemplateSeeder, OlusoSecurityEmailTemplates>();
+
         return services;
     }
 
     private static IServiceCollection AddEmailSenderCore(this IServiceCollection services, string provider)
     {
-        // Register HTTP client for email service
-        services.AddHttpClient<IEmailSender, SendGridEmailSender>(client =>
+        // Register tenant-aware email sender that resolves per-tenant settings at runtime,
+        // falling back to global EmailOptions when no tenant override exists.
+        services.AddHttpClient<IEmailSender, TenantAwareEmailSender>(client =>
         {
             client.DefaultRequestHeaders.Add("Accept", "application/json");
         });
+        services.TryAddScoped<IEmailSender, TenantAwareEmailSender>();
 
-        switch (provider.ToLowerInvariant())
+        // IEmailService is a legacy alias of IEmailSender. Some call sites
+        // (e.g. PasswordlessEmailStepHandler) resolve by the alias type;
+        // forward the registration so they pick up the same tenant-aware
+        // sender as everyone else instead of silently getting null and
+        // skipping the send.
+        services.TryAddScoped<IEmailService>(sp => (IEmailService)sp.GetRequiredService<IEmailSender>());
+
+        // Reply-to inboxes are confirmed by a magic link mailed to them.
+        services.TryAddScoped<IReplyToVerificationService, ReplyToVerificationService>();
+        services.AddScoped<Oluso.Core.Authentication.IActionTokenHandler, ReplyToVerificationTokenHandler>();
+
+        // Profile-targeted send (admin test, campaign send) — same instance,
+        // exposes the SendThroughProfileAsync path that refuses to fall back.
+        services.TryAddScoped<IProfileEmailSender>(sp => (IProfileEmailSender)sp.GetRequiredService<IEmailSender>());
+
+        // Per-profile credentials are stored under "SenderProfile:{Id}" section keys.
+        // Register that prefix so every profile's payload is encrypted at rest.
+        services.Configure<TenantConfigurationOptions>(o =>
         {
-            case "sendgrid":
-            default:
-                services.TryAddScoped<IEmailSender, SendGridEmailSender>();
-                break;
-        }
+            o.EncryptedSectionPrefixes.Add(SenderCredentials.SectionKeyPrefix);
+        });
 
         // Also register the unified IMessagingService if both email and SMS are available
         services.TryAddScoped<IMessagingService, UnifiedMessagingService>();
@@ -202,6 +285,11 @@ public static class MessagingExtensions
                 services.TryAddScoped<ISmsSender, InfobipSmsSender>();
                 break;
         }
+
+        // ISmsService is the legacy alias of ISmsSender; forward so call
+        // sites resolving the alias (e.g. PasswordlessSmsStepHandler) get
+        // the same registered sender instead of silently getting null.
+        services.TryAddScoped<ISmsService>(sp => (ISmsService)sp.GetRequiredService<ISmsSender>());
 
         // Also register the unified IMessagingService if both email and SMS are available
         services.TryAddScoped<IMessagingService, UnifiedMessagingService>();

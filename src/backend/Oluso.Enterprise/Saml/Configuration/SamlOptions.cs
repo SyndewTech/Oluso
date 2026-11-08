@@ -97,6 +97,18 @@ public class Saml2ProviderConfiguration
     public bool AutoProvisionUsers { get; set; } = true;
     public List<string>? ProxyIncludeClaims { get; set; }
     public List<string>? ProxyExcludeClaims { get; set; }
+
+    /// <summary>
+    /// Oluso role names assigned to users provisioned via this IdP. Applied
+    /// on first provision only.
+    /// </summary>
+    public List<string>? DefaultRoles { get; set; }
+
+    /// <summary>
+    /// Pre-sign-in gate evaluated against the SAML assertion's claims.
+    /// Same shape as <see cref="Oluso.Core.Services.ExternalAccessControl"/>.
+    /// </summary>
+    public Oluso.Core.Services.ExternalAccessControl? AccessControl { get; set; }
 }
 
 /// <summary>
@@ -404,13 +416,13 @@ public class CertificateOptions
 
         if (!string.IsNullOrEmpty(FilePath))
         {
-            return new X509Certificate2(FilePath, Password, keyStorageFlags);
+            return X509CertificateLoader.LoadPkcs12FromFile(FilePath, Password, keyStorageFlags);
         }
 
         if (!string.IsNullOrEmpty(Base64))
         {
             var bytes = Convert.FromBase64String(Base64);
-            return new X509Certificate2(bytes, Password, keyStorageFlags);
+            return X509CertificateLoader.LoadPkcs12(bytes, Password, keyStorageFlags);
         }
 
         if (!string.IsNullOrEmpty(Thumbprint))

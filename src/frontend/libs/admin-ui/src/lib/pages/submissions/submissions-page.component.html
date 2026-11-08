@@ -1,0 +1,584 @@
+<div class="h-full flex flex-col">
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Data Collection</h1>
+    <p class="mt-1 text-sm text-gray-500">
+      View and manage submissions from waitlists, surveys, and other data collection journeys
+    </p>
+  </div>
+
+  <!-- Main split panel -->
+  <div class="flex-1 flex gap-6 min-h-0">
+    <!-- Left Panel - Policy List -->
+    <div class="w-80 flex-shrink-0">
+      <ui-card class="h-full flex flex-col" [padding]="false">
+        <div class="p-4 border-b border-gray-200">
+          <h2 class="text-sm font-medium text-gray-700">Collection Policies</h2>
+        </div>
+        <div class="flex-1 overflow-y-auto">
+          @if (policiesLoading()) {
+            <div class="p-4 text-center text-gray-500">Loading...</div>
+          } @else if (policies().length === 0) {
+            <div class="p-4 text-center">
+              <ui-icon name="inbox" class="mx-auto h-12 w-12 text-gray-400" />
+              <h3 class="mt-2 text-sm font-medium text-gray-900">No data collection policies</h3>
+              <p class="mt-1 text-sm text-gray-500">
+                Create a waitlist or survey journey to start collecting data
+              </p>
+            </div>
+          } @else {
+            <ul class="divide-y divide-gray-200">
+              @for (policy of policies(); track policy.id) {
+                <li>
+                  <button
+                    (click)="selectPolicy(policy.id)"
+                    [class]="'w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between ' + (selectedPolicyId() === policy.id ? 'bg-blue-50' : '')"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center">
+                        <ui-icon name="document-text" class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" />
+                        <div class="truncate">
+                          <p class="text-sm font-medium text-gray-900 truncate">{{ policy.name }}</p>
+                          @if (policy.ownerModule) {
+                            <p class="text-[11px] text-indigo-700">{{ policy.ownerModuleName || policy.ownerModule }}</p>
+                          }
+                          <p class="text-xs text-gray-500">
+                            {{ policy.submissionCount }} submissions
+                            @if (policy.maxSubmissions > 0) {
+                              <span> / {{ policy.maxSubmissions }} max</span>
+                            }
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="ml-2 flex items-center">
+                      <ui-badge [variant]="policy.enabled ? 'success' : 'default'" size="sm">
+                        {{ policy.enabled ? 'Active' : 'Inactive' }}
+                      </ui-badge>
+                      <ui-icon name="chevron-right" class="h-4 w-4 text-gray-400 ml-2" />
+                    </div>
+                  </button>
+                </li>
+              }
+            </ul>
+          }
+        </div>
+      </ui-card>
+    </div>
+
+    <!-- Right Panel - Submissions -->
+    <div class="flex-1 min-w-0">
+      <ui-card class="h-full flex flex-col" [padding]="false">
+        @if (selectedPolicyId()) {
+          <!-- Header with policy info -->
+          <div class="p-4 border-b border-gray-200">
+            <div class="flex items-center justify-between">
+              <div>
+                <h2 class="text-lg font-medium text-gray-900">{{ selectedPolicy()?.name }}</h2>
+                <p class="text-sm text-gray-500">{{ totalSubmissions() }} total submissions</p>
+                @if (selectedPolicy()?.answersHidden) {
+                  <p class="mt-1 inline-flex items-center gap-1 text-xs text-indigo-700">
+                    <ui-icon name="lock" class="h-3.5 w-3.5" />
+                    Answers go only to {{ selectedPolicy()?.ownerModuleName || selectedPolicy()?.ownerModule }}. Shown here: when each submission arrived and its status.
+                  </p>
+                }
+              </div>
+              <div class="flex items-center gap-2">
+                <ui-button variant="secondary" size="sm" [disabled]="exporting()" (clicked)="exportSubmissions('csv')">
+                  <ui-icon name="download" class="h-4 w-4 mr-1" />
+                  {{ exporting() ? 'Exporting...' : 'CSV' }}
+                </ui-button>
+                <ui-button variant="secondary" size="sm" [disabled]="exporting()" (clicked)="exportSubmissions('json')">
+                  JSON
+                </ui-button>
+              </div>
+            </div>
+
+            <!-- Journey URL -->
+            <div class="mt-3 flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+              <ui-icon name="link" class="h-4 w-4 text-gray-400 flex-shrink-0" />
+              <code class="text-sm text-gray-600 flex-1 truncate">{{ selectedPolicyShareUrl() || 'Loading…' }}</code>
+              <button
+                (click)="copyUrl()"
+                class="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 flex-shrink-0"
+              >
+                <ui-icon name="document-duplicate" class="h-4 w-4" />
+                {{ copiedUrl() ? 'Copied!' : 'Copy' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Filters -->
+          <div class="px-4 py-2 border-b border-gray-200 bg-gray-50">
+            <form (ngSubmit)="onSearch()" class="flex items-center gap-2">
+              <!-- Search -->
+              <div class="relative flex-1 min-w-[180px] max-w-[280px]">
+                <ui-icon name="search" class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  [(ngModel)]="searchTerm"
+                  name="search"
+                  placeholder="Search..."
+                  class="w-full pl-8 pr-3 py-1 text-sm border border-gray-300 rounded focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+
+              <!-- Status filter -->
+              <select
+                [value]="filters.status || 'all'"
+                (change)="onStatusFilterChange($event)"
+                class="text-sm border border-gray-300 rounded px-2 py-1 focus:ring-primary-500 focus:border-primary-500"
+              >
+                <option value="all">All Statuses</option>
+                @for (status of statusOptions; track status) {
+                  <option [value]="status">{{ status }}</option>
+                }
+              </select>
+
+              <!-- Date range -->
+              <div class="flex items-center gap-1">
+                <input
+                  type="date"
+                  [value]="filters.dateFrom || ''"
+                  (change)="onDateFromChange($event)"
+                  class="text-sm border border-gray-300 rounded px-2 py-1 focus:ring-primary-500 focus:border-primary-500 w-[130px]"
+                  title="From date"
+                />
+                <span class="text-gray-400 text-xs">-</span>
+                <input
+                  type="date"
+                  [value]="filters.dateTo || ''"
+                  (change)="onDateToChange($event)"
+                  class="text-sm border border-gray-300 rounded px-2 py-1 focus:ring-primary-500 focus:border-primary-500 w-[130px]"
+                  title="To date"
+                />
+              </div>
+
+              <ui-button type="submit" size="sm">Apply</ui-button>
+              <ui-button type="button" variant="secondary" size="sm" (clicked)="clearFilters()">Clear</ui-button>
+            </form>
+          </div>
+
+          <!-- Bulk actions bar -->
+          @if (someSelected()) {
+            <div class="px-4 py-2 border-b border-gray-200 bg-blue-50 flex items-center gap-3">
+              <span class="text-sm text-blue-700 font-medium">{{ selectedIds().size }} selected</span>
+              <div class="flex items-center gap-2">
+                <ui-button size="sm" variant="secondary" [disabled]="bulkUpdating()" (clicked)="bulkUpdateStatus('Approved')">
+                  Approve
+                </ui-button>
+                <ui-button size="sm" variant="secondary" [disabled]="bulkUpdating()" (clicked)="bulkUpdateStatus('Rejected')">
+                  Reject
+                </ui-button>
+                <ui-button size="sm" variant="secondary" [disabled]="bulkUpdating()" (clicked)="bulkUpdateStatus('Archived')">
+                  Archive
+                </ui-button>
+                <ui-button size="sm" variant="danger" [disabled]="bulkUpdating()" (clicked)="bulkDelete()">
+                  Delete
+                </ui-button>
+              </div>
+            </div>
+          }
+
+          <!-- Table -->
+          <div class="flex-1 overflow-auto">
+            @if (submissionsLoading()) {
+              <div class="flex items-center justify-center h-64">
+                <div class="text-gray-500">Loading submissions...</div>
+              </div>
+            } @else if (submissions().length === 0) {
+              <div class="flex flex-col items-center justify-center h-64 text-gray-500">
+                <ui-icon name="inbox" class="h-12 w-12 mb-4" />
+                <p>No submissions yet</p>
+              </div>
+            } @else {
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th class="w-10 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        [checked]="allSelected()"
+                        (change)="toggleSelectAll()"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Submitted
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Data Preview
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Source
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Tags
+                    </th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  @for (submission of submissions(); track submission.id) {
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-3 py-4">
+                        <input
+                          type="checkbox"
+                          [checked]="isSelected(submission.id)"
+                          (change)="toggleSelect(submission.id)"
+                          class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                      </td>
+                      <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">
+                          {{ formatRelativeDate(submission.createdAt) }}
+                        </div>
+                        <div class="text-xs text-gray-500">
+                          {{ formatDate(submission.createdAt) }}
+                        </div>
+                      </td>
+                      <td class="px-4 py-4">
+                        <div class="max-w-xs">
+                          @if (selectedPolicy()?.answersHidden) {
+                            <span class="text-xs text-gray-400">Answers kept by {{ selectedPolicy()?.ownerModuleName || selectedPolicy()?.ownerModule }}</span>
+                          }
+                          @for (item of getDataPreview(submission.data); track item.key) {
+                            <div class="text-sm truncate">
+                              <span class="text-gray-500">{{ item.key }}:</span>
+                              <span class="text-gray-900 ml-1">{{ item.value }}</span>
+                            </div>
+                          }
+                          @if (getRemainingFieldCount(submission.data) > 0) {
+                            <div class="text-xs text-gray-400">
+                              +{{ getRemainingFieldCount(submission.data) }} more fields
+                            </div>
+                          }
+                        </div>
+                      </td>
+                      <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="text-sm">
+                          @if (submission.metadata.country) {
+                            <div class="text-gray-600">{{ submission.metadata.country }}</div>
+                          }
+                          @if (submission.metadata.ipAddress) {
+                            <div class="text-xs text-gray-400">{{ submission.metadata.ipAddress }}</div>
+                          }
+                        </div>
+                      </td>
+                      <td class="px-4 py-4">
+                        <div class="flex flex-wrap gap-1 max-w-[150px]">
+                          @if (submission.tags && submission.tags.length > 0) {
+                            @for (tag of submission.tags.slice(0, 2); track tag) {
+                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
+                                {{ tag }}
+                              </span>
+                            }
+                            @if (submission.tags.length > 2) {
+                              <span class="text-xs text-gray-400">+{{ submission.tags.length - 2 }}</span>
+                            }
+                          } @else {
+                            <span class="text-xs text-gray-400">-</span>
+                          }
+                        </div>
+                      </td>
+                      <td class="px-4 py-4 whitespace-nowrap">
+                        <select
+                          [ngModel]="submission.status"
+                          (ngModelChange)="updateStatus(submission, $event)"
+                          [class]="'text-xs font-semibold rounded-full px-2 py-1 border-0 cursor-pointer ' + getStatusColor(submission.status)"
+                        >
+                          @for (status of statusOptions; track status) {
+                            <option [value]="status">{{ status }}</option>
+                          }
+                        </select>
+                      </td>
+                      <td class="px-4 py-4 whitespace-nowrap text-right">
+                        <div class="flex items-center justify-end gap-2">
+                          <button
+                            (click)="viewDetails(submission)"
+                            class="text-gray-400 hover:text-blue-600"
+                            title="View details"
+                          >
+                            <ui-icon name="eye" class="h-4 w-4" />
+                          </button>
+                          <button
+                            (click)="deleteSubmission(submission)"
+                            class="text-gray-400 hover:text-red-600"
+                            title="Delete"
+                          >
+                            <ui-icon name="trash" class="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            }
+          </div>
+
+          <!-- Pagination -->
+          @if (totalPages() > 1) {
+            <div class="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <p class="text-sm text-gray-500">
+                Showing {{ getStartIndex() }} - {{ getEndIndex() }} of {{ totalSubmissions() }}
+              </p>
+              <div class="flex items-center gap-2">
+                <ui-button variant="secondary" size="sm" [disabled]="page() === 0" (clicked)="previousPage()">
+                  Previous
+                </ui-button>
+                <span class="text-sm text-gray-600">Page {{ page() + 1 }} of {{ totalPages() }}</span>
+                <ui-button variant="secondary" size="sm" [disabled]="page() >= totalPages() - 1" (clicked)="nextPage()">
+                  Next
+                </ui-button>
+              </div>
+            </div>
+          }
+        } @else {
+          <!-- No policy selected -->
+          <div class="flex-1 flex items-center justify-center">
+            <div class="text-center">
+              <ui-icon name="inbox" class="mx-auto h-12 w-12 text-gray-400" />
+              <h3 class="mt-2 text-sm font-medium text-gray-900">Select a policy</h3>
+              <p class="mt-1 text-sm text-gray-500">
+                Choose a data collection policy from the left to view submissions
+              </p>
+            </div>
+          </div>
+        }
+      </ui-card>
+    </div>
+  </div>
+</div>
+
+<!-- Submission Details Modal -->
+<ui-modal
+  [open]="showDetailsModal()"
+  title="Submission Details"
+  size="lg"
+  (closed)="closeDetailsModal()"
+>
+  @if (selectedSubmission(); as submission) {
+    <div class="space-y-6">
+      <!-- Status and timestamp -->
+      <div class="flex items-center justify-between">
+        <span [class]="'inline-flex rounded-full px-3 py-1 text-sm font-semibold ' + getStatusColor(submission.status)">
+          {{ submission.status }}
+        </span>
+        <span class="text-sm text-gray-500">{{ formatDate(submission.createdAt) }}</span>
+      </div>
+
+      <!-- Collected Data -->
+      <div>
+        <h4 class="text-sm font-medium text-gray-700 mb-2">Collected Data</h4>
+        <div class="bg-gray-50 rounded-lg p-4">
+          <dl class="space-y-2">
+            @for (entry of submission.data | keyvalue; track entry.key) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">{{ entry.key }}</dt>
+                <dd class="w-2/3 text-sm text-gray-900">
+                  {{ typeof entry.value === 'object' ? (entry.value | json) : entry.value }}
+                </dd>
+              </div>
+            }
+          </dl>
+        </div>
+      </div>
+
+      <!-- Metadata -->
+      <div>
+        <h4 class="text-sm font-medium text-gray-700 mb-2">Metadata</h4>
+        <div class="bg-gray-50 rounded-lg p-4">
+          <dl class="space-y-2">
+            @if (submission.metadata.ipAddress) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">IP Address</dt>
+                <dd class="w-2/3 text-sm text-gray-900">{{ submission.metadata.ipAddress }}</dd>
+              </div>
+            }
+            @if (submission.metadata.country) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">Country</dt>
+                <dd class="w-2/3 text-sm text-gray-900">{{ submission.metadata.country }}</dd>
+              </div>
+            }
+            @if (submission.metadata.locale) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">Locale</dt>
+                <dd class="w-2/3 text-sm text-gray-900">{{ submission.metadata.locale }}</dd>
+              </div>
+            }
+            @if (submission.metadata.referrer) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">Referrer</dt>
+                <dd class="w-2/3 text-sm text-gray-900 truncate">{{ submission.metadata.referrer }}</dd>
+              </div>
+            }
+            @if (submission.metadata.userAgent) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">User Agent</dt>
+                <dd class="w-2/3 text-sm text-gray-900 truncate">{{ submission.metadata.userAgent }}</dd>
+              </div>
+            }
+            @if (submission.metadata.deviceType) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">Device</dt>
+                <dd class="w-2/3 text-sm text-gray-900">{{ submission.metadata.deviceType }}</dd>
+              </div>
+            }
+            @if (submission.metadata.browser) {
+              <div class="flex">
+                <dt class="w-1/3 text-sm font-medium text-gray-500">Browser</dt>
+                <dd class="w-2/3 text-sm text-gray-900">{{ submission.metadata.browser }}</dd>
+              </div>
+            }
+          </dl>
+        </div>
+      </div>
+
+      <!-- Tags (editable) -->
+      <div>
+        <h4 class="text-sm font-medium text-gray-700 mb-2">Tags</h4>
+        <div class="bg-gray-50 rounded-lg p-4">
+          <!-- Current tags -->
+          <div class="flex flex-wrap gap-2 mb-3">
+            @if (submission.tags && submission.tags.length > 0) {
+              @for (tag of submission.tags; track tag) {
+                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  {{ tag }}
+                  <button
+                    type="button"
+                    (click)="removeTag(submission, tag)"
+                    [disabled]="savingTags()"
+                    class="text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                  >
+                    <ui-icon name="close" class="h-3 w-3" />
+                  </button>
+                </span>
+              }
+            } @else {
+              <span class="text-sm text-gray-400">No tags</span>
+            }
+          </div>
+
+          <!-- Add new tag -->
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <input
+                type="text"
+                [(ngModel)]="newTagInput"
+                (keyup.enter)="addTag(submission)"
+                placeholder="Add a tag..."
+                list="tag-suggestions"
+                class="w-full text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <datalist id="tag-suggestions">
+                @for (tag of getSuggestedTags(submission); track tag) {
+                  <option [value]="tag">{{ tag }}</option>
+                }
+              </datalist>
+            </div>
+            <ui-button size="sm" [disabled]="!newTagInput.trim() || savingTags()" (clicked)="addTag(submission)">
+              {{ savingTags() ? 'Adding...' : 'Add' }}
+            </ui-button>
+          </div>
+
+          <!-- Suggested tags -->
+          @if (getSuggestedTags(submission).length > 0) {
+            <div class="mt-2">
+              <span class="text-xs text-gray-500">Suggestions:</span>
+              <div class="flex flex-wrap gap-1 mt-1">
+                @for (tag of getSuggestedTags(submission).slice(0, 5); track tag) {
+                  <button
+                    type="button"
+                    (click)="selectSuggestedTag(tag)"
+                    class="text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-600 hover:bg-gray-300"
+                  >
+                    {{ tag }}
+                  </button>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+
+      <!-- Notes (editable) -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-sm font-medium text-gray-700">Notes</h4>
+          @if (!editingNotes) {
+            <button
+              type="button"
+              (click)="startEditingNotes()"
+              class="text-xs text-blue-600 hover:text-blue-800"
+            >
+              {{ submission.notes ? 'Edit' : 'Add note' }}
+            </button>
+          }
+        </div>
+        @if (editingNotes) {
+          <div class="space-y-2">
+            <textarea
+              [(ngModel)]="notesInput"
+              rows="3"
+              placeholder="Add notes about this submission..."
+              class="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            ></textarea>
+            <div class="flex justify-end gap-2">
+              <ui-button variant="secondary" size="sm" (clicked)="cancelEditingNotes()">Cancel</ui-button>
+              <ui-button size="sm" (clicked)="saveNotes(submission)">Save</ui-button>
+            </div>
+          </div>
+        } @else if (submission.notes) {
+          <p class="text-sm text-gray-600 bg-gray-50 rounded-lg p-4">{{ submission.notes }}</p>
+        } @else {
+          <p class="text-sm text-gray-400 bg-gray-50 rounded-lg p-4 italic">No notes added</p>
+        }
+      </div>
+
+      <!-- Review info -->
+      @if (submission.reviewedAt) {
+        <div class="text-sm text-gray-500 border-t pt-4">
+          Reviewed by {{ submission.reviewedBy || 'Unknown' }} on {{ formatDate(submission.reviewedAt) }}
+        </div>
+      }
+
+      <!-- Actions -->
+      <div class="flex justify-between pt-4 border-t">
+        <div class="flex gap-2">
+          @if (submission.status !== 'Approved') {
+            <ui-button variant="secondary" size="sm" (clicked)="updateStatus(submission, 'Approved'); closeDetailsModal()">
+              <ui-icon name="check" class="h-4 w-4 mr-1" />
+              Approve
+            </ui-button>
+          }
+          @if (submission.status !== 'Rejected') {
+            <ui-button variant="secondary" size="sm" (clicked)="updateStatus(submission, 'Rejected'); closeDetailsModal()">
+              <ui-icon name="close" class="h-4 w-4 mr-1" />
+              Reject
+            </ui-button>
+          }
+          @if (submission.status === 'Approved' || submission.status === 'Rejected') {
+            <ui-button variant="secondary" size="sm" (clicked)="updateStatus(submission, 'New'); closeDetailsModal()">
+              <ui-icon name="refresh" class="h-4 w-4 mr-1" />
+              Reopen
+            </ui-button>
+          }
+          @if (submission.status !== 'Archived') {
+            <ui-button variant="secondary" size="sm" (clicked)="updateStatus(submission, 'Archived'); closeDetailsModal()">
+              <ui-icon name="archive" class="h-4 w-4 mr-1" />
+              Archive
+            </ui-button>
+          }
+        </div>
+        <ui-button variant="secondary" (clicked)="closeDetailsModal()">Close</ui-button>
+      </div>
+    </div>
+  }
+</ui-modal>

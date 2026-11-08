@@ -1,0 +1,24 @@
+<div [class]="cardClasses()">
+  @if (title() || subtitle()) {
+    <div class="px-4 py-5 sm:px-6 border-b border-gray-200">
+      @if (title()) {
+        <h3 class="text-lg font-medium leading-6 text-gray-900">
+          {{ title() }}
+        </h3>
+      }
+      @if (subtitle()) {
+        <p class="mt-1 max-w-2xl text-sm text-gray-500">
+          {{ subtitle() }}
+        </p>
+      }
+    </div>
+  }
+  <div [class]="bodyClasses()">
+    <ng-content></ng-content>
+  </div>
+  @if (hasFooter) {
+    <div class="px-4 py-4 sm:px-6 border-t border-gray-200 bg-gray-50">
+      <ng-content select="[card-footer]"></ng-content>
+    </div>
+  }
+</div>

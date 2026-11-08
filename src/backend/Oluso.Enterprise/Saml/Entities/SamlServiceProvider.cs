@@ -70,6 +70,11 @@ public class SamlServiceProvider : TenantEntity
     public string? NameIdFormat { get; set; }
 
     /// <summary>
+    /// Only users whose email address is verified get assertions for this SP. An email NameID always needs one.
+    /// </summary>
+    public bool RequireVerifiedEmail { get; set; }
+
+    /// <summary>
     /// JSON array of allowed claim types to include in assertions
     /// </summary>
     public string? AllowedClaimsJson { get; set; }

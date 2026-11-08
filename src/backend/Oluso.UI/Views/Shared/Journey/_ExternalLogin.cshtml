@@ -2,7 +2,7 @@
 @model ExternalLoginViewModel
 
 <div class="external-login-card">
-    <h1 class="title">Sign in with</h1>
+    <h1 class="title">@Localizer["external_login_title"]</h1>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
     {
@@ -14,25 +14,28 @@
         {
             @foreach (var provider in Model.Providers)
             {
+                var ptype = Oluso.UI.ViewModels.ProviderCss.TypeToken(provider.ProviderType);
+                var sslug = Oluso.UI.ViewModels.ProviderCss.SchemeSlug(provider.Scheme);
                 <form method="post" class="provider-form">
                     <input type="hidden" name="provider" value="@provider.Scheme" />
-                    <button type="submit" class="provider-button">
-                        @if (!string.IsNullOrEmpty(provider.IconUrl))
+                    <button type="submit" class="provider-button provider-@ptype provider-scheme-@sslug" data-provider="@ptype" data-scheme="@provider.Scheme">
+                        @await Html.PartialAsync("Journey/_ProviderIcon", new Oluso.UI.ViewModels.ProviderIconModel
                         {
-                            <img src="@provider.IconUrl" alt="" class="provider-icon" />
-                        }
-                        else
-                        {
-                            <span class="provider-icon-placeholder">
-                                @provider.DisplayName.FirstOrDefault()
-                            </span>
-                        }
+                            ProviderType = provider.ProviderType,
+                            IconUrl = provider.IconUrl,
+                            DisplayName = provider.DisplayName
+                        })
                         <span class="provider-name">@provider.DisplayName</span>
                     </button>
                 </form>
             }
         }
     </div>
+
+    @if (ViewData[Oluso.UI.Pages.Journey.IndexModel.OrgSignInUrlKey] is string { Length: > 0 } orgSignInUrl)
+    {
+        @await Html.PartialAsync("_OrgSignInLink", orgSignInUrl)
+    }
 </div>
 
 <style>
@@ -101,24 +104,5 @@
     text-align: left;
 }
 
-/* Provider-specific styling */
-.provider-button[data-provider="google"] {
-    border-color: #4285f4;
-}
-
-.provider-button[data-provider="microsoft"] {
-    border-color: #00a4ef;
-}
-
-.provider-button[data-provider="github"] {
-    border-color: #333;
-}
-
-.provider-button[data-provider="facebook"] {
-    border-color: #1877f2;
-}
-
-.provider-button[data-provider="apple"] {
-    border-color: #000;
-}
+/* Per-provider brand colours live in journey.css (button.provider-{type}). */
 </style>

@@ -1,7 +1,7 @@
+using Oluso.Core.Authorization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Oluso.Core.Api;
@@ -10,6 +10,7 @@ using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
 using Oluso.Core.Services;
 using Oluso.Enterprise.Saml.Configuration;
+using Oluso.Enterprise.Saml.Events;
 using Oluso.Enterprise.Saml.Entities;
 using Oluso.Enterprise.Saml.Services;
 using Oluso.Enterprise.Saml.Stores;
@@ -26,7 +27,7 @@ public class SamlServiceProvidersController : AdminBaseController
     private readonly ISamlServiceProviderStore _spStore;
     private readonly ISamlTenantSettingsService _samlTenantSettings;
     private readonly IOptions<SamlIdpOptions> _idpOptions;
-    private readonly IConfiguration _configuration;
+    private readonly IIssuerResolver _issuerResolver;
     private readonly IOlusoEventService _eventService;
     private readonly ILogger<SamlServiceProvidersController> _logger;
 
@@ -34,7 +35,7 @@ public class SamlServiceProvidersController : AdminBaseController
         ISamlServiceProviderStore spStore,
         ISamlTenantSettingsService samlTenantSettings,
         IOptions<SamlIdpOptions> idpOptions,
-        IConfiguration configuration,
+        IIssuerResolver issuerResolver,
         ITenantContext tenantContext,
         IOlusoEventService eventService,
         ILogger<SamlServiceProvidersController> logger) : base(tenantContext)
@@ -42,7 +43,7 @@ public class SamlServiceProvidersController : AdminBaseController
         _spStore = spStore;
         _samlTenantSettings = samlTenantSettings;
         _idpOptions = idpOptions;
-        _configuration = configuration;
+        _issuerResolver = issuerResolver;
         _eventService = eventService;
         _logger = logger;
     }
@@ -52,19 +53,17 @@ public class SamlServiceProvidersController : AdminBaseController
     /// The Enabled status is pulled from tenant settings in the database.
     /// </summary>
     [HttpGet("idp-info")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<IdpInfoResponse>> GetIdpInfo(CancellationToken cancellationToken)
     {
         var options = _idpOptions.Value;
-        var baseUrl = options.BaseUrl;
 
-        if (string.IsNullOrEmpty(baseUrl))
-        {
-            baseUrl = _configuration["Oluso:IssuerUri"]
-                ?? _configuration["Jwt:Issuer"]
-                ?? $"{Request.Scheme}://{Request.Host}";
-        }
-
-        baseUrl = baseUrl.TrimEnd('/');
+        // Resolve the tenant's own host first (per-tenant IssuerUri override →
+        // custom domain → subdomain → platform issuer → request host). Both
+        // options.BaseUrl and Oluso:IssuerUri are platform-wide, so a tenant on
+        // a custom domain/subdomain must not be handed those — IIssuerResolver
+        // gives the correct per-tenant SAML endpoints.
+        var baseUrl = (await _issuerResolver.GetIssuerAsync(cancellationToken)).TrimEnd('/');
 
         // Get the enabled status from tenant settings in the database
         var tenantSettings = TenantId != null
@@ -89,6 +88,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Check if an Entity ID is available (unique within tenant)
     /// </summary>
     [HttpGet("check-entity-id/{entityId}")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<EntityIdAvailabilityResponse>> CheckEntityIdAvailability(
         string entityId,
         [FromQuery] int? excludeId,
@@ -113,6 +113,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Get all SAML Service Providers
     /// </summary>
     [HttpGet]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<IEnumerable<SamlServiceProviderDto>>> GetAll(
         [FromQuery] bool includeDisabled = false,
         CancellationToken cancellationToken = default)
@@ -126,6 +127,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Get SAML Service Provider by ID
     /// </summary>
     [HttpGet("{id:int}")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<SamlServiceProviderDto>> GetById(int id, CancellationToken cancellationToken)
     {
         var provider = await _spStore.GetByIdAsync(id, cancellationToken);
@@ -139,6 +141,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Get SAML Service Provider by ID for editing (returns unmasked certificates)
     /// </summary>
     [HttpGet("{id:int}/edit")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<SamlServiceProviderEditDto>> GetForEdit(int id, CancellationToken cancellationToken)
     {
         var provider = await _spStore.GetByIdAsync(id, cancellationToken);
@@ -163,6 +166,7 @@ public class SamlServiceProvidersController : AdminBaseController
             EncryptionCertificate = provider.EncryptionCertificate,
             EncryptAssertions = provider.EncryptAssertions,
             NameIdFormat = provider.NameIdFormat,
+            RequireVerifiedEmail = provider.RequireVerifiedEmail,
             AllowedClaims = ParseJsonList(provider.AllowedClaimsJson),
             ClaimMappings = ParseJsonDictionary(provider.ClaimMappingsJson),
             SsoBinding = provider.SsoBinding,
@@ -178,6 +182,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Get SAML Service Provider by Entity ID
     /// </summary>
     [HttpGet("by-entity-id/{entityId}")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<SamlServiceProviderDto>> GetByEntityId(string entityId, CancellationToken cancellationToken)
     {
         var decoded = Uri.UnescapeDataString(entityId);
@@ -192,6 +197,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Create a new SAML Service Provider
     /// </summary>
     [HttpPost]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlServiceProviderDto>> Create(
         [FromBody] CreateSamlServiceProviderRequest request,
         CancellationToken cancellationToken)
@@ -215,6 +221,7 @@ public class SamlServiceProvidersController : AdminBaseController
             EncryptionCertificate = request.EncryptionCertificate,
             EncryptAssertions = request.EncryptAssertions ?? false,
             NameIdFormat = request.NameIdFormat,
+            RequireVerifiedEmail = request.RequireVerifiedEmail ?? false,
             AllowedClaimsJson = SerializeJsonList(request.AllowedClaims),
             ClaimMappingsJson = SerializeJsonDictionary(request.ClaimMappings),
             SsoBinding = request.SsoBinding ?? "POST",
@@ -249,9 +256,10 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Update a SAML Service Provider
     /// </summary>
     [HttpPut("{id:int}")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlServiceProviderDto>> Update(
         int id,
-        [FromBody] UpdateSamlServiceProviderRequest request,
+        [FromBody] SamlServiceProviderEditDto request,
         CancellationToken cancellationToken)
     {
         var existing = await _spStore.GetByIdAsync(id, cancellationToken);
@@ -261,40 +269,41 @@ public class SamlServiceProvidersController : AdminBaseController
         if (existing.NonEditable)
             return BadRequest(new { error = "This Service Provider cannot be modified" });
 
-        // Update properties
-        if (request.DisplayName != null) existing.DisplayName = request.DisplayName;
-        if (request.Description != null) existing.Description = request.Description;
-        if (request.Enabled.HasValue) existing.Enabled = request.Enabled.Value;
-        if (request.MetadataUrl != null) existing.MetadataUrl = request.MetadataUrl;
-        if (request.AssertionConsumerServiceUrl != null) existing.AssertionConsumerServiceUrl = request.AssertionConsumerServiceUrl;
-        if (request.SingleLogoutServiceUrl != null) existing.SingleLogoutServiceUrl = request.SingleLogoutServiceUrl;
-        if (request.EncryptAssertions.HasValue) existing.EncryptAssertions = request.EncryptAssertions.Value;
-        if (request.NameIdFormat != null) existing.NameIdFormat = request.NameIdFormat;
-        if (request.SsoBinding != null) existing.SsoBinding = request.SsoBinding;
-        if (request.SignResponses.HasValue) existing.SignResponses = request.SignResponses.Value;
-        if (request.SignAssertions.HasValue) existing.SignAssertions = request.SignAssertions.Value;
-        if (request.RequireSignedAuthnRequests.HasValue) existing.RequireSignedAuthnRequests = request.RequireSignedAuthnRequests.Value;
-        if (request.DefaultRelayState != null) existing.DefaultRelayState = request.DefaultRelayState;
+        existing.DisplayName = request.DisplayName;
+        existing.Description = request.Description;
+        existing.Enabled = request.Enabled;
+        existing.MetadataUrl = request.MetadataUrl;
+        existing.AssertionConsumerServiceUrl = request.AssertionConsumerServiceUrl;
+        existing.SingleLogoutServiceUrl = request.SingleLogoutServiceUrl;
+        existing.EncryptAssertions = request.EncryptAssertions;
+        existing.NameIdFormat = request.NameIdFormat;
+        existing.RequireVerifiedEmail = request.RequireVerifiedEmail;
+        existing.SsoBinding = request.SsoBinding;
+        existing.SignResponses = request.SignResponses;
+        existing.SignAssertions = request.SignAssertions;
+        existing.RequireSignedAuthnRequests = request.RequireSignedAuthnRequests;
+        existing.DefaultRelayState = request.DefaultRelayState;
 
-        // Handle certificates - preserve masked values
+        // Handle certificates - only update if not a masked/placeholder value
         if (request.SigningCertificate != null && !IsMaskedValue(request.SigningCertificate))
         {
             existing.SigningCertificate = request.SigningCertificate;
+        }
+        else if (request.SigningCertificate == null)
+        {
+            existing.SigningCertificate = null;
         }
         if (request.EncryptionCertificate != null && !IsMaskedValue(request.EncryptionCertificate))
         {
             existing.EncryptionCertificate = request.EncryptionCertificate;
         }
+        else if (request.EncryptionCertificate == null)
+        {
+            existing.EncryptionCertificate = null;
+        }
 
-        // Update JSON fields
-        if (request.AllowedClaims != null)
-        {
-            existing.AllowedClaimsJson = SerializeJsonList(request.AllowedClaims);
-        }
-        if (request.ClaimMappings != null)
-        {
-            existing.ClaimMappingsJson = SerializeJsonDictionary(request.ClaimMappings);
-        }
+        existing.AllowedClaimsJson = SerializeJsonList(request.AllowedClaims);
+        existing.ClaimMappingsJson = SerializeJsonDictionary(request.ClaimMappings);
 
         var updated = await _spStore.UpdateAsync(existing, cancellationToken);
 
@@ -319,6 +328,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Delete a SAML Service Provider
     /// </summary>
     [HttpDelete("{id:int}")]
+    [RequirePermission("saml.write")]
     public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
         var existing = await _spStore.GetByIdAsync(id, cancellationToken);
@@ -351,6 +361,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Toggle Service Provider enabled status
     /// </summary>
     [HttpPost("{id:int}/toggle")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlServiceProviderDto>> Toggle(int id, CancellationToken cancellationToken)
     {
         var existing = await _spStore.GetByIdAsync(id, cancellationToken);
@@ -371,6 +382,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Test SP configuration by fetching metadata (if URL provided)
     /// </summary>
     [HttpPost("{id:int}/test")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<TestSpResult>> TestServiceProvider(int id, CancellationToken cancellationToken)
     {
         var provider = await _spStore.GetByIdAsync(id, cancellationToken);
@@ -460,6 +472,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Uses tenant context from X-Tenant-Id header.
     /// </summary>
     [HttpGet("idp-configuration")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<SamlIdpConfigurationDto>> GetIdpConfiguration(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -487,8 +500,9 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Uses tenant context from X-Tenant-Id header.
     /// </summary>
     [HttpPut("idp-configuration")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlIdpConfigurationDto>> UpdateIdpConfiguration(
-        [FromBody] UpdateSamlIdpConfigurationRequest request,
+        [FromBody] SamlIdpConfigurationDto request,
         CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -500,10 +514,8 @@ public class SamlServiceProvidersController : AdminBaseController
         {
             var settings = await _samlTenantSettings.UpdateSettingsAsync(TenantId, s =>
             {
-                if (request.Enabled.HasValue)
-                    s.Enabled = request.Enabled.Value;
-                if (request.LoginJourneyName != null)
-                    s.LoginJourneyName = request.LoginJourneyName == "" ? null : request.LoginJourneyName;
+                s.Enabled = request.Enabled;
+                s.LoginJourneyName = string.IsNullOrEmpty(request.LoginJourneyName) ? null : request.LoginJourneyName;
             }, cancellationToken);
 
             _logger.LogInformation("Updated SAML IdP configuration for tenant: {TenantId}", TenantId);
@@ -528,6 +540,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Get the current signing certificate info for the tenant
     /// </summary>
     [HttpGet("idp-certificate/signing")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<SamlCertificateInfoDto>> GetSigningCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -544,6 +557,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Get the current encryption certificate info for the tenant
     /// </summary>
     [HttpGet("idp-certificate/encryption")]
+    [RequirePermission("saml.read")]
     public async Task<ActionResult<SamlCertificateInfoDto>> GetEncryptionCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -560,6 +574,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Generate a new signing certificate for the tenant
     /// </summary>
     [HttpPost("idp-certificate/signing/generate")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlCertificateInfoDto>> GenerateSigningCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -575,6 +590,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Generate a new encryption certificate for the tenant
     /// </summary>
     [HttpPost("idp-certificate/encryption/generate")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlCertificateInfoDto>> GenerateEncryptionCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -590,8 +606,9 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Upload a signing certificate for the tenant
     /// </summary>
     [HttpPost("idp-certificate/signing/upload")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlCertificateInfoDto>> UploadSigningCertificate(
-        [FromBody] UploadCertificateRequest request,
+        [FromBody] SamlUploadCertificateRequest request,
         CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -618,8 +635,9 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Upload an encryption certificate for the tenant
     /// </summary>
     [HttpPost("idp-certificate/encryption/upload")]
+    [RequirePermission("saml.write")]
     public async Task<ActionResult<SamlCertificateInfoDto>> UploadEncryptionCertificate(
-        [FromBody] UploadCertificateRequest request,
+        [FromBody] SamlUploadCertificateRequest request,
         CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -646,6 +664,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Reset signing certificate to use global certificate
     /// </summary>
     [HttpPost("idp-certificate/signing/reset")]
+    [RequirePermission("saml.write")]
     public async Task<IActionResult> ResetSigningCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -661,6 +680,7 @@ public class SamlServiceProvidersController : AdminBaseController
     /// Reset encryption certificate to use global certificate
     /// </summary>
     [HttpPost("idp-certificate/encryption/reset")]
+    [RequirePermission("saml.write")]
     public async Task<IActionResult> ResetEncryptionCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -706,6 +726,7 @@ public class SamlServiceProvidersController : AdminBaseController
         HasEncryptionCertificate = !string.IsNullOrEmpty(provider.EncryptionCertificate),
         EncryptAssertions = provider.EncryptAssertions,
         NameIdFormat = provider.NameIdFormat,
+        RequireVerifiedEmail = provider.RequireVerifiedEmail,
         AllowedClaims = ParseJsonList(provider.AllowedClaimsJson),
         ClaimMappings = ParseJsonDictionary(provider.ClaimMappingsJson),
         SsoBinding = provider.SsoBinding,
@@ -783,6 +804,7 @@ public class SamlServiceProviderDto
     public bool HasEncryptionCertificate { get; set; }
     public bool EncryptAssertions { get; set; }
     public string? NameIdFormat { get; set; }
+    public bool RequireVerifiedEmail { get; set; }
     public List<string>? AllowedClaims { get; set; }
     public Dictionary<string, string>? ClaimMappings { get; set; }
     public string SsoBinding { get; set; } = "POST";
@@ -810,6 +832,7 @@ public class SamlServiceProviderEditDto
     public string? EncryptionCertificate { get; set; }
     public bool EncryptAssertions { get; set; }
     public string? NameIdFormat { get; set; }
+    public bool RequireVerifiedEmail { get; set; }
     public List<string>? AllowedClaims { get; set; }
     public Dictionary<string, string>? ClaimMappings { get; set; }
     public string SsoBinding { get; set; } = "POST";
@@ -833,27 +856,7 @@ public class CreateSamlServiceProviderRequest
     public string? EncryptionCertificate { get; set; }
     public bool? EncryptAssertions { get; set; }
     public string? NameIdFormat { get; set; }
-    public List<string>? AllowedClaims { get; set; }
-    public Dictionary<string, string>? ClaimMappings { get; set; }
-    public string? SsoBinding { get; set; }
-    public bool? SignResponses { get; set; }
-    public bool? SignAssertions { get; set; }
-    public bool? RequireSignedAuthnRequests { get; set; }
-    public string? DefaultRelayState { get; set; }
-}
-
-public class UpdateSamlServiceProviderRequest
-{
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Enabled { get; set; }
-    public string? MetadataUrl { get; set; }
-    public string? AssertionConsumerServiceUrl { get; set; }
-    public string? SingleLogoutServiceUrl { get; set; }
-    public string? SigningCertificate { get; set; }
-    public string? EncryptionCertificate { get; set; }
-    public bool? EncryptAssertions { get; set; }
-    public string? NameIdFormat { get; set; }
+    public bool? RequireVerifiedEmail { get; set; }
     public List<string>? AllowedClaims { get; set; }
     public Dictionary<string, string>? ClaimMappings { get; set; }
     public string? SsoBinding { get; set; }
@@ -875,12 +878,6 @@ public class SamlIdpConfigurationDto
     public string? LoginJourneyName { get; set; }
 }
 
-public class UpdateSamlIdpConfigurationRequest
-{
-    public bool? Enabled { get; set; }
-    public string? LoginJourneyName { get; set; }
-}
-
 public class SamlCertificateInfoDto
 {
     public string Source { get; set; } = "Global";
@@ -897,7 +894,7 @@ public class SamlCertificateInfoDto
     public bool HasCertificate { get; set; }
 }
 
-public class UploadCertificateRequest
+public class SamlUploadCertificateRequest
 {
     public string Base64Pfx { get; set; } = null!;
     public string? Password { get; set; }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Licensing;
+using Oluso.Admin.Dto.Features;
 
 namespace Oluso.Admin.Controllers;
 
@@ -56,12 +57,28 @@ public class FeaturesController : AdminBaseController
             };
         }
 
+        // Include module feature statuses for installed modules
+        foreach (var module in ModuleRegistry.Instance.GetRegisteredModules())
+        {
+            if (!features.ContainsKey(module.FeatureKey))
+            {
+                var result = await _featureGate.CheckFeatureAsync(module.FeatureKey, cancellationToken: cancellationToken);
+                features[module.FeatureKey] = new FeatureStatusDto
+                {
+                    Enabled = result.IsAllowed,
+                    DisplayName = module.DisplayName,
+                    Description = module.Description,
+                    Category = "Module"
+                };
+            }
+        }
+
         return Ok(new TenantFeaturesResponse
         {
             TenantId = TenantId ?? "default",
-            BillingEnabled = false, // No billing module installed by default
+            BillingEnabled = ModuleRegistry.Instance.IsRegistered("billing"),
             Features = features,
-            Limits = new Dictionary<string, LimitStatusDto>(), // No limits without billing
+            Limits = new Dictionary<string, LimitStatusDto>(),
             IsTrialing = false
         });
     }
@@ -103,6 +120,35 @@ public class FeaturesController : AdminBaseController
             Remaining = int.MaxValue,
             Reason = "Limit checking requires billing module"
         });
+    }
+
+    /// <summary>
+    /// Get installed modules with metadata
+    /// </summary>
+    [HttpGet("modules")]
+    public ActionResult<ModulesResponse> GetModules()
+    {
+        var modules = ModuleRegistry.Instance.GetRegisteredModules()
+            .Select(m => new ModuleInfoDto
+            {
+                FeatureKey = m.FeatureKey,
+                DisplayName = m.DisplayName,
+                Description = m.Description,
+                Version = m.Version,
+                Category = m.Category,
+                IconName = m.IconName,
+                Color = m.Color,
+                Author = new ModuleAuthorDto
+                {
+                    Name = m.Author.Name,
+                    Email = m.Author.Email,
+                    Url = m.Author.Url
+                },
+                Dependencies = m.Dependencies.ToList()
+            })
+            .ToList();
+
+        return Ok(new ModulesResponse { Modules = modules });
     }
 
     /// <summary>
@@ -151,6 +197,18 @@ public class FeaturesController : AdminBaseController
             new() { Key = "dedicated_support", DisplayName = "Dedicated Support", Description = "Dedicated support engineer", Category = "Support" },
             new() { Key = "sla", DisplayName = "SLA", Description = "Service level agreement", Category = "Support" }
         };
+
+        // Add installed module features
+        foreach (var module in ModuleRegistry.Instance.GetRegisteredModules())
+        {
+            definitions.Add(new FeatureDefinition
+            {
+                Key = module.FeatureKey,
+                DisplayName = module.DisplayName,
+                Description = module.Description,
+                Category = "Module"
+            });
+        }
 
         var limitDefinitions = new List<LimitDefinition>
         {
@@ -222,92 +280,3 @@ public class FeaturesController : AdminBaseController
         _ => "Other"
     };
 }
-
-#region DTOs
-
-public class TenantFeaturesResponse
-{
-    public string TenantId { get; set; } = null!;
-    public bool BillingEnabled { get; set; }
-    public Dictionary<string, FeatureStatusDto> Features { get; set; } = new();
-    public Dictionary<string, LimitStatusDto> Limits { get; set; } = new();
-    public PlanSummaryDto? Plan { get; set; }
-    public string? SubscriptionStatus { get; set; }
-    public string? CurrentPeriodEnd { get; set; }
-    public bool IsTrialing { get; set; }
-    public string? TrialEnd { get; set; }
-}
-
-public class PlanSummaryDto
-{
-    public string Id { get; set; } = null!;
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? BillingInterval { get; set; }
-}
-
-public class FeatureStatusDto
-{
-    public bool Enabled { get; set; }
-    public string? Value { get; set; }
-    public string DisplayName { get; set; } = null!;
-    public string Description { get; set; } = null!;
-    public string Category { get; set; } = null!;
-}
-
-public class LimitStatusDto
-{
-    public int Limit { get; set; }
-    public int Current { get; set; }
-    public int Remaining { get; set; }
-    public bool IsUnlimited { get; set; }
-    public string DisplayName { get; set; } = null!;
-    public double UsagePercentage { get; set; }
-}
-
-public class FeatureCheckResponse
-{
-    public string Feature { get; set; } = null!;
-    public bool IsEnabled { get; set; }
-    public string? Reason { get; set; }
-    public string? Value { get; set; }
-    public string? UpgradeUrl { get; set; }
-}
-
-public class LimitCheckResponse
-{
-    public string LimitType { get; set; } = null!;
-    public bool IsAllowed { get; set; }
-    public bool IsUnlimited { get; set; }
-    public int Limit { get; set; }
-    public int Current { get; set; }
-    public int Remaining { get; set; }
-    public string? Reason { get; set; }
-    public bool HasOverageCharge { get; set; }
-    public decimal? OveragePricePerUnit { get; set; }
-    public string? UpgradeUrl { get; set; }
-}
-
-public class FeatureDefinitionsResponse
-{
-    public List<FeatureDefinition> Features { get; set; } = new();
-    public List<LimitDefinition> Limits { get; set; } = new();
-}
-
-public class FeatureDefinition
-{
-    public string Key { get; set; } = null!;
-    public string DisplayName { get; set; } = null!;
-    public string Description { get; set; } = null!;
-    public string Category { get; set; } = null!;
-}
-
-public class LimitDefinition
-{
-    public string Key { get; set; } = null!;
-    public string DisplayName { get; set; } = null!;
-    public string Description { get; set; } = null!;
-    public string? Category { get; set; }
-}
-
-#endregion

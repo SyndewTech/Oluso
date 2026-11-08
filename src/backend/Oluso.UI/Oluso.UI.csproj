@@ -1,14 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Oluso.UI</RootNamespace>
 
     <!-- NuGet Package Metadata -->
     <PackageId>Oluso.UI</PackageId>
-    <Version>1.0.0</Version>
     <Authors>Your Name</Authors>
     <Company>Your Company</Company>
     <Description>Default UI views for Oluso User Journey Engine. Provides ready-to-use views for login, signup, MFA, and other authentication steps. Optional package - customize or replace with your own views.</Description>
@@ -25,6 +24,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
+
 
   <ItemGroup>
     <ProjectReference Include="..\Oluso\Oluso.csproj" />

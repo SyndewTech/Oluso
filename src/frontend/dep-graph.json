@@ -1,0 +1,1945 @@
+{
+  "graph": {
+    "nodes": {
+      "workspace-standalone": {
+        "name": "workspace-standalone",
+        "type": "app",
+        "data": {
+          "root": "apps/workspace-standalone",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "apps/workspace-standalone",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/apps/workspace-standalone/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@angular/build:application",
+              "outputs": [
+                "{options.outputPath}"
+              ],
+              "options": {
+                "outputPath": "dist/apps/workspace-standalone",
+                "browser": "apps/workspace-standalone/src/main.ts",
+                "tsConfig": "apps/workspace-standalone/tsconfig.app.json",
+                "assets": [
+                  {
+                    "glob": "**/*",
+                    "input": "apps/workspace-standalone/public"
+                  }
+                ],
+                "styles": [
+                  "apps/workspace-standalone/src/styles.css"
+                ]
+              },
+              "configurations": {
+                "production": {
+                  "budgets": [
+                    {
+                      "type": "initial",
+                      "maximumWarning": "500kb",
+                      "maximumError": "1mb"
+                    },
+                    {
+                      "type": "anyComponentStyle",
+                      "maximumWarning": "4kb",
+                      "maximumError": "8kb"
+                    }
+                  ],
+                  "outputHashing": "all"
+                },
+                "development": {
+                  "optimization": false,
+                  "extractLicenses": false,
+                  "sourceMap": true
+                }
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "serve": {
+              "continuous": true,
+              "executor": "@angular/build:dev-server",
+              "options": {
+                "port": 4202
+              },
+              "configurations": {
+                "production": {
+                  "buildTarget": "workspace-standalone:build:production"
+                },
+                "development": {
+                  "buildTarget": "workspace-standalone:build:development"
+                }
+              },
+              "defaultConfiguration": "development",
+              "parallelism": true
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            },
+            "test": {
+              "executor": "@angular/build:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "serve-static": {
+              "continuous": true,
+              "executor": "@nx/web:file-server",
+              "options": {
+                "buildTarget": "workspace-standalone:build",
+                "port": 4202,
+                "staticFilePath": "dist/apps/workspace-standalone/browser",
+                "spa": true
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "workspace-standalone",
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "projectType": "application",
+          "prefix": "workspace",
+          "sourceRoot": "apps/workspace-standalone/src",
+          "tags": [],
+          "implicitDependencies": []
+        }
+      },
+      "account-standalone": {
+        "name": "account-standalone",
+        "type": "app",
+        "data": {
+          "root": "apps/account-standalone",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "apps/account-standalone",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/apps/account-standalone/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@angular/build:application",
+              "outputs": [
+                "{options.outputPath}"
+              ],
+              "options": {
+                "outputPath": "dist/apps/account-standalone",
+                "browser": "apps/account-standalone/src/main.ts",
+                "tsConfig": "apps/account-standalone/tsconfig.app.json",
+                "assets": [
+                  {
+                    "glob": "**/*",
+                    "input": "apps/account-standalone/public"
+                  }
+                ],
+                "styles": [
+                  "apps/account-standalone/src/styles.css"
+                ]
+              },
+              "configurations": {
+                "production": {
+                  "budgets": [
+                    {
+                      "type": "initial",
+                      "maximumWarning": "500kb",
+                      "maximumError": "1mb"
+                    },
+                    {
+                      "type": "anyComponentStyle",
+                      "maximumWarning": "4kb",
+                      "maximumError": "8kb"
+                    }
+                  ],
+                  "outputHashing": "all"
+                },
+                "development": {
+                  "optimization": false,
+                  "extractLicenses": false,
+                  "sourceMap": true
+                }
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "serve": {
+              "continuous": true,
+              "executor": "@angular/build:dev-server",
+              "configurations": {
+                "production": {
+                  "buildTarget": "account-standalone:build:production"
+                },
+                "development": {
+                  "buildTarget": "account-standalone:build:development"
+                }
+              },
+              "defaultConfiguration": "development",
+              "options": {},
+              "parallelism": true
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            },
+            "test": {
+              "executor": "@angular/build:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "serve-static": {
+              "continuous": true,
+              "executor": "@nx/web:file-server",
+              "options": {
+                "buildTarget": "account-standalone:build",
+                "port": 4200,
+                "staticFilePath": "dist/apps/account-standalone/browser",
+                "spa": true
+              },
+              "configurations": {},
+              "parallelism": true
+            }
+          },
+          "name": "account-standalone",
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "projectType": "application",
+          "prefix": "account",
+          "sourceRoot": "apps/account-standalone/src",
+          "tags": [],
+          "implicitDependencies": []
+        }
+      },
+      "telemetry": {
+        "name": "telemetry",
+        "type": "lib",
+        "data": {
+          "root": "libs/plugins/telemetry",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/plugins/telemetry",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/plugins/telemetry/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/plugins/telemetry"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/plugins/telemetry/ng-package.json",
+                "tsConfig": "libs/plugins/telemetry/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/plugins/telemetry/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "telemetry",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/plugins/telemetry",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/plugins/telemetry/src",
+          "prefix": "telemetry",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "admin-standalone": {
+        "name": "admin-standalone",
+        "type": "app",
+        "data": {
+          "root": "apps/admin-standalone",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "apps/admin-standalone",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@angular/build:application",
+              "options": {
+                "browser": "apps/admin-standalone/src/main.ts",
+                "tsConfig": "apps/admin-standalone/tsconfig.app.json",
+                "assets": [
+                  {
+                    "glob": "**/*",
+                    "input": "apps/admin-standalone/public"
+                  }
+                ],
+                "styles": [
+                  "apps/admin-standalone/src/styles.css"
+                ],
+                "outputPath": "dist/admin-standalone"
+              },
+              "configurations": {
+                "production": {
+                  "budgets": [
+                    {
+                      "type": "initial",
+                      "maximumWarning": "500kB",
+                      "maximumError": "1MB"
+                    },
+                    {
+                      "type": "anyComponentStyle",
+                      "maximumWarning": "4kB",
+                      "maximumError": "8kB"
+                    }
+                  ],
+                  "outputHashing": "all"
+                },
+                "development": {
+                  "optimization": false,
+                  "extractLicenses": false,
+                  "sourceMap": true
+                }
+              },
+              "defaultConfiguration": "production",
+              "outputs": [
+                "{options.outputPath}"
+              ],
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "serve": {
+              "executor": "@angular/build:dev-server",
+              "configurations": {
+                "production": {
+                  "buildTarget": "admin-standalone:build:production"
+                },
+                "development": {
+                  "buildTarget": "admin-standalone:build:development"
+                }
+              },
+              "defaultConfiguration": "development",
+              "options": {},
+              "parallelism": true
+            },
+            "test": {
+              "executor": "@angular/build:unit-test",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            }
+          },
+          "name": "admin-standalone",
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "projectType": "application",
+          "sourceRoot": "apps/admin-standalone/src",
+          "prefix": "admin",
+          "generators": {},
+          "implicitDependencies": [],
+          "tags": []
+        }
+      },
+      "fido2": {
+        "name": "fido2",
+        "type": "lib",
+        "data": {
+          "root": "libs/plugins/fido2",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/plugins/fido2",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/plugins/fido2/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/plugins/fido2"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/plugins/fido2/ng-package.json",
+                "tsConfig": "libs/plugins/fido2/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/plugins/fido2/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "fido2",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/plugins/fido2",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/plugins/fido2/src",
+          "prefix": "fido2",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "ldap": {
+        "name": "ldap",
+        "type": "lib",
+        "data": {
+          "root": "libs/plugins/ldap",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/plugins/ldap",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/plugins/ldap/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/plugins/ldap"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/plugins/ldap/ng-package.json",
+                "tsConfig": "libs/plugins/ldap/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/plugins/ldap/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "ldap",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/plugins/ldap",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/plugins/ldap/src",
+          "prefix": "ldap",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "saml": {
+        "name": "saml",
+        "type": "lib",
+        "data": {
+          "root": "libs/plugins/saml",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/plugins/saml",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/plugins/saml/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/plugins/saml"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/plugins/saml/ng-package.json",
+                "tsConfig": "libs/plugins/saml/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/plugins/saml/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "saml",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/plugins/saml",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/plugins/saml/src",
+          "prefix": "saml",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "scim": {
+        "name": "scim",
+        "type": "lib",
+        "data": {
+          "root": "libs/plugins/scim",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/plugins/scim",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/plugins/scim/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/plugins/scim"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/plugins/scim/ng-package.json",
+                "tsConfig": "libs/plugins/scim/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/plugins/scim/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "scim",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/plugins/scim",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/plugins/scim/src",
+          "prefix": "scim",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "workspace-ui": {
+        "name": "workspace-ui",
+        "type": "lib",
+        "data": {
+          "root": "libs/workspace-ui",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/workspace-ui",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/workspace-ui/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "workspace-ui",
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/workspace-ui/src",
+          "prefix": "workspace",
+          "projectType": "library",
+          "tags": [],
+          "implicitDependencies": []
+        }
+      },
+      "account-ui": {
+        "name": "account-ui",
+        "type": "lib",
+        "data": {
+          "root": "libs/account-ui",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/account-ui",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/account-ui/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/account-ui"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/account-ui/ng-package.json",
+                "tsConfig": "libs/account-ui/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/account-ui/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "account-ui",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/account-ui",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/account-ui/src",
+          "prefix": "account",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "admin-ui": {
+        "name": "admin-ui",
+        "type": "lib",
+        "data": {
+          "root": "libs/admin-ui",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/admin-ui",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/admin-ui/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/admin-ui"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/admin-ui/ng-package.json",
+                "tsConfig": "libs/admin-ui/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/admin-ui/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "admin-ui",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/admin-ui",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/admin-ui/src",
+          "prefix": "admin",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "ui-core": {
+        "name": "ui-core",
+        "type": "lib",
+        "data": {
+          "root": "libs/ui-core",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/ui-core",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/ui-core/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/ui-core"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/ui-core/ng-package.json",
+                "tsConfig": "libs/ui-core/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/ui-core/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "ui-core",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/ui-core",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/ui-core/src",
+          "prefix": "ui",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "auth": {
+        "name": "auth",
+        "type": "lib",
+        "data": {
+          "root": "libs/auth",
+          "targets": {
+            "eslint:lint": {
+              "cache": true,
+              "options": {
+                "cwd": "libs/auth",
+                "command": "eslint ."
+              },
+              "inputs": [
+                "default",
+                "^default",
+                "{workspaceRoot}/eslint.config.mjs",
+                "{workspaceRoot}/libs/auth/eslint.config.mjs",
+                "{workspaceRoot}/tools/eslint-rules/**/*",
+                {
+                  "externalDependencies": [
+                    "eslint"
+                  ]
+                }
+              ],
+              "outputs": [
+                "{options.outputFile}"
+              ],
+              "metadata": {
+                "technologies": [
+                  "eslint"
+                ],
+                "description": "Runs ESLint on project",
+                "help": {
+                  "command": "npx eslint --help",
+                  "example": {
+                    "options": {
+                      "max-warnings": 0
+                    }
+                  }
+                }
+              },
+              "executor": "nx:run-commands",
+              "configurations": {},
+              "parallelism": true
+            },
+            "nx-release-publish": {
+              "executor": "@nx/js:release-publish",
+              "dependsOn": [
+                "^nx-release-publish"
+              ],
+              "options": {
+                "packageRoot": "dist/libs/auth"
+              },
+              "configurations": {},
+              "parallelism": true
+            },
+            "build": {
+              "executor": "@nx/angular:package",
+              "outputs": [
+                "{workspaceRoot}/dist/{projectRoot}"
+              ],
+              "options": {
+                "project": "libs/auth/ng-package.json",
+                "tsConfig": "libs/auth/tsconfig.lib.json"
+              },
+              "configurations": {
+                "production": {
+                  "tsConfig": "libs/auth/tsconfig.lib.prod.json"
+                },
+                "development": {}
+              },
+              "defaultConfiguration": "production",
+              "parallelism": true,
+              "cache": true,
+              "dependsOn": [
+                "^build"
+              ],
+              "inputs": [
+                "production",
+                "^production"
+              ]
+            },
+            "test": {
+              "executor": "@nx/angular:unit-test",
+              "options": {},
+              "configurations": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "^production"
+              ]
+            },
+            "lint": {
+              "executor": "@nx/eslint:lint",
+              "configurations": {},
+              "options": {},
+              "parallelism": true,
+              "cache": true,
+              "inputs": [
+                "default",
+                "{workspaceRoot}/.eslintrc.json",
+                "{workspaceRoot}/.eslintignore",
+                "{workspaceRoot}/eslint.config.mjs"
+              ]
+            }
+          },
+          "name": "auth",
+          "tags": [
+            "npm:public"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/auth",
+              "packageVersion": "0.0.1",
+              "isInPackageManagerWorkspaces": false
+            }
+          },
+          "$schema": "../../node_modules/nx/schemas/project-schema.json",
+          "sourceRoot": "libs/auth/src",
+          "prefix": "auth",
+          "projectType": "library",
+          "release": {
+            "version": {
+              "manifestRootsToUpdate": [
+                "dist/{projectRoot}"
+              ],
+              "currentVersionResolver": "git-tag",
+              "fallbackCurrentVersionResolver": "disk"
+            }
+          },
+          "implicitDependencies": []
+        }
+      },
+      "@oluso/access-management-frontend": {
+        "name": "@oluso/access-management-frontend",
+        "type": "app",
+        "data": {
+          "root": ".",
+          "name": "@oluso/access-management-frontend",
+          "includedScripts": [],
+          "tags": [
+            "npm:private"
+          ],
+          "metadata": {
+            "targetGroups": {},
+            "js": {
+              "packageName": "@oluso/access-management-frontend",
+              "packageVersion": "0.0.0",
+              "isInPackageManagerWorkspaces": true
+            }
+          },
+          "targets": {},
+          "implicitDependencies": []
+        }
+      }
+    },
+    "dependencies": {
+      "workspace-standalone": [
+        {
+          "source": "workspace-standalone",
+          "target": "auth",
+          "type": "static"
+        },
+        {
+          "source": "workspace-standalone",
+          "target": "workspace-ui",
+          "type": "static"
+        }
+      ],
+      "account-standalone": [
+        {
+          "source": "account-standalone",
+          "target": "auth",
+          "type": "static"
+        },
+        {
+          "source": "account-standalone",
+          "target": "account-ui",
+          "type": "static"
+        },
+        {
+          "source": "account-standalone",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "account-standalone",
+          "target": "fido2",
+          "type": "static"
+        }
+      ],
+      "telemetry": [
+        {
+          "source": "telemetry",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "telemetry",
+          "target": "admin-ui",
+          "type": "static"
+        }
+      ],
+      "admin-standalone": [
+        {
+          "source": "admin-standalone",
+          "target": "auth",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "admin-ui",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "fido2",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "ldap",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "saml",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "scim",
+          "type": "static"
+        },
+        {
+          "source": "admin-standalone",
+          "target": "telemetry",
+          "type": "static"
+        }
+      ],
+      "fido2": [
+        {
+          "source": "fido2",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "fido2",
+          "target": "admin-ui",
+          "type": "static"
+        }
+      ],
+      "ldap": [
+        {
+          "source": "ldap",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "ldap",
+          "target": "admin-ui",
+          "type": "static"
+        }
+      ],
+      "saml": [
+        {
+          "source": "saml",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "saml",
+          "target": "admin-ui",
+          "type": "static"
+        }
+      ],
+      "scim": [
+        {
+          "source": "scim",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "scim",
+          "target": "admin-ui",
+          "type": "static"
+        }
+      ],
+      "workspace-ui": [
+        {
+          "source": "workspace-ui",
+          "target": "ui-core",
+          "type": "static"
+        }
+      ],
+      "account-ui": [
+        {
+          "source": "account-ui",
+          "target": "ui-core",
+          "type": "static"
+        }
+      ],
+      "admin-ui": [
+        {
+          "source": "admin-ui",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "admin-ui",
+          "target": "auth",
+          "type": "static"
+        }
+      ],
+      "ui-core": [
+        {
+          "source": "ui-core",
+          "target": "auth",
+          "type": "static"
+        }
+      ],
+      "auth": [
+        {
+          "source": "auth",
+          "target": "ui-core",
+          "type": "static"
+        },
+        {
+          "source": "auth",
+          "target": "admin-ui",
+          "type": "static"
+        }
+      ],
+      "@oluso/access-management-frontend": []
+    }
+  }
+}

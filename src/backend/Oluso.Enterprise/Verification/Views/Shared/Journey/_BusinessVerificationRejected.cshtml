@@ -1,0 +1,23 @@
+@model BusinessVerificationRejectedViewModel
+
+<div class="business-verification-rejected">
+    <h2>@Localizer["business_verification_rejected_title"]</h2>
+    <div class="alert alert-danger" role="alert">
+        <p class="mb-1"><strong>@Model.BusinessName</strong></p>
+        <p class="mb-0">@Localizer[Model.ReasonKey]</p>
+    </div>
+
+    @if (Model.AllowRetry)
+    {
+        <form method="post">
+            <input type="hidden" name="action" value="start_over" />
+            <div class="d-grid">
+                <button type="submit" class="btn btn-primary">@Localizer["business_verification_rejected_retry"]</button>
+            </div>
+        </form>
+    }
+    else
+    {
+        <p class="text-muted">@Localizer["business_verification_rejected_contact"]</p>
+    }
+</div>

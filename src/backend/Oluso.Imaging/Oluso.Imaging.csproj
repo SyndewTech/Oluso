@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Package metadata -->
+    <PackageId>Oluso.Imaging</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Image resizing for Oluso public assets. Isolates the image library behind IImageResizer; the default implementation uses SkiaSharp (MIT-licensed) as a local/dev resize shim that mirrors Cloudflare Image Resizing's options. ImageSharp is intentionally NOT used — its Six Labors Split License is not compatible with commercial redistribution.</Description>
+    <PackageTags>identity;images;resize;skiasharp;cdn</PackageTags>
+
+    <!-- Generate XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SkiaSharp is MIT-licensed (unlike ImageSharp v3's split license). -->
+    <PackageReference Include="SkiaSharp" />
+    <!-- Native binaries for Linux containers (no fontconfig/GL deps needed for resize). -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Oluso.Core\Oluso.Core.csproj" />
+  </ItemGroup>
+
+</Project>

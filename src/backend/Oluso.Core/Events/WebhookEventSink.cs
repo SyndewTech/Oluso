@@ -11,6 +11,7 @@ public class WebhookEventSink : IOlusoEventSink
 {
     private readonly IWebhookDispatcher _dispatcher;
     private readonly IEnumerable<IWebhookPayloadMapper> _mappers;
+    private readonly IEnumerable<IEventPropertySource> _propertySources;
     private readonly ILogger<WebhookEventSink> _logger;
 
     public string Name => "Webhook";
@@ -18,10 +19,12 @@ public class WebhookEventSink : IOlusoEventSink
     public WebhookEventSink(
         IWebhookDispatcher dispatcher,
         IEnumerable<IWebhookPayloadMapper> mappers,
+        IEnumerable<IEventPropertySource> propertySources,
         ILogger<WebhookEventSink> logger)
     {
         _dispatcher = dispatcher;
         _mappers = mappers;
+        _propertySources = propertySources;
         _logger = logger;
     }
 
@@ -54,6 +57,7 @@ public class WebhookEventSink : IOlusoEventSink
                     ["event_id"] = evt.Id,
                     ["activity_id"] = evt.ActivityId ?? ""
                 },
+                evt.Origin,
                 cancellationToken);
 
             if (result.Success)
@@ -88,222 +92,28 @@ public class WebhookEventSink : IOlusoEventSink
     }
 
     /// <summary>
-    /// Default mapping that creates an external-safe payload from an event.
-    /// Excludes internal fields and sensitive data.
+    /// Default mapping using generated extractors — no manual switch expression.
+    /// Falls back to basic event info if no source can extract the event.
     /// </summary>
-    private static object DefaultMapper(OlusoEvent evt)
+    private object DefaultMapper(OlusoEvent evt)
     {
-        return evt switch
+        foreach (var source in _propertySources)
         {
-            UserRegisteredEvent e => new
+            var data = source.ExtractData(evt);
+            if (data != null)
             {
-                user_id = e.SubjectId,
-                email = e.Email,
-                username = e.Username,
-                created_at = e.Timestamp
-            },
-            UserSignedInEvent e => new
-            {
-                user_id = e.SubjectId,
-                username = e.Username,
-                client_id = e.ClientId,
-                authentication_method = e.AuthenticationMethod,
-                timestamp = e.Timestamp
-            },
-            UserSignInFailedEvent e => new
-            {
-                username = e.Username,
-                client_id = e.ClientId,
-                reason = e.FailureReason,
-                timestamp = e.Timestamp
-            },
-            UserSignedOutEvent e => new
-            {
-                user_id = e.SubjectId,
-                timestamp = e.Timestamp
-            },
-            UserUpdatedEvent e => new
-            {
-                user_id = e.SubjectId,
-                email = e.Email,
-                changed_fields = e.ChangedFields?.Keys.ToList(),
-                timestamp = e.Timestamp
-            },
-            UserDeletedEvent e => new
-            {
-                user_id = e.SubjectId,
-                deleted_by_admin = e.DeletedByAdmin,
-                timestamp = e.Timestamp
-            },
-            UserEmailVerifiedEvent e => new
-            {
-                user_id = e.SubjectId,
-                email = e.Email,
-                timestamp = e.Timestamp
-            },
-            UserPasswordChangedEvent e => new
-            {
-                user_id = e.SubjectId,
-                changed_by_admin = e.ChangedByAdmin,
-                timestamp = e.Timestamp
-            },
-            UserLockedOutEvent e => new
-            {
-                user_id = e.SubjectId,
-                reason = e.Reason,
-                lockout_end = e.LockoutEnd,
-                timestamp = e.Timestamp
-            },
-            TokenIssuedEvent e => new
-            {
-                user_id = e.SubjectId,
-                client_id = e.ClientId,
-                token_type = e.TokenType,
-                scopes = e.Scopes.ToList(),
-                timestamp = e.Timestamp
-            },
-            ConsentGrantedEvent e => new
-            {
-                user_id = e.SubjectId,
-                client_id = e.ClientId,
-                scopes = e.Scopes.ToList(),
-                remember = e.RememberConsent,
-                timestamp = e.Timestamp
-            },
-            ConsentDeniedEvent e => new
-            {
-                user_id = e.SubjectId,
-                client_id = e.ClientId,
-                timestamp = e.Timestamp
-            },
-            // Generic fallback - just expose safe fields
-            _ => new
-            {
-                event_type = evt.EventType,
-                timestamp = evt.Timestamp
+                // Add standard fields
+                data["event_type"] = evt.EventType;
+                data["timestamp"] = evt.Timestamp;
+                return data;
             }
+        }
+
+        // Generic fallback for unknown event types
+        return new
+        {
+            event_type = evt.EventType,
+            timestamp = evt.Timestamp
         };
     }
-}
-
-/// <summary>
-/// Core webhook event provider for built-in Oluso events.
-/// </summary>
-public class CoreWebhookEventProvider : IWebhookEventProvider
-{
-    public string ProviderId => "core";
-    public string DisplayName => "Oluso Core";
-
-    public IReadOnlyList<WebhookEventDefinition> GetEventDefinitions() => new List<WebhookEventDefinition>
-    {
-        // User events
-        new()
-        {
-            EventType = CoreWebhookEvents.UserCreated,
-            Category = WebhookEventCategories.User,
-            DisplayName = "User Created",
-            Description = "Triggered when a new user is registered or created",
-            EnabledByDefault = true,
-            PayloadSchema = """
-            {
-                "user_id": "string",
-                "email": "string",
-                "username": "string",
-                "created_at": "datetime"
-            }
-            """
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.UserUpdated,
-            Category = WebhookEventCategories.User,
-            DisplayName = "User Updated",
-            Description = "Triggered when a user's profile is updated",
-            EnabledByDefault = true
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.UserDeleted,
-            Category = WebhookEventCategories.User,
-            DisplayName = "User Deleted",
-            Description = "Triggered when a user account is deleted",
-            EnabledByDefault = true
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.UserEmailVerified,
-            Category = WebhookEventCategories.User,
-            DisplayName = "Email Verified",
-            Description = "Triggered when a user verifies their email address",
-            EnabledByDefault = false
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.UserPasswordChanged,
-            Category = WebhookEventCategories.User,
-            DisplayName = "Password Changed",
-            Description = "Triggered when a user changes their password",
-            EnabledByDefault = false
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.UserLockedOut,
-            Category = WebhookEventCategories.Security,
-            DisplayName = "User Locked Out",
-            Description = "Triggered when a user account is locked due to failed login attempts",
-            EnabledByDefault = true
-        },
-
-        // Authentication events
-        new()
-        {
-            EventType = CoreWebhookEvents.LoginSuccess,
-            Category = WebhookEventCategories.Authentication,
-            DisplayName = "Login Success",
-            Description = "Triggered when a user successfully logs in",
-            EnabledByDefault = false
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.LoginFailed,
-            Category = WebhookEventCategories.Authentication,
-            DisplayName = "Login Failed",
-            Description = "Triggered when a login attempt fails",
-            EnabledByDefault = false
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.Logout,
-            Category = WebhookEventCategories.Authentication,
-            DisplayName = "User Logout",
-            Description = "Triggered when a user logs out",
-            EnabledByDefault = false
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.TokenIssued,
-            Category = WebhookEventCategories.Authentication,
-            DisplayName = "Token Issued",
-            Description = "Triggered when an access token is issued",
-            EnabledByDefault = false
-        },
-
-        // Security events
-        new()
-        {
-            EventType = CoreWebhookEvents.ConsentGranted,
-            Category = WebhookEventCategories.Security,
-            DisplayName = "Consent Granted",
-            Description = "Triggered when a user grants consent to a client",
-            EnabledByDefault = false
-        },
-        new()
-        {
-            EventType = CoreWebhookEvents.ConsentRevoked,
-            Category = WebhookEventCategories.Security,
-            DisplayName = "Consent Revoked",
-            Description = "Triggered when a user revokes consent from a client",
-            EnabledByDefault = false
-        }
-    };
 }

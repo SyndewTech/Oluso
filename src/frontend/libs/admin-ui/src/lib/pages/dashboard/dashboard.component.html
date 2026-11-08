@@ -1,0 +1,226 @@
+<div class="space-y-6">
+  <!-- Page header -->
+  <div>
+    <h1 class="text-2xl font-semibold text-gray-900">Dashboard</h1>
+    <p class="mt-1 text-sm text-gray-500">
+      Welcome to the Admin Dashboard. Here's an overview of your system.
+    </p>
+  </div>
+
+  <!-- Loading state -->
+  @if (loading()) {
+    <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      @for (i of [1,2,3,4,5,6,7]; track i) {
+        <ui-card>
+          <div class="animate-pulse flex items-center">
+            <div class="flex-shrink-0">
+              <div class="rounded-md bg-gray-200 p-3 h-12 w-12"></div>
+            </div>
+            <div class="ml-5 flex-1">
+              <div class="h-4 bg-gray-200 rounded w-24 mb-2"></div>
+              <div class="h-6 bg-gray-200 rounded w-16"></div>
+            </div>
+          </div>
+        </ui-card>
+      }
+    </div>
+  }
+
+  <!-- Error state -->
+  @if (error()) {
+    <div class="rounded-md bg-red-50 p-4">
+      <div class="flex">
+        <ui-icon name="exclamation-triangle" class="h-5 w-5 text-red-400" />
+        <div class="ml-3">
+          <p class="text-sm font-medium text-red-800">{{ error() }}</p>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Stats grid -->
+  @if (!loading() && stats().length > 0) {
+    <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      @for (stat of stats(); track stat.id) {
+        <a [routerLink]="stat.link" [class]="'block ' + (stat.link ? 'cursor-pointer' : 'cursor-default')">
+          <ui-card [class]="stat.link ? 'hover:shadow-md transition-shadow' : ''">
+            <div class="flex items-center">
+              <div class="flex-shrink-0">
+                <div [class]="'rounded-md p-3 ' + stat.iconBgColor">
+                  <!-- Icon based on stat.icon -->
+                  @switch (stat.icon) {
+                    @case ('users') {
+                      <ui-icon name="users" class="h-6 w-6 text-white" />
+                    }
+                    @case ('window') {
+                      <ui-icon name="window" class="h-6 w-6 text-white" />
+                    }
+                    @case ('clock') {
+                      <ui-icon name="clock" class="h-6 w-6 text-white" />
+                    }
+                    @case ('login') {
+                      <ui-icon name="logout" class="h-6 w-6 text-white" />
+                    }
+                    @case ('map') {
+                      <ui-icon name="map" class="h-6 w-6 text-white" />
+                    }
+                    @case ('inbox') {
+                      <ui-icon name="inbox" class="h-6 w-6 text-white" />
+                    }
+                    @case ('shield-exclamation') {
+                      <ui-icon name="shield-check" class="h-6 w-6 text-white" />
+                    }
+                    @default {
+                      <ui-icon name="chart-bar" class="h-6 w-6 text-white" />
+                    }
+                  }
+                </div>
+              </div>
+              <div class="ml-5 w-0 flex-1">
+                <dl>
+                  <dt class="text-sm font-medium text-gray-500 truncate">
+                    {{ stat.title }}
+                  </dt>
+                  <dd class="flex items-baseline">
+                    <div class="text-2xl font-semibold text-gray-900">
+                      {{ stat.value }}
+                    </div>
+                    @if (stat.change) {
+                      <div
+                        class="ml-2 flex items-baseline text-sm font-semibold"
+                        [class.text-green-600]="stat.changeType === 'increase'"
+                        [class.text-red-600]="stat.changeType === 'decrease'"
+                        [class.text-gray-500]="stat.changeType === 'neutral'"
+                      >
+                        {{ stat.change }}
+                      </div>
+                    }
+                  </dd>
+                </dl>
+              </div>
+            </div>
+          </ui-card>
+        </a>
+      }
+    </div>
+  }
+
+  <!-- Quick actions -->
+  <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
+    <ui-card title="Quick Actions">
+      <div class="grid grid-cols-2 gap-4">
+        <a
+          routerLink="/clients"
+          class="relative rounded-lg border border-gray-300 bg-white p-4 shadow-sm hover:border-primary-500 hover:ring-1 hover:ring-primary-500 transition-all"
+        >
+          <div class="flex items-center">
+            <div class="flex-shrink-0">
+              <ui-icon name="window" class="h-6 w-6 text-gray-400" />
+            </div>
+            <div class="ml-4">
+              <p class="text-sm font-medium text-gray-900">Manage Clients</p>
+              <p class="text-sm text-gray-500">Configure OAuth applications</p>
+            </div>
+          </div>
+        </a>
+        <a
+          routerLink="/users"
+          class="relative rounded-lg border border-gray-300 bg-white p-4 shadow-sm hover:border-primary-500 hover:ring-1 hover:ring-primary-500 transition-all"
+        >
+          <div class="flex items-center">
+            <div class="flex-shrink-0">
+              <ui-icon name="users" class="h-6 w-6 text-gray-400" />
+            </div>
+            <div class="ml-4">
+              <p class="text-sm font-medium text-gray-900">Manage Users</p>
+              <p class="text-sm text-gray-500">View and manage users</p>
+            </div>
+          </div>
+        </a>
+        <a
+          routerLink="/identity-providers"
+          class="relative rounded-lg border border-gray-300 bg-white p-4 shadow-sm hover:border-primary-500 hover:ring-1 hover:ring-primary-500 transition-all"
+        >
+          <div class="flex items-center">
+            <div class="flex-shrink-0">
+              <ui-icon name="globe-alt" class="h-6 w-6 text-gray-400" />
+            </div>
+            <div class="ml-4">
+              <p class="text-sm font-medium text-gray-900">Identity Providers</p>
+              <p class="text-sm text-gray-500">Configure SSO connections</p>
+            </div>
+          </div>
+        </a>
+        <a
+          routerLink="/settings"
+          class="relative rounded-lg border border-gray-300 bg-white p-4 shadow-sm hover:border-primary-500 hover:ring-1 hover:ring-primary-500 transition-all"
+        >
+          <div class="flex items-center">
+            <div class="flex-shrink-0">
+              <ui-icon name="cog" class="h-6 w-6 text-gray-400" />
+            </div>
+            <div class="ml-4">
+              <p class="text-sm font-medium text-gray-900">Settings</p>
+              <p class="text-sm text-gray-500">Configure system settings</p>
+            </div>
+          </div>
+        </a>
+      </div>
+    </ui-card>
+
+    <!-- Recent activity: newest audit entries for this tenant -->
+    <ui-card title="Recent Activity">
+      <div class="flow-root">
+        @switch (activityState()) {
+          @case ('loading') {
+            <p class="text-sm text-gray-500">Loading…</p>
+          }
+          @case ('unavailable') {
+            <p class="text-sm text-gray-500">Audit logging is not enabled on this deployment.</p>
+          }
+          @case ('forbidden') {
+            <p class="text-sm text-gray-500">You don't have permission to view the activity log.</p>
+          }
+          @case ('error') {
+            <p class="text-sm text-gray-500">Couldn't load recent activity.</p>
+          }
+          @default {
+            @if (recentActivity().length === 0) {
+              <p class="text-sm text-gray-500">No activity recorded yet.</p>
+            } @else {
+              <ul class="-my-3 divide-y divide-gray-100">
+                @for (entry of recentActivity(); track entry.id) {
+                  <li class="flex items-start gap-3 py-3">
+                    <span class="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full"
+                          [class.bg-green-500]="entry.success"
+                          [class.bg-red-500]="!entry.success"></span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-sm text-gray-900 truncate">
+                        <span class="font-medium">{{ actionLabel(entry.action) }}</span>
+                        @if (entry.subjectName || entry.subjectId) {
+                          <span class="text-gray-500"> · {{ entry.subjectName || entry.subjectId }}</span>
+                        }
+                      </p>
+                      <p class="text-xs text-gray-500 truncate">
+                        {{ entry.category }}@if (entry.clientId) { · {{ entry.clientId }} }@if (entry.ipAddress) { · {{ entry.ipAddress }} }
+                      </p>
+                    </div>
+                    <span class="flex-shrink-0 text-xs text-gray-400 whitespace-nowrap">{{ relativeTime(entry.timestamp) }}</span>
+                  </li>
+                }
+              </ul>
+              <div class="mt-4 text-right">
+                <a routerLink="/audit-logs" class="text-sm font-medium text-primary-600 hover:text-primary-700">View all activity</a>
+              </div>
+            }
+          }
+        }
+      </div>
+    </ui-card>
+  </div>
+
+  <!-- Plugin dashboard widgets -->
+  @for (widget of dashboardWidgets(); track widget.id) {
+    <ng-container [ngComponentOutlet]="widget.component"></ng-container>
+  }
+</div>

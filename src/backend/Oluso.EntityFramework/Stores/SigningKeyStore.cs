@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Oluso.Core;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Storage;
 
 namespace Oluso.EntityFramework.Stores;
 
@@ -51,15 +53,15 @@ public class SigningKeyStore : ISigningKeyStore
         CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;
-        var query = _context.SigningKeys
-            .Where(k => k.Status == SigningKeyStatus.Active &&
-                        (k.ActivatedAt == null || k.ActivatedAt <= now) &&
-                        (k.ExpiresAt == null || k.ExpiresAt > now));
+        var query = Active(_context.SigningKeys, now);
+
+        // The named tenant's own keys, whatever tenant the request was routed to: the caller chose the tenant.
+        var namedTenant = Active(_context.SigningKeys.IgnoreQueryFilters(), now);
 
         // Prefer client-specific, then tenant-specific, then global
         if (!string.IsNullOrEmpty(clientId))
         {
-            var clientKey = await query
+            var clientKey = await namedTenant
                 .FirstOrDefaultAsync(k => k.ClientId == clientId && k.TenantId == tenantId, cancellationToken);
             if (clientKey != null)
                 return clientKey;
@@ -67,10 +69,19 @@ public class SigningKeyStore : ISigningKeyStore
 
         if (!string.IsNullOrEmpty(tenantId))
         {
-            var tenantKey = await query
+            var tenantKey = await namedTenant
                 .FirstOrDefaultAsync(k => k.TenantId == tenantId && k.ClientId == null, cancellationToken);
             if (tenantKey != null)
                 return tenantKey;
+        }
+
+        // Fall back to _platform key (shared platform signing key)
+        if (tenantId != PlatformConstants.TenantId)
+        {
+            var platformKey = await query
+                .FirstOrDefaultAsync(k => k.TenantId == PlatformConstants.TenantId && k.ClientId == null, cancellationToken);
+            if (platformKey != null)
+                return platformKey;
         }
 
         // Global key
@@ -97,14 +108,24 @@ public class SigningKeyStore : ISigningKeyStore
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<SigningKey>> GetJwksKeysAsync(
+    public Task<IReadOnlyList<SigningKey>> GetJwksKeysAsync(
         string? tenantId,
         CancellationToken cancellationToken = default)
+        => GetJwksKeysAsync(tenantId, TimeSpan.Zero, cancellationToken);
+
+    public async Task<IReadOnlyList<SigningKey>> GetJwksKeysAsync(
+        string? tenantId,
+        TimeSpan verificationGrace,
+        CancellationToken cancellationToken = default)
     {
+        var cutoff = DateTime.UtcNow - verificationGrace;
         return await _context.SigningKeys
             .Where(k => k.IncludeInJwks &&
+                        // Data-protection keys protect stored values; they never sign or verify tokens.
+                        (k.ClientId == null || !k.ClientId.StartsWith(DataProtectionKeys.ClientIdPrefix)) &&
                         (k.TenantId == tenantId || k.TenantId == null) &&
-                        k.CanVerify)
+                        k.Status != SigningKeyStatus.Revoked &&
+                        (k.ExpiresAt == null || k.ExpiresAt > cutoff))
             .OrderByDescending(k => k.CreatedAt)
             .ToListAsync(cancellationToken);
     }
@@ -139,16 +160,17 @@ public class SigningKeyStore : ISigningKeyStore
         string? clientId = null,
         CancellationToken cancellationToken = default)
     {
-        // For now, return a default config - could be stored in database
-        await Task.CompletedTask;
+        var config = await _context.KeyRotationConfigs
+            .FirstOrDefaultAsync(k => k.TenantId == tenantId && k.ClientId == clientId, cancellationToken);
+
+        if (config != null)
+            return config;
+
+        // Return defaults if no config exists yet
         return new KeyRotationConfig
         {
             TenantId = tenantId,
-            ClientId = clientId,
-            Algorithm = "RS256",
-            KeySize = 2048,
-            KeyLifetimeDays = 90,
-            RotationLeadDays = 14
+            ClientId = clientId
         };
     }
 
@@ -156,7 +178,55 @@ public class SigningKeyStore : ISigningKeyStore
         KeyRotationConfig config,
         CancellationToken cancellationToken = default)
     {
-        // Could store in a separate table or as metadata
-        await Task.CompletedTask;
+        var existing = await _context.KeyRotationConfigs
+            .FirstOrDefaultAsync(k => k.TenantId == config.TenantId && k.ClientId == config.ClientId, cancellationToken);
+
+        if (existing != null)
+        {
+            existing.Enabled = config.Enabled;
+            existing.KeyType = config.KeyType;
+            existing.Algorithm = config.Algorithm;
+            existing.KeySize = config.KeySize;
+            existing.KeyLifetimeDays = config.KeyLifetimeDays;
+            existing.RotationLeadDays = config.RotationLeadDays;
+            existing.GracePeriodDays = config.GracePeriodDays;
+            existing.MaxKeys = config.MaxKeys;
+            existing.LastRotationAt = config.LastRotationAt;
+            existing.NextRotationAt = config.NextRotationAt;
+            existing.PreferredStorageProvider = config.PreferredStorageProvider;
+        }
+        else
+        {
+            _context.KeyRotationConfigs.Add(config);
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    private static IOrderedQueryable<SigningKey> Active(IQueryable<SigningKey> keys, DateTime now) =>
+        keys.Where(k => k.Status == SigningKeyStatus.Active &&
+                        (k.ActivatedAt == null || k.ActivatedAt <= now) &&
+                        (k.ExpiresAt == null || k.ExpiresAt > now))
+            .OrderByDescending(k => k.Priority)
+            .ThenByDescending(k => k.CreatedAt);
+
+    public Task<IReadOnlyList<SigningKey>> GetValidationKeysForTenantAndPlatformAsync(
+        string? tenantId,
+        CancellationToken cancellationToken = default)
+        => GetValidationKeysForTenantAndPlatformAsync(tenantId, TimeSpan.Zero, cancellationToken);
+
+    public async Task<IReadOnlyList<SigningKey>> GetValidationKeysForTenantAndPlatformAsync(
+        string? tenantId,
+        TimeSpan verificationGrace,
+        CancellationToken cancellationToken = default)
+    {
+        var cutoff = DateTime.UtcNow - verificationGrace;
+        return await _context.SigningKeys
+            .IgnoreQueryFilters()
+            .Where(k => (k.TenantId == tenantId || k.TenantId == PlatformConstants.TenantId)
+                && (k.ClientId == null || !k.ClientId.StartsWith(DataProtectionKeys.ClientIdPrefix))
+                && (k.Status == SigningKeyStatus.Active || k.Status == SigningKeyStatus.Expired)
+                && (k.ExpiresAt == null || k.ExpiresAt > cutoff))
+            .ToListAsync(cancellationToken);
     }
 }

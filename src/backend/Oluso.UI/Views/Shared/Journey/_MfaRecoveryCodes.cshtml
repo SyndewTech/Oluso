@@ -9,9 +9,9 @@
         </svg>
     </div>
 
-    <h1 class="title">Two-Factor Authentication Enabled</h1>
+    <h1 class="title">@Localizer["mfa_recovery_codes_title"]</h1>
     <p class="subtitle">
-        Save these recovery codes in a safe place. You can use them to access your account if you lose your @Model?.Provider.
+        @Localizer["mfa_recovery_codes_subtitle", Model!.Provider]
     </p>
 
     <div class="recovery-codes">
@@ -25,21 +25,21 @@
     </div>
 
     <div class="warning-box">
-        <strong>Important:</strong>
+        <strong>@Localizer["mfa_recovery_codes_warning_header"]</strong>
         <ul>
-            <li>Each code can only be used once</li>
-            <li>Store these codes securely - they won't be shown again</li>
-            <li>If you lose these codes and your authentication device, you may be locked out</li>
+            <li>@Localizer["mfa_recovery_codes_warning_item1"]</li>
+            <li>@Localizer["mfa_recovery_codes_warning_item2"]</li>
+            <li>@Localizer["mfa_recovery_codes_warning_item3"]</li>
         </ul>
     </div>
 
     <div class="actions">
         <button type="button" class="btn btn-outline-secondary" onclick="downloadCodes()">
-            Download Codes
+            @Localizer["mfa_recovery_codes_download_button"]
         </button>
         <form method="post" style="display: inline;">
             <input type="hidden" name="recovery_codes_confirmed" value="true" />
-            <button type="submit" class="btn btn-primary">I've Saved My Codes</button>
+            <button type="submit" class="btn btn-primary">@Localizer["mfa_recovery_codes_confirm_button"]</button>
         </form>
     </div>
 </div>

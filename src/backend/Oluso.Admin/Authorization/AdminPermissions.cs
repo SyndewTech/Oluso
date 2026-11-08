@@ -1,61 +1,6 @@
+using Oluso.Core.Authorization;
+
 namespace Oluso.Admin.Authorization;
-
-/// <summary>
-/// Interface for plugins to register their own permissions
-/// </summary>
-public interface IPermissionProvider
-{
-    /// <summary>
-    /// Get all permissions provided by this plugin
-    /// </summary>
-    IEnumerable<PermissionDefinition> GetPermissions();
-}
-
-/// <summary>
-/// Registry for collecting permissions from core and plugins
-/// </summary>
-public class PermissionRegistry
-{
-    private readonly List<PermissionDefinition> _pluginPermissions = new();
-    private static PermissionRegistry? _instance;
-
-    public static PermissionRegistry Instance => _instance ??= new PermissionRegistry();
-
-    /// <summary>
-    /// Register permissions from a plugin
-    /// </summary>
-    public void RegisterPermissions(IEnumerable<PermissionDefinition> permissions)
-    {
-        foreach (var permission in permissions)
-        {
-            if (!_pluginPermissions.Any(p => p.Name == permission.Name))
-            {
-                _pluginPermissions.Add(permission);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Register a single permission
-    /// </summary>
-    public void RegisterPermission(PermissionDefinition permission)
-    {
-        if (!_pluginPermissions.Any(p => p.Name == permission.Name))
-        {
-            _pluginPermissions.Add(permission);
-        }
-    }
-
-    /// <summary>
-    /// Get all registered plugin permissions
-    /// </summary>
-    public IReadOnlyList<PermissionDefinition> GetPluginPermissions() => _pluginPermissions.AsReadOnly();
-
-    /// <summary>
-    /// Clear all registered permissions (for testing)
-    /// </summary>
-    public void Clear() => _pluginPermissions.Clear();
-}
 
 /// <summary>
 /// Centralized definition of all admin API permissions.
@@ -70,6 +15,7 @@ public static class AdminPermissions
     {
         public const string Users = "Users";
         public const string Roles = "Roles";
+        public const string Entitlements = "Entitlements";
         public const string Clients = "Clients";
         public const string Resources = "Resources";
         public const string Scopes = "Scopes";
@@ -83,6 +29,7 @@ public static class AdminPermissions
         public const string AuditLogs = "Audit Logs";
         public const string Settings = "Settings";
         public const string Tenants = "Tenants";
+        public const string Teams = "Teams";
         public const string Organizations = "Organizations";
         public const string Dashboard = "Dashboard";
         public const string Plugins = "Plugins";
@@ -92,7 +39,13 @@ public static class AdminPermissions
         public const string Ldap = "LDAP";
         public const string Saml = "SAML";
         public const string Scim = "SCIM";
+        public const string Platform = "Platform";
+        public const string ModuleSeats = "Module Seats";
     }
+
+    // ============ Module Seats ============
+    public const string ModuleSeatsRead = "module_seats.read";
+    public const string ModuleSeatsWrite = "module_seats.write";
 
     // ============ Users ============
     public const string UsersRead = "users.read";
@@ -117,6 +70,11 @@ public static class AdminPermissions
     public const string ResourcesRead = "resources.read";
     public const string ResourcesWrite = "resources.write";
     public const string ResourcesDelete = "resources.delete";
+
+    // ============ Entitlements (tenant's own application permissions) ============
+    public const string EntitlementsRead = "entitlements.read";
+    public const string EntitlementsWrite = "entitlements.write";
+    public const string EntitlementsDelete = "entitlements.delete";
 
     // ============ API Scopes ============
     public const string ScopesRead = "scopes.read";
@@ -160,6 +118,7 @@ public static class AdminPermissions
     // ============ Audit Logs ============
     public const string AuditLogsRead = "audit_logs.read";
     public const string AuditLogsExport = "audit_logs.export";
+    public const string AuditLogsPurge = "audit_logs.purge";
 
     // ============ Settings ============
     public const string SettingsRead = "settings.read";
@@ -171,6 +130,12 @@ public static class AdminPermissions
     public const string TenantsDelete = "tenants.delete";
     public const string TenantsManageSettings = "tenants.manage_settings";
 
+    // ============ Teams ============
+    public const string TeamsRead = "teams.read";
+    public const string TeamsWrite = "teams.write";
+    public const string TeamsDelete = "teams.delete";
+    public const string TeamsManageMembers = "teams.manage_members";
+
     // ============ Organizations ============
     public const string OrganizationsRead = "organizations.read";
     public const string OrganizationsWrite = "organizations.write";
@@ -178,6 +143,13 @@ public static class AdminPermissions
     public const string OrganizationsManageMembers = "organizations.manage_members";
     public const string OrganizationsManageInvitations = "organizations.manage_invitations";
     public const string OrganizationsManageTenants = "organizations.manage_tenants";
+
+    // ============ Admin Access ============
+    /// <summary>
+    /// Permission that grants access to the admin dashboard.
+    /// Users without this permission should be redirected to workspace/account UI.
+    /// </summary>
+    public const string AdminAccess = "admin.access";
 
     // ============ Dashboard ============
     public const string DashboardView = "dashboard.view";
@@ -212,26 +184,21 @@ public static class AdminPermissions
     public const string ScimRead = "scim.read";
     public const string ScimWrite = "scim.write";
 
+    // ============ Platform (SuperAdmin only) ============
+    public const string PlatformClientsRead = "platform.clients.read";
+    public const string PlatformClientsWrite = "platform.clients.write";
+    public const string PlatformClientsDelete = "platform.clients.delete";
+
     /// <summary>
-    /// Get all defined permissions with their metadata (core + plugin permissions)
+    /// Get all defined permissions with their metadata. Reads directly from
+    /// <see cref="PermissionRegistry"/> — which is the single canonical
+    /// source after <c>AddOlusoAdmin</c> backfills core permissions at
+    /// startup. Previously this method merged core and plugin sources
+    /// manually, which only worked from inside Oluso.Admin and forced
+    /// every caller in other assemblies to repeat the merge.
     /// </summary>
     public static IReadOnlyList<PermissionDefinition> GetAll()
-    {
-        var corePermissions = GetCorePermissions();
-        var pluginPermissions = PermissionRegistry.Instance.GetPluginPermissions();
-
-        // Combine core and plugin permissions, avoiding duplicates
-        var all = new List<PermissionDefinition>(corePermissions);
-        foreach (var pluginPerm in pluginPermissions)
-        {
-            if (!all.Any(p => p.Name == pluginPerm.Name))
-            {
-                all.Add(pluginPerm);
-            }
-        }
-
-        return all;
-    }
+        => PermissionRegistry.Instance.GetPluginPermissions();
 
     /// <summary>
     /// Get core permissions only (without plugin permissions)
@@ -240,10 +207,14 @@ public static class AdminPermissions
     {
         return new List<PermissionDefinition>
         {
+            // Module Seats
+            new(ModuleSeatsRead, "View module seats", Categories.ModuleSeats, "View module seat assignments and usage"),
+            new(ModuleSeatsWrite, "Manage module seats", Categories.ModuleSeats, "Grant and revoke module seats for users"),
+
             // Users
             new(UsersRead, "View users", Categories.Users, "View user list and details"),
             new(UsersWrite, "Create/Edit users", Categories.Users, "Create new users and edit existing users"),
-            new(UsersDelete, "Delete users", Categories.Users, "Delete users from the system"),
+            new(UsersDelete, "Delete users", Categories.Users, "Permanently delete user accounts. Granted by name only: wildcards and SuperAdmin don't include it", RequiresExplicitGrant: true),
             new(UsersManageRoles, "Manage user roles", Categories.Users, "Assign and remove roles from users"),
             new(UsersManageClaims, "Manage user claims", Categories.Users, "Add and remove claims from users"),
             new(UsersImpersonate, "Impersonate users", Categories.Users, "Sign in as another user (audit logged)"),
@@ -263,6 +234,11 @@ public static class AdminPermissions
             new(ResourcesRead, "View resources", Categories.Resources, "View protected resources (RFC 8707)"),
             new(ResourcesWrite, "Create/Edit resources", Categories.Resources, "Create and edit protected resources"),
             new(ResourcesDelete, "Delete resources", Categories.Resources, "Delete protected resources"),
+
+            // Entitlements
+            new(EntitlementsRead, "View entitlements", Categories.Entitlements, "View the tenant's application entitlement catalog"),
+            new(EntitlementsWrite, "Create/Edit entitlements", Categories.Entitlements, "Define and edit application entitlements assignable to roles"),
+            new(EntitlementsDelete, "Delete entitlements", Categories.Entitlements, "Remove entitlements from the catalog"),
 
             // Scopes
             new(ScopesRead, "View API scopes", Categories.Scopes, "View API scope list and details"),
@@ -306,16 +282,23 @@ public static class AdminPermissions
             // Audit Logs
             new(AuditLogsRead, "View audit logs", Categories.AuditLogs, "View audit log entries"),
             new(AuditLogsExport, "Export audit logs", Categories.AuditLogs, "Export audit logs to file"),
+            new(AuditLogsPurge, "Purge audit logs", Categories.AuditLogs, "Delete this tenant's audit log entries older than the retention period"),
 
             // Settings
             new(SettingsRead, "View settings", Categories.Settings, "View system settings"),
             new(SettingsWrite, "Modify settings", Categories.Settings, "Modify system settings"),
 
-            // Tenants (SuperAdmin)
-            new(TenantsRead, "View tenants", Categories.Tenants, "View tenant list and details", RequiresSuperAdmin: true),
+            // Tenants
+            new(TenantsRead, "View tenants", Categories.Tenants, "View tenant list and details"),
             new(TenantsWrite, "Create/Edit tenants", Categories.Tenants, "Create and edit tenants", RequiresSuperAdmin: true),
             new(TenantsDelete, "Delete tenants", Categories.Tenants, "Delete tenants", RequiresSuperAdmin: true),
-            new(TenantsManageSettings, "Manage tenant settings", Categories.Tenants, "Configure tenant-specific settings", RequiresSuperAdmin: true),
+            new(TenantsManageSettings, "Manage tenant settings", Categories.Tenants, "Configure tenant-specific settings"),
+
+            // Teams
+            new(TeamsRead, "View teams", Categories.Teams, "View team list and details"),
+            new(TeamsWrite, "Create/Edit teams", Categories.Teams, "Create and edit teams; archive/restore"),
+            new(TeamsDelete, "Delete teams", Categories.Teams, "Permanently delete teams (archive is preferred)"),
+            new(TeamsManageMembers, "Manage team members", Categories.Teams, "Add, remove, or change role of team members"),
 
             // Organizations
             new(OrganizationsRead, "View organizations", Categories.Organizations, "View organization list and details"),
@@ -324,6 +307,9 @@ public static class AdminPermissions
             new(OrganizationsManageMembers, "Manage organization members", Categories.Organizations, "Add, remove, and update organization members"),
             new(OrganizationsManageInvitations, "Manage organization invitations", Categories.Organizations, "Create, revoke, and resend organization invitations"),
             new(OrganizationsManageTenants, "Manage organization tenants", Categories.Organizations, "Create and manage tenants within an organization"),
+
+            // Admin Access
+            new(AdminAccess, "Admin dashboard access", Categories.Dashboard, "Grants access to the admin dashboard. Users without this permission should use the workspace portal."),
 
             // Dashboard
             new(DashboardView, "View dashboard", Categories.Dashboard, "View the admin dashboard"),
@@ -342,21 +328,13 @@ public static class AdminPermissions
             new(TelemetryRead, "View telemetry", Categories.Telemetry, "View telemetry logs and metrics"),
 
             // FIDO2 / Passkeys
-            new(Fido2Read, "View passkeys", Categories.Fido2, "View FIDO2 passkey configurations and credentials"),
-            new(Fido2Write, "Manage passkeys", Categories.Fido2, "Configure FIDO2 passkey settings"),
-            new(Fido2Delete, "Delete passkeys", Categories.Fido2, "Delete user passkeys"),
+            // FIDO2, LDAP, SAML, SCIM permissions are registered by their enterprise packages
+            // via PermissionRegistry when AddFido2(), AddLdap(), AddSaml(), AddScim() are called
 
-            // LDAP
-            new(LdapRead, "View LDAP settings", Categories.Ldap, "View LDAP server configuration"),
-            new(LdapWrite, "Manage LDAP settings", Categories.Ldap, "Configure LDAP server settings"),
-
-            // SAML
-            new(SamlRead, "View SAML settings", Categories.Saml, "View SAML IdP configuration"),
-            new(SamlWrite, "Manage SAML settings", Categories.Saml, "Configure SAML IdP settings"),
-
-            // SCIM
-            new(ScimRead, "View SCIM settings", Categories.Scim, "View SCIM provisioning configuration"),
-            new(ScimWrite, "Manage SCIM settings", Categories.Scim, "Configure SCIM provisioning settings"),
+            // Platform (SuperAdmin only)
+            new(PlatformClientsRead, "View platform clients", Categories.Platform, "View platform-level OAuth clients", RequiresSuperAdmin: true),
+            new(PlatformClientsWrite, "Create/Edit platform clients", Categories.Platform, "Create and edit platform-level OAuth clients", RequiresSuperAdmin: true),
+            new(PlatformClientsDelete, "Delete platform clients", Categories.Platform, "Delete platform-level OAuth clients", RequiresSuperAdmin: true),
         };
     }
 
@@ -386,14 +364,3 @@ public static class AdminPermissions
         return GetAll().Select(p => p.Name).ToList();
     }
 }
-
-/// <summary>
-/// Represents a permission with its metadata
-/// </summary>
-public record PermissionDefinition(
-    string Name,
-    string DisplayName,
-    string Category,
-    string Description,
-    bool RequiresSuperAdmin = false
-);

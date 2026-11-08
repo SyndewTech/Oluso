@@ -1,0 +1,15 @@
+{
+  "name": "@oluso/journey-ui",
+  "version": "0.0.1",
+  "peerDependencies": {
+    "@angular/common": "^21.1.0",
+    "@angular/core": "^21.1.0",
+    "@oluso/auth": "*",
+    "@oluso/sdk": "*"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

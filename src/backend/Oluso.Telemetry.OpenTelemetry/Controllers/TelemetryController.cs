@@ -4,34 +4,39 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Telemetry;
+using Oluso.Telemetry.OpenTelemetry.Tracing;
 
 namespace Oluso.Telemetry.OpenTelemetry.Controllers;
 
 /// <summary>
-/// Admin API for telemetry data - metrics, logs, and traces
+/// Admin API for telemetry data - metrics, logs, and traces.
+/// Locked to SuperAdmin: log rows are not tenant-tagged at write time, so
+/// exposing this per-tenant would leak cross-tenant data.
 /// </summary>
 [Route("api/admin/telemetry")]
-[Authorize]
-[ApiController]
-public class TelemetryController : ControllerBase
+[Authorize(Policy = "SuperAdmin")]
+public class TelemetryController : AdminBaseController
 {
-    private readonly IAuditLogService? _auditLogService;
-    private readonly ITelemetryLogService? _telemetryLogService;
-    private readonly IServerSideSessionStore? _sessionStore;
+    private readonly IAuditLogService _auditLogService;
+    private readonly ITelemetryLogService _telemetryLogService;
+    private readonly ITelemetryTraceStore? _traceStore;
+    private readonly IServerSideSessionStore _sessionStore;
     private readonly IOlusoTelemetry _telemetry;
     private readonly ILogger<TelemetryController> _logger;
 
-    public TelemetryController(
+    public TelemetryController(ITenantContext tenantContext,
         IOlusoTelemetry telemetry,
         ILogger<TelemetryController> logger,
-        IAuditLogService? auditLogService = null,
-        ITelemetryLogService? telemetryLogService = null,
-        IServerSideSessionStore? sessionStore = null)
+        IAuditLogService auditLogService,
+        ITelemetryLogService telemetryLogService,
+        IServerSideSessionStore sessionStore,
+        ITelemetryTraceStore? traceStore = null) : base(tenantContext)
     {
         _telemetry = telemetry;
         _logger = logger;
         _auditLogService = auditLogService;
         _telemetryLogService = telemetryLogService;
+        _traceStore = traceStore;
         _sessionStore = sessionStore;
     }
 
@@ -242,16 +247,30 @@ public class TelemetryController : ControllerBase
     #region Logs
 
     /// <summary>
+    /// Configuration status of the log backend. Mirrors the trace status
+    /// endpoint so the admin UI can label whether logs are coming from the
+    /// in-process database, Loki, or nothing at all (page renders an
+    /// "unconfigured" notice in the last case).
+    /// </summary>
+    [HttpGet("logs/status")]
+    public ActionResult<LogBackendStatusDto> GetLogStatus() =>
+        Ok(new LogBackendStatusDto
+        {
+            IsConfigured = _telemetryLogService?.IsEnabled ?? false,
+            Backend = _telemetryLogService?.Backend ?? "none",
+        });
+
+    /// <summary>
     /// Get application logs
     /// </summary>
     [HttpGet("logs")]
-    public async Task<ActionResult<PagedResultDto<LogEntryDto>>> GetLogs(
+    public async Task<ActionResult<PagedResult<LogEntryDto>>> GetLogs(
         [FromQuery] TelemetryQueryDto query,
         CancellationToken cancellationToken = default)
     {
         if (_telemetryLogService?.IsEnabled != true)
         {
-            return Ok(new PagedResultDto<LogEntryDto>
+            return Ok(new PagedResult<LogEntryDto>
             {
                 Items = new List<LogEntryDto>(),
                 TotalCount = 0,
@@ -283,7 +302,7 @@ public class TelemetryController : ControllerBase
 
         var queryResult = await _telemetryLogService.QueryAsync(logQuery, cancellationToken);
 
-        var result = new PagedResultDto<LogEntryDto>
+        var result = new PagedResult<LogEntryDto>
         {
             Items = queryResult.Items.Select(l => new LogEntryDto
             {
@@ -293,8 +312,15 @@ public class TelemetryController : ControllerBase
                 Message = l.Message,
                 Category = l.Category,
                 Exception = l.Exception,
+                ExceptionType = l.ExceptionType,
+                StackTrace = l.StackTrace,
                 TraceId = l.TraceId,
                 SpanId = l.SpanId,
+                RequestPath = l.RequestPath,
+                RequestMethod = l.RequestMethod,
+                UserId = l.UserId,
+                ClientId = l.ClientId,
+                MachineName = l.MachineName,
                 Properties = !string.IsNullOrEmpty(l.Properties)
                     ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(l.Properties)
                     : null
@@ -342,32 +368,76 @@ public class TelemetryController : ControllerBase
     #region Traces
 
     /// <summary>
-    /// Get distributed traces
+    /// Configuration status of the trace backend. Used by the admin UI to
+    /// distinguish "no traces in window" from "tracing isn't configured here"
+    /// so dev/staging environments without Tempo render correctly.
+    /// </summary>
+    [HttpGet("traces/status")]
+    public ActionResult<TraceBackendStatusDto> GetTraceStatus() =>
+        Ok(new TraceBackendStatusDto
+        {
+            IsConfigured = _traceStore?.IsConfigured ?? false,
+            Backend = (_traceStore?.IsConfigured ?? false) ? "tempo" : "none",
+        });
+
+    /// <summary>
+    /// Search distributed traces in the configured backend (Tempo).
+    /// Returns an empty page when the backend is not configured or unreachable.
     /// </summary>
     [HttpGet("traces")]
-    public ActionResult<PagedResultDto<TraceDto>> GetTraces([FromQuery] TelemetryQueryDto query)
+    public async Task<ActionResult<PagedResult<TraceDto>>> GetTraces(
+        [FromQuery] TelemetryQueryDto query,
+        CancellationToken cancellationToken = default)
     {
-        // In a real implementation, query from a trace store (Jaeger, Zipkin, etc.)
-        var result = new PagedResultDto<TraceDto>
+        DateTime? startDate = null;
+        DateTime? endDate = null;
+        if (!string.IsNullOrEmpty(query.StartTime) && DateTime.TryParse(query.StartTime, out var parsedStart))
+            startDate = parsedStart;
+        if (!string.IsNullOrEmpty(query.EndTime) && DateTime.TryParse(query.EndTime, out var parsedEnd))
+            endDate = parsedEnd;
+
+        if (_traceStore == null)
         {
-            Items = new List<TraceDto>(),
-            TotalCount = 0,
+            return Ok(new PagedResult<TraceDto>
+            {
+                Items = new List<TraceDto>(),
+                TotalCount = 0,
+                Page = query.Page ?? 1,
+                PageSize = query.PageSize ?? 20,
+                TotalPages = 0,
+            });
+        }
+
+        var result = await _traceStore.SearchAsync(new TraceQuery
+        {
+            StartDate = startDate,
+            EndDate = endDate,
+            SearchTerm = query.SearchTerm,
             Page = query.Page ?? 1,
             PageSize = query.PageSize ?? 20,
-            TotalPages = 0
-        };
+        }, cancellationToken);
 
-        return Ok(result);
+        return Ok(new PagedResult<TraceDto>
+        {
+            Items = result.Items,
+            TotalCount = result.TotalCount,
+            Page = result.Page,
+            PageSize = result.PageSize,
+            TotalPages = result.TotalPages,
+        });
     }
 
     /// <summary>
-    /// Get a specific trace by ID
+    /// Get a specific trace by ID. Returns 404 when not found, the backend
+    /// is unreachable, or tracing isn't configured.
     /// </summary>
     [HttpGet("traces/{traceId}")]
-    public ActionResult<TraceDto> GetTrace(string traceId)
+    public async Task<ActionResult<TraceDto>> GetTrace(string traceId, CancellationToken cancellationToken = default)
     {
-        // In a real implementation, fetch from trace store
-        return NotFound();
+        if (_traceStore == null) return NotFound();
+        var trace = await _traceStore.GetByIdAsync(traceId, cancellationToken);
+        if (trace == null) return NotFound();
+        return Ok(trace);
     }
 
     #endregion
@@ -424,40 +494,27 @@ public class LogEntryDto
     public string Category { get; set; } = null!;
     public Dictionary<string, object>? Properties { get; set; }
     public string? Exception { get; set; }
+    public string? ExceptionType { get; set; }
+    public string? StackTrace { get; set; }
     public string? TraceId { get; set; }
     public string? SpanId { get; set; }
+    public string? RequestPath { get; set; }
+    public string? RequestMethod { get; set; }
+    public string? UserId { get; set; }
+    public string? ClientId { get; set; }
+    public string? MachineName { get; set; }
 }
 
-public class TraceDto
+public class TraceBackendStatusDto
 {
-    public string TraceId { get; set; } = null!;
-    public TraceSpanDto RootSpan { get; set; } = null!;
-    public List<TraceSpanDto> Spans { get; set; } = new();
-    public double Duration { get; set; }
-    public string StartTime { get; set; } = null!;
-    public string ServiceName { get; set; } = null!;
-    public string Status { get; set; } = null!;
+    public bool IsConfigured { get; set; }
+    public string Backend { get; set; } = "none";
 }
 
-public class TraceSpanDto
+public class LogBackendStatusDto
 {
-    public string TraceId { get; set; } = null!;
-    public string SpanId { get; set; } = null!;
-    public string? ParentSpanId { get; set; }
-    public string OperationName { get; set; } = null!;
-    public string ServiceName { get; set; } = null!;
-    public string StartTime { get; set; } = null!;
-    public double Duration { get; set; }
-    public string Status { get; set; } = null!;
-    public Dictionary<string, string> Tags { get; set; } = new();
-    public List<TraceEventDto> Events { get; set; } = new();
-}
-
-public class TraceEventDto
-{
-    public string Name { get; set; } = null!;
-    public string Timestamp { get; set; } = null!;
-    public Dictionary<string, object>? Attributes { get; set; }
+    public bool IsConfigured { get; set; }
+    public string Backend { get; set; } = "none";
 }
 
 public class TelemetryQueryDto
@@ -472,13 +529,6 @@ public class TelemetryQueryDto
     public int? PageSize { get; set; }
 }
 
-public class PagedResultDto<T>
-{
-    public List<T> Items { get; set; } = new();
-    public int TotalCount { get; set; }
-    public int Page { get; set; }
-    public int PageSize { get; set; }
-    public int TotalPages { get; set; }
-}
+
 
 #endregion

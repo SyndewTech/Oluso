@@ -598,7 +598,7 @@ public class SamlServiceProvider : ISamlServiceProvider
                 try
                 {
                     var certBytes = Convert.FromBase64String(samlConfig.SigningCertificate);
-                    var cert = new X509Certificate2(certBytes);
+                    var cert = X509CertificateLoader.LoadCertificate(certBytes);
                     config.SignatureValidationCertificates.Add(cert);
                 }
                 catch (Exception ex)

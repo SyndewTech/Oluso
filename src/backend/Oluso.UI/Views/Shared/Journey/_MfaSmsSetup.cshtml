@@ -2,9 +2,9 @@
 @model MfaSmsSetupViewModel
 
 <div class="mfa-card">
-    <h1 class="title">Set Up SMS Verification</h1>
+    <h1 class="title">@Localizer["mfa_sms_setup_title"]</h1>
     <p class="subtitle">
-        We'll send a verification code to your phone number to confirm it works.
+        @Localizer["mfa_sms_setup_subtitle"]
     </p>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
@@ -15,34 +15,25 @@
     @if (Model?.CodeSent == true)
     {
         <p class="code-sent-message">
-            We sent a verification code to <strong>@Model.MaskedPhone</strong>.
+            @Localizer["mfa_sms_setup_code_sent", Model.MaskedPhone ?? ""]
         </p>
 
         <form method="post" id="verifyForm">
             <input type="hidden" name="setup_sms_verify" value="true" />
 
             <div class="form-group">
-                <label for="setup_sms_code">Verification Code</label>
-                <input type="text"
-                       id="setup_sms_code"
-                       name="setup_sms_code"
-                       class="form-control code-input"
-                       pattern="[0-9]{6}"
-                       maxlength="6"
-                       autocomplete="one-time-code"
-                       inputmode="numeric"
-                       autofocus
-                       required />
+                <label>@Localizer["mfa_sms_setup_code_label"]</label>
+                <partial name="Journey/_OtpCodeInput" model='new Oluso.UI.ViewModels.OtpCodeInputViewModel(6, "setup_sms_code")' />
             </div>
 
-            <button type="submit" class="btn btn-primary btn-block">Verify and Enable</button>
+            <button type="submit" class="btn btn-primary btn-block">@Localizer["mfa_sms_setup_verify_button"]</button>
         </form>
 
         <form method="post" id="resendForm" class="resend-form">
             <input type="hidden" name="setup_sms_resend" value="true" />
             <p class="text-center">
-                Didn't receive the code?
-                <button type="submit" class="btn-link">Resend</button>
+                @Localizer["mfa_sms_setup_resend_prompt"]
+                <button type="submit" class="btn-link">@Localizer["mfa_sms_setup_resend_button"]</button>
             </p>
         </form>
     }
@@ -52,29 +43,29 @@
             <input type="hidden" name="setup_sms_phone" value="true" />
 
             <div class="form-group">
-                <label for="phone_number">Phone Number</label>
+                <label for="phone_number">@Localizer["mfa_sms_setup_phone_label"]</label>
                 <input type="tel"
                        id="phone_number"
                        name="phone_number"
                        class="form-control"
                        value="@Model?.PhoneNumber"
-                       placeholder="+1 (555) 123-4567"
+                       placeholder="@Localizer["mfa_sms_setup_phone_placeholder"].Value"
                        autocomplete="tel"
                        autofocus
                        required />
                 <small class="form-text text-muted">
-                    Include country code (e.g., +1 for US)
+                    @Localizer["mfa_sms_setup_phone_help"]
                 </small>
             </div>
 
-            <button type="submit" class="btn btn-primary btn-block">Send Verification Code</button>
+            <button type="submit" class="btn btn-primary btn-block">@Localizer["mfa_sms_setup_phone_button"]</button>
         </form>
     }
 
     <div class="back-link">
         <form method="post">
             <input type="hidden" name="setup_method_back" value="true" />
-            <button type="submit" class="btn-link">Choose a different method</button>
+            <button type="submit" class="btn-link">@Localizer["mfa_sms_setup_back_link"]</button>
         </form>
     </div>
 </div>

@@ -1,9 +1,17 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Protocols.Models;
+using Oluso.Admin.Controllers.Service;
+using Oluso.Admin.Dto.Clients;
+using Oluso.Admin.Services;
+
+using Oluso.Core.Services;
 
 namespace Oluso.Admin.Controllers;
 
@@ -14,21 +22,33 @@ namespace Oluso.Admin.Controllers;
 public class ClientsController : AdminBaseController
 {
     private readonly IClientStore _clientStore;
+    private readonly ICorsOriginsCacheInvalidator? _corsCache;
     private readonly ITenantSettingsProvider _tenantSettingsProvider;
+    private readonly IIssuerResolver _issuerResolver;
     private readonly IOlusoEventService _eventService;
+    private readonly IServiceApiScopeProvisioner _serviceApiScopeProvisioner;
+    private readonly IAuthorizationService _authorization;
     private readonly ILogger<ClientsController> _logger;
 
     public ClientsController(
         ITenantContext tenantContext,
         IClientStore clientStore,
         ITenantSettingsProvider tenantSettingsProvider,
+        IIssuerResolver issuerResolver,
         IOlusoEventService eventService,
-        ILogger<ClientsController> logger)
+        IServiceApiScopeProvisioner serviceApiScopeProvisioner,
+        IAuthorizationService authorization,
+        ILogger<ClientsController> logger,
+        ICorsOriginsCacheInvalidator? corsCache = null)
         : base(tenantContext)
     {
+        _corsCache = corsCache;
         _clientStore = clientStore;
         _tenantSettingsProvider = tenantSettingsProvider;
+        _issuerResolver = issuerResolver;
         _eventService = eventService;
+        _serviceApiScopeProvisioner = serviceApiScopeProvisioner;
+        _authorization = authorization;
         _logger = logger;
     }
 
@@ -39,10 +59,21 @@ public class ClientsController : AdminBaseController
     [RequirePermission(AdminPermissions.ClientsRead)]
     public async Task<ActionResult<IEnumerable<ClientListDto>>> GetClients(CancellationToken cancellationToken)
     {
-        var clients = await _clientStore.GetAllClientsAsync(cancellationToken);
+        var headerTenantId = HttpContext.Request.Headers["X-Tenant-Id"].FirstOrDefault();
+        var jwtTenantId = User.FindFirst("tenant_id")?.Value;
+        _logger.LogWarning(
+            "GetClients trace: header={Header}, jwt={Jwt}, ITenantContext.TenantId={Resolved}",
+            headerTenantId ?? "(none)", jwtTenantId ?? "(none)",
+            TenantContext.TenantId ?? "(null)");
+
+        var clients = (await _clientStore.GetAllClientsAsync(cancellationToken)).ToList();
+        _logger.LogWarning(
+            "GetClients trace: returned {Count} clients with tenants=[{Tenants}]",
+            clients.Count, string.Join(",", clients.Select(c => c.TenantId ?? "(null)").Distinct()));
 
         var result = clients.Select(c => new ClientListDto
         {
+            Id = c.Id,
             ClientId = c.ClientId,
             ClientName = c.ClientName,
             Description = c.Description,
@@ -58,13 +89,13 @@ public class ClientsController : AdminBaseController
     }
 
     /// <summary>
-    /// Get a specific client by ID
+    /// Get a specific client by database ID
     /// </summary>
-    [HttpGet("{clientId}")]
+    [HttpGet("{id:int}")]
     [RequirePermission(AdminPermissions.ClientsRead)]
-    public async Task<ActionResult<ClientDetailDto>> GetClient(string clientId, CancellationToken cancellationToken)
+    public async Task<ActionResult<ClientDetailDto>> GetClient(int id, CancellationToken cancellationToken)
     {
-        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
 
         if (client == null)
         {
@@ -72,6 +103,46 @@ public class ClientsController : AdminBaseController
         }
 
         return Ok(MapToDetailDto(client));
+    }
+
+    /// <summary>
+    /// Get the integration / connection details for a client — everything an
+    /// integrator needs to copy into their app (issuer, OIDC endpoints,
+    /// redirect URIs, scopes). Resolves the issuer through IIssuerResolver
+    /// so per-tenant CustomDomain / TokenSettings.IssuerUri overrides are
+    /// reflected here. Standard OIDC paths are derived from the issuer host
+    /// to match what /.well-known/openid-configuration actually serves.
+    /// </summary>
+    [HttpGet("{id:int}/connection")]
+    [RequirePermission(AdminPermissions.ClientsRead)]
+    public async Task<ActionResult<ClientConnectionDto>> GetClientConnection(int id, CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
+        if (client == null) return NotFound();
+
+        var issuer = (await _issuerResolver.GetIssuerAsync(cancellationToken)).TrimEnd('/');
+
+        return Ok(new ClientConnectionDto
+        {
+            ClientId = client.ClientId,
+            ClientName = client.ClientName,
+            RequireClientSecret = client.RequireClientSecret,
+            RequirePkce = client.RequirePkce,
+            AllowedGrantTypes = client.AllowedGrantTypes.Select(g => g.GrantType).ToList(),
+            AllowedScopes = client.AllowedScopes.Select(s => s.Scope).ToList(),
+            RedirectUris = client.RedirectUris.Select(r => r.RedirectUri).ToList(),
+            PostLogoutRedirectUris = client.PostLogoutRedirectUris.Select(r => r.PostLogoutRedirectUri).ToList(),
+            AllowedCorsOrigins = client.AllowedCorsOrigins.Select(c => c.Origin).ToList(),
+            IssuerUri = issuer,
+            DiscoveryUrl = $"{issuer}/.well-known/openid-configuration",
+            JwksUri = $"{issuer}/.well-known/jwks",
+            AuthorizationEndpoint = $"{issuer}/connect/authorize",
+            TokenEndpoint = $"{issuer}/connect/token",
+            UserInfoEndpoint = $"{issuer}/connect/userinfo",
+            EndSessionEndpoint = $"{issuer}/connect/endsession",
+            IntrospectionEndpoint = $"{issuer}/connect/introspect",
+            RevocationEndpoint = $"{issuer}/connect/revocation",
+        });
     }
 
     /// <summary>
@@ -105,7 +176,325 @@ public class ClientsController : AdminBaseController
             return BadRequest(new { error = claimValidationError });
         }
 
-        var client = new Client
+        // Validate authorize-parameter claim mappings don't target protected claims
+        var authParamError = ValidateAuthorizeParameters(request.AllowedAuthorizeParameters);
+        if (authParamError != null)
+        {
+            return BadRequest(new { error = authParamError });
+        }
+
+        // Validate mTLS settings
+        var mtlsError = ValidateMtlsSettings(
+            request.TokenEndpointAuthMethod,
+            request.TlsClientAuthSubjectDn,
+            request.TlsClientAuthSanDns,
+            request.TlsClientAuthSanUri,
+            request.TlsClientAuthSanEmail,
+            request.TlsClientAuthSanIp);
+        if (mtlsError != null)
+        {
+            return BadRequest(new { error = mtlsError });
+        }
+
+        // Provision the ApiScope rows the service scopes resolve against —
+        // without them token issuance fails with invalid_scope.
+        var serviceScopeError = ValidateServiceApiScopes(request.AllowedScopes, request.AllowedGrantTypes);
+        if (serviceScopeError != null)
+        {
+            return BadRequest(new { error = serviceScopeError });
+        }
+
+        if (await RejectUnheldSensitiveScopesAsync(request.AllowedScopes, Array.Empty<string>()) is { } sensitiveScopeError)
+        {
+            return sensitiveScopeError;
+        }
+
+        if (InvalidAllowedResource(request.AllowedResources) is { } resourceError)
+        {
+            return BadRequest(new { error = resourceError });
+        }
+
+        if (InvalidAllowedResource(request.IntrospectionResources, "Introspection resource") is { } introspectionResourceError)
+        {
+            return BadRequest(new { error = introspectionResourceError });
+        }
+
+        await _serviceApiScopeProvisioner.EnsureAsync(
+            request.AllowedScopes ?? Array.Empty<string>(), cancellationToken);
+
+        var client = MapFromCreateRequest(request);
+
+        // Map collections
+        MapCollectionsToClient(client, request);
+
+        // Generate client secret if needed
+        if (request.RequireClientSecret != false && !string.IsNullOrEmpty(request.ClientSecret))
+        {
+            client.ClientSecrets = new List<ClientSecret>
+            {
+                new ClientSecret
+                {
+                    Value = HashSecret(request.ClientSecret),
+                    LastThreeChars = GetLastThreeChars(request.ClientSecret)
+                }
+            };
+        }
+
+        var created = await _clientStore.AddClientAsync(client, cancellationToken);
+        if (_corsCache != null) await _corsCache.InvalidateCacheAsync(cancellationToken);
+
+        _logger.LogInformation("Created client {ClientId} for tenant {TenantId}",
+            client.ClientId, TenantId);
+
+        // Raise audit event
+        await _eventService.RaiseAsync(new AdminClientCreatedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = AdminUserId!,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = client.ClientId,
+            ResourceName = client.ClientName,
+            ClientId = client.ClientId
+        }, cancellationToken);
+
+        return CreatedAtAction(nameof(GetClient), new { id = created.Id }, MapToDetailDto(created));
+    }
+
+    /// <summary>
+    /// Update a client by database ID
+    /// </summary>
+    [HttpPut("{id:int}")]
+    [RequirePermission(AdminPermissions.ClientsWrite)]
+    public async Task<ActionResult<ClientDetailDto>> UpdateClient(
+        int id,
+        [FromBody] UpdateClientRequest request,
+        CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
+
+        if (client == null)
+        {
+            return NotFound();
+        }
+
+        return await UpdateClientInternal(client, request, cancellationToken);
+    }
+
+    private async Task<ActionResult<ClientDetailDto>> UpdateClientInternal(
+        Client client,
+        UpdateClientRequest request,
+        CancellationToken cancellationToken)
+    {
+        // Validate client configuration against tenant protocol settings
+        var protocolSettings = await _tenantSettingsProvider.GetProtocolSettingsAsync(cancellationToken);
+        var validationError = ValidateClientAgainstTenantSettings(request, protocolSettings, client);
+        if (validationError != null)
+        {
+            return BadRequest(new { error = validationError });
+        }
+
+        // Validate client claims don't contain protected claim types
+        var claimValidationError = ValidateClientClaims(request.Claims);
+        if (claimValidationError != null)
+        {
+            return BadRequest(new { error = claimValidationError });
+        }
+
+        // Validate authorize-parameter claim mappings don't target protected claims
+        var authParamError = ValidateAuthorizeParameters(request.AllowedAuthorizeParameters);
+        if (authParamError != null)
+        {
+            return BadRequest(new { error = authParamError });
+        }
+
+        // Validate mTLS settings — use the effective value after applying the update
+        var effectiveAuthMethod = request.TokenEndpointAuthMethod ?? client.TokenEndpointAuthMethod;
+        var effectiveSubjectDn = request.TlsClientAuthSubjectDn ?? client.TlsClientAuthSubjectDn;
+        var effectiveSanDns = request.TlsClientAuthSanDns ?? client.TlsClientAuthSanDns;
+        var effectiveSanUri = request.TlsClientAuthSanUri ?? client.TlsClientAuthSanUri;
+        var effectiveSanEmail = request.TlsClientAuthSanEmail ?? client.TlsClientAuthSanEmail;
+        var effectiveSanIp = request.TlsClientAuthSanIp ?? client.TlsClientAuthSanIp;
+        var mtlsError = ValidateMtlsSettings(
+            effectiveAuthMethod, effectiveSubjectDn, effectiveSanDns,
+            effectiveSanUri, effectiveSanEmail, effectiveSanIp);
+        if (mtlsError != null)
+        {
+            return BadRequest(new { error = mtlsError });
+        }
+
+        var effectiveScopes = request.AllowedScopes
+            ?? client.AllowedScopes.Select(s => s.Scope).ToList();
+        var effectiveGrantTypes = request.AllowedGrantTypes
+            ?? client.AllowedGrantTypes.Select(g => g.GrantType).ToList();
+
+        var serviceScopeError = ValidateServiceApiScopes(effectiveScopes, effectiveGrantTypes);
+        if (serviceScopeError != null)
+        {
+            return BadRequest(new { error = serviceScopeError });
+        }
+
+        if (await RejectUnheldSensitiveScopesAsync(effectiveScopes, client.AllowedScopes.Select(s => s.Scope).ToList()) is { } sensitiveScopeError)
+        {
+            return sensitiveScopeError;
+        }
+
+        if (InvalidAllowedResource(request.AllowedResources) is { } resourceError)
+        {
+            return BadRequest(new { error = resourceError });
+        }
+
+        if (InvalidAllowedResource(request.IntrospectionResources, "Introspection resource") is { } introspectionResourceError)
+        {
+            return BadRequest(new { error = introspectionResourceError });
+        }
+
+        await _serviceApiScopeProvisioner.EnsureAsync(effectiveScopes, cancellationToken);
+
+        // Apply all field updates and collection mappings
+        ApplyUpdateRequest(client, request);
+
+        // Note: Secrets are managed via regenerate-secret and delete-secret endpoints, not through update
+
+        client.Updated = DateTime.UtcNow;
+        var updated = await _clientStore.UpdateClientAsync(client, cancellationToken);
+        if (_corsCache != null) await _corsCache.InvalidateCacheAsync(cancellationToken);
+
+        _logger.LogInformation("Updated client {ClientId}", client.ClientId);
+
+        // Raise audit event
+        await _eventService.RaiseAsync(new AdminClientUpdatedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = AdminUserId!,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = client.ClientId,
+            ResourceName = client.ClientName,
+            ClientId = client.ClientId
+        }, cancellationToken);
+
+        return Ok(MapToDetailDto(updated));
+    }
+
+    /// <summary>
+    /// Delete a client
+    /// </summary>
+    [HttpDelete("{id:int}")]
+    [RequirePermission(AdminPermissions.ClientsDelete)]
+    public async Task<IActionResult> DeleteClient(int id, CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
+
+        if (client == null)
+        {
+            return NotFound();
+        }
+
+        await _clientStore.DeleteByIdAsync(id, cancellationToken);
+        if (_corsCache != null) await _corsCache.InvalidateCacheAsync(cancellationToken);
+
+        _logger.LogInformation("Deleted client {ClientId}", client.ClientId);
+
+        // Raise audit event
+        await _eventService.RaiseAsync(new AdminClientDeletedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = AdminUserId!,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = client.ClientId,
+            ResourceName = client.ClientName,
+            ClientId = client.ClientId
+        }, cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Regenerate client secret
+    /// </summary>
+    [HttpPost("{id:int}/regenerate-secret")]
+    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
+    public async Task<ActionResult<RegenerateSecretResponse>> RegenerateSecret(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
+
+        if (client == null)
+        {
+            return NotFound();
+        }
+
+        if (!client.RequireClientSecret)
+        {
+            return BadRequest(new { error = "Client does not require a secret" });
+        }
+
+        // Generate new secret and add it (keeping existing secrets)
+        var newSecret = GenerateClientSecret();
+        client.ClientSecrets.Add(new ClientSecret
+        {
+            Value = HashSecret(newSecret),
+            LastThreeChars = GetLastThreeChars(newSecret)
+        });
+
+        await _clientStore.UpdateClientAsync(client, cancellationToken);
+
+        _logger.LogInformation("Regenerated secret for client {ClientId}", client.ClientId);
+
+        return Ok(new RegenerateSecretResponse
+        {
+            ClientId = client.ClientId,
+            ClientSecret = newSecret, // Only time we return the plain secret
+            SecretId = client.ClientSecrets.Last().Id // Return the new secret's ID
+        });
+    }
+
+    /// <summary>
+    /// Delete a specific client secret
+    /// </summary>
+    [HttpDelete("{id:int}/secrets/{secretId:int}")]
+    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
+    public async Task<ActionResult> DeleteSecret(
+        int id,
+        int secretId,
+        CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
+
+        if (client == null)
+        {
+            return NotFound();
+        }
+
+        var secret = client.ClientSecrets.FirstOrDefault(s => s.Id == secretId);
+        if (secret == null)
+        {
+            return NotFound(new { error = "Secret not found" });
+        }
+
+        // Ensure at least one secret remains if client requires secret
+        if (client.RequireClientSecret && client.ClientSecrets.Count <= 1)
+        {
+            return BadRequest(new { error = "Cannot delete the last secret for a client that requires a secret" });
+        }
+
+        client.ClientSecrets.Remove(secret);
+        await _clientStore.UpdateClientAsync(client, cancellationToken);
+
+        _logger.LogInformation("Deleted secret {SecretId} from client {ClientId}", secretId, client.ClientId);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Creates a new Client entity from a CreateClientRequest. Used by both regular and platform client controllers.
+    /// </summary>
+    internal static Client MapFromCreateRequest(CreateClientRequest request)
+    {
+        return new Client
         {
             // Basic settings
             ClientId = request.ClientId,
@@ -168,77 +557,30 @@ public class ClientsController : AdminBaseController
             CibaClientNotificationEndpoint = request.CibaClientNotificationEndpoint,
             CibaRequestLifetime = request.CibaRequestLifetime ?? 120,
             CibaPollingInterval = request.CibaPollingInterval ?? 5,
-            CibaRequireUserCode = request.CibaRequireUserCode ?? false
+            CibaRequireUserCode = request.CibaRequireUserCode ?? false,
+
+            // UI Flow settings
+            UseJourneyFlow = request.UseJourneyFlow,
+
+            // Access restrictions
+            RequiredPermission = request.RequiredPermission,
+            RequireVerifiedEmail = request.RequireVerifiedEmail ?? false,
+
+            // mTLS / token endpoint auth settings
+            TokenEndpointAuthMethod = request.TokenEndpointAuthMethod,
+            TlsClientAuthSubjectDn = request.TlsClientAuthSubjectDn,
+            TlsClientAuthSanDns = request.TlsClientAuthSanDns,
+            TlsClientAuthSanUri = request.TlsClientAuthSanUri,
+            TlsClientAuthSanEmail = request.TlsClientAuthSanEmail,
+            TlsClientAuthSanIp = request.TlsClientAuthSanIp
         };
-
-        // Map collections
-        MapCollectionsToClient(client, request);
-
-        // Generate client secret if needed
-        if (request.RequireClientSecret != false && !string.IsNullOrEmpty(request.ClientSecret))
-        {
-            client.ClientSecrets = new List<ClientSecret>
-            {
-                new ClientSecret
-                {
-                    Value = HashSecret(request.ClientSecret),
-                    LastThreeChars = GetLastThreeChars(request.ClientSecret)
-                }
-            };
-        }
-
-        var created = await _clientStore.AddClientAsync(client, cancellationToken);
-
-        _logger.LogInformation("Created client {ClientId} for tenant {TenantId}",
-            client.ClientId, TenantId);
-
-        // Raise audit event
-        await _eventService.RaiseAsync(new AdminClientCreatedEvent
-        {
-            TenantId = TenantId,
-            AdminUserId = AdminUserId!,
-            AdminUserName = AdminUserName,
-            IpAddress = ClientIp,
-            ResourceId = client.ClientId,
-            ResourceName = client.ClientName,
-            ClientId = client.ClientId
-        }, cancellationToken);
-
-        return CreatedAtAction(nameof(GetClient), new { clientId = created.ClientId }, MapToDetailDto(created));
     }
 
     /// <summary>
-    /// Update a client
+    /// Applies an UpdateClientRequest to an existing Client entity. Used by both regular and platform client controllers.
     /// </summary>
-    [HttpPut("{clientId}")]
-    [RequirePermission(AdminPermissions.ClientsWrite)]
-    public async Task<ActionResult<ClientDetailDto>> UpdateClient(
-        string clientId,
-        [FromBody] UpdateClientRequest request,
-        CancellationToken cancellationToken)
+    internal static void ApplyUpdateRequest(Client client, UpdateClientRequest request)
     {
-        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
-
-        if (client == null)
-        {
-            return NotFound();
-        }
-
-        // Validate client configuration against tenant protocol settings
-        var protocolSettings = await _tenantSettingsProvider.GetProtocolSettingsAsync(cancellationToken);
-        var validationError = ValidateClientAgainstTenantSettings(request, protocolSettings, client);
-        if (validationError != null)
-        {
-            return BadRequest(new { error = validationError });
-        }
-
-        // Validate client claims don't contain protected claim types
-        var claimValidationError = ValidateClientClaims(request.Claims);
-        if (claimValidationError != null)
-        {
-            return BadRequest(new { error = claimValidationError });
-        }
-
         // Update basic settings
         if (request.ClientName != null) client.ClientName = request.ClientName;
         if (request.Description != null) client.Description = request.Description;
@@ -301,150 +643,53 @@ public class ClientsController : AdminBaseController
         if (request.CibaPollingInterval.HasValue) client.CibaPollingInterval = request.CibaPollingInterval.Value;
         if (request.CibaRequireUserCode.HasValue) client.CibaRequireUserCode = request.CibaRequireUserCode.Value;
 
+        // Update access restrictions
+        if (request.RequiredPermission != null) client.RequiredPermission = request.RequiredPermission == "" ? null : request.RequiredPermission;
+        if (request.RequireVerifiedEmail.HasValue) client.RequireVerifiedEmail = request.RequireVerifiedEmail.Value;
+
+        // Update mTLS / token endpoint auth settings
+        if (request.TokenEndpointAuthMethod != null) client.TokenEndpointAuthMethod = request.TokenEndpointAuthMethod == "" ? null : request.TokenEndpointAuthMethod;
+        if (request.TlsClientAuthSubjectDn != null) client.TlsClientAuthSubjectDn = request.TlsClientAuthSubjectDn == "" ? null : request.TlsClientAuthSubjectDn;
+        if (request.TlsClientAuthSanDns != null) client.TlsClientAuthSanDns = request.TlsClientAuthSanDns == "" ? null : request.TlsClientAuthSanDns;
+        if (request.TlsClientAuthSanUri != null) client.TlsClientAuthSanUri = request.TlsClientAuthSanUri == "" ? null : request.TlsClientAuthSanUri;
+        if (request.TlsClientAuthSanEmail != null) client.TlsClientAuthSanEmail = request.TlsClientAuthSanEmail == "" ? null : request.TlsClientAuthSanEmail;
+        if (request.TlsClientAuthSanIp != null) client.TlsClientAuthSanIp = request.TlsClientAuthSanIp == "" ? null : request.TlsClientAuthSanIp;
+
+        // Update UI Flow settings (UseJourneyFlow is nullable - null means inherit from tenant)
+        if (request.ResetUseJourneyFlowToInherit == true)
+        {
+            client.UseJourneyFlow = null;
+        }
+        else if (request.UseJourneyFlow.HasValue)
+        {
+            client.UseJourneyFlow = request.UseJourneyFlow.Value;
+        }
+
         // Update collections
         MapCollectionsToClient(client, request);
+    }
 
-        // Update secret if provided
-        if (!string.IsNullOrEmpty(request.ClientSecret))
+    /// <summary>
+    /// Why a client's allowed-resources list is unusable, or null. Each entry must be a resource
+    /// indicator: an absolute http(s) URI with no fragment (RFC 8707 §2).
+    /// </summary>
+    internal static string? InvalidAllowedResource(IEnumerable<string>? resources, string label = "Allowed resource")
+    {
+        foreach (var value in resources ?? Array.Empty<string>())
         {
-            client.ClientSecrets = new List<ClientSecret>
+            var resource = value?.Trim() ?? "";
+            if (resource.Length == 0) continue;
+            if (!Uri.TryCreate(resource, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+                || !string.IsNullOrEmpty(uri.Fragment))
             {
-                new ClientSecret { Value = HashSecret(request.ClientSecret) }
-            };
+                return $"{label} '{resource}' must be an absolute http(s) URI without a fragment.";
+            }
         }
-
-        client.Updated = DateTime.UtcNow;
-        var updated = await _clientStore.UpdateClientAsync(client, cancellationToken);
-
-        _logger.LogInformation("Updated client {ClientId}", clientId);
-
-        // Raise audit event
-        await _eventService.RaiseAsync(new AdminClientUpdatedEvent
-        {
-            TenantId = TenantId,
-            AdminUserId = AdminUserId!,
-            AdminUserName = AdminUserName,
-            IpAddress = ClientIp,
-            ResourceId = clientId,
-            ResourceName = client.ClientName,
-            ClientId = clientId
-        }, cancellationToken);
-
-        return Ok(MapToDetailDto(updated));
+        return null;
     }
 
-    /// <summary>
-    /// Delete a client
-    /// </summary>
-    [HttpDelete("{clientId}")]
-    [RequirePermission(AdminPermissions.ClientsDelete)]
-    public async Task<IActionResult> DeleteClient(string clientId, CancellationToken cancellationToken)
-    {
-        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
-
-        if (client == null)
-        {
-            return NotFound();
-        }
-
-        await _clientStore.DeleteClientAsync(clientId, cancellationToken);
-
-        _logger.LogInformation("Deleted client {ClientId}", clientId);
-
-        // Raise audit event
-        await _eventService.RaiseAsync(new AdminClientDeletedEvent
-        {
-            TenantId = TenantId,
-            AdminUserId = AdminUserId!,
-            AdminUserName = AdminUserName,
-            IpAddress = ClientIp,
-            ResourceId = clientId,
-            ResourceName = client.ClientName,
-            ClientId = clientId
-        }, cancellationToken);
-
-        return NoContent();
-    }
-
-    /// <summary>
-    /// Regenerate client secret
-    /// </summary>
-    [HttpPost("{clientId}/regenerate-secret")]
-    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
-    public async Task<ActionResult<RegenerateSecretResponse>> RegenerateSecret(
-        string clientId,
-        CancellationToken cancellationToken)
-    {
-        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
-
-        if (client == null)
-        {
-            return NotFound();
-        }
-
-        if (!client.RequireClientSecret)
-        {
-            return BadRequest(new { error = "Client does not require a secret" });
-        }
-
-        // Generate new secret and add it (keeping existing secrets)
-        var newSecret = GenerateClientSecret();
-        client.ClientSecrets.Add(new ClientSecret
-        {
-            Value = HashSecret(newSecret),
-            LastThreeChars = GetLastThreeChars(newSecret)
-        });
-
-        await _clientStore.UpdateClientAsync(client, cancellationToken);
-
-        _logger.LogInformation("Regenerated secret for client {ClientId}", clientId);
-
-        return Ok(new RegenerateSecretResponse
-        {
-            ClientId = clientId,
-            ClientSecret = newSecret, // Only time we return the plain secret
-            SecretId = client.ClientSecrets.Last().Id // Return the new secret's ID
-        });
-    }
-
-    /// <summary>
-    /// Delete a specific client secret
-    /// </summary>
-    [HttpDelete("{clientId}/secrets/{secretId}")]
-    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
-    public async Task<ActionResult> DeleteSecret(
-        string clientId,
-        int secretId,
-        CancellationToken cancellationToken)
-    {
-        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
-
-        if (client == null)
-        {
-            return NotFound();
-        }
-
-        var secret = client.ClientSecrets.FirstOrDefault(s => s.Id == secretId);
-        if (secret == null)
-        {
-            return NotFound(new { error = "Secret not found" });
-        }
-
-        // Ensure at least one secret remains if client requires secret
-        if (client.RequireClientSecret && client.ClientSecrets.Count <= 1)
-        {
-            return BadRequest(new { error = "Cannot delete the last secret for a client that requires a secret" });
-        }
-
-        client.ClientSecrets.Remove(secret);
-        await _clientStore.UpdateClientAsync(client, cancellationToken);
-
-        _logger.LogInformation("Deleted secret {SecretId} from client {ClientId}", secretId, clientId);
-
-        return NoContent();
-    }
-
-    private static void MapCollectionsToClient(Client client, IClientCollections request)
+    internal static void MapCollectionsToClient(Client client, IClientCollections request)
     {
         // Map grant types
         if (request.AllowedGrantTypes != null)
@@ -494,6 +739,19 @@ public class ClientsController : AdminBaseController
                 .ToList();
         }
 
+        // Map allowlisted custom authorize parameters
+        if (request.AllowedAuthorizeParameters != null)
+        {
+            client.AllowedAuthorizeParameters = request.AllowedAuthorizeParameters
+                .Select(p => new ClientAuthorizeParameter
+                {
+                    Parameter = p.Parameter,
+                    ClaimType = p.ClaimType,
+                    Required = p.Required
+                })
+                .ToList();
+        }
+
         // Map properties
         if (request.Properties != null)
         {
@@ -503,6 +761,24 @@ public class ClientsController : AdminBaseController
         }
 
         // Map identity provider restrictions
+        if (request.AllowedResources != null)
+        {
+            client.AllowedResources = request.AllowedResources
+                .Select(r => r.Trim())
+                .Where(r => r.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
+        if (request.IntrospectionResources != null)
+        {
+            client.IntrospectionResources = request.IntrospectionResources
+                .Select(r => r.Trim())
+                .Where(r => r.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
         if (request.IdentityProviderRestrictions != null)
         {
             client.IdentityProviderRestrictions = request.IdentityProviderRestrictions
@@ -527,9 +803,10 @@ public class ClientsController : AdminBaseController
         }
     }
 
-    private static ClientDetailDto MapToDetailDto(Client client) => new()
+    internal static ClientDetailDto MapToDetailDto(Client client) => new()
     {
         // Basic settings
+        Id = client.Id,
         ClientId = client.ClientId,
         ClientName = client.ClientName,
         Description = client.Description,
@@ -606,6 +883,21 @@ public class ClientsController : AdminBaseController
         CibaPollingInterval = client.CibaPollingInterval,
         CibaRequireUserCode = client.CibaRequireUserCode,
 
+        // UI Flow settings
+        UseJourneyFlow = client.UseJourneyFlow,
+
+        // Access restrictions
+        RequiredPermission = client.RequiredPermission,
+        RequireVerifiedEmail = client.RequireVerifiedEmail,
+
+        // mTLS / token endpoint auth settings
+        TokenEndpointAuthMethod = client.TokenEndpointAuthMethod,
+        TlsClientAuthSubjectDn = client.TlsClientAuthSubjectDn,
+        TlsClientAuthSanDns = client.TlsClientAuthSanDns,
+        TlsClientAuthSanUri = client.TlsClientAuthSanUri,
+        TlsClientAuthSanEmail = client.TlsClientAuthSanEmail,
+        TlsClientAuthSanIp = client.TlsClientAuthSanIp,
+
         // Collections
         AllowedGrantTypes = client.AllowedGrantTypes.Select(g => g.GrantType).ToList(),
         RedirectUris = client.RedirectUris.Select(u => u.RedirectUri).ToList(),
@@ -613,13 +905,18 @@ public class ClientsController : AdminBaseController
         AllowedScopes = client.AllowedScopes.Select(s => s.Scope).ToList(),
         AllowedCorsOrigins = client.AllowedCorsOrigins.Select(o => o.Origin).ToList(),
         Claims = client.Claims.Select(c => new ClientClaimDto { Type = c.Type, Value = c.Value }).ToList(),
+        AllowedAuthorizeParameters = client.AllowedAuthorizeParameters
+            .Select(p => new ClientAuthorizeParameterDto { Parameter = p.Parameter, ClaimType = p.ClaimType, Required = p.Required })
+            .ToList(),
         Properties = client.Properties.Select(p => new ClientPropertyDto { Key = p.Key, Value = p.Value }).ToList(),
         IdentityProviderRestrictions = client.IdentityProviderRestrictions.Select(r => r.Provider).ToList(),
+        AllowedResources = client.AllowedResources.ToList(),
+        IntrospectionResources = client.IntrospectionResources.ToList(),
         AllowedRoles = client.AllowedRoles.Select(r => r.Role).ToList(),
         AllowedUsers = client.AllowedUsers.Select(u => new AllowedUserDto { SubjectId = u.SubjectId, DisplayName = u.DisplayName }).ToList()
     };
 
-    private static string HashSecret(string secret)
+    internal static string HashSecret(string secret)
     {
         using var sha256 = System.Security.Cryptography.SHA256.Create();
         var bytes = System.Text.Encoding.UTF8.GetBytes(secret);
@@ -627,7 +924,7 @@ public class ClientsController : AdminBaseController
         return Convert.ToBase64String(hash);
     }
 
-    private static string GenerateClientSecret()
+    internal static string GenerateClientSecret()
     {
         var bytes = new byte[32];
         using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
@@ -635,7 +932,7 @@ public class ClientsController : AdminBaseController
         return Convert.ToBase64String(bytes);
     }
 
-    private static string? GetLastThreeChars(string secret)
+    internal static string? GetLastThreeChars(string secret)
     {
         if (string.IsNullOrEmpty(secret) || secret.Length < 3)
             return secret;
@@ -716,10 +1013,170 @@ public class ClientsController : AdminBaseController
     }
 
     /// <summary>
+    /// Validates the Service API scopes on a client. Callers pass effective
+    /// values (request falling back to the existing client) so a partial update
+    /// can't bypass the checks by omitting a collection.
+    /// </summary>
+    /// <returns>An error message, or null when the configuration is valid.</returns>
+    internal static string? ValidateServiceApiScopes(
+        ICollection<string>? effectiveScopes,
+        ICollection<string>? effectiveGrantTypes)
+    {
+        var serviceScopes = effectiveScopes?
+            .Where(ServiceScopes.IsReserved)
+            .ToList() ?? new List<string>();
+
+        if (serviceScopes.Count == 0)
+        {
+            return null;
+        }
+
+        var unknown = serviceScopes.Where(s => !ServiceScopes.IsManaged(s)).ToList();
+        if (unknown.Count > 0)
+        {
+            return $"Unknown service scope(s): {string.Join(", ", unknown)}. "
+                + $"'{ServiceScopes.ReservedPrefix}' is a reserved namespace — "
+                + "use the Service API permissions on the client instead.";
+        }
+
+        if (!serviceScopes.Contains(ServiceScopes.ServiceApi, StringComparer.Ordinal))
+        {
+            return $"Service API permissions require the base scope '{ServiceScopes.ServiceApi}'. "
+                + "Enable Service API access on the client first.";
+        }
+
+        var grantTypes = effectiveGrantTypes ?? new List<string>();
+        if (!grantTypes.Contains(OidcConstants.GrantTypes.ClientCredentials, StringComparer.Ordinal))
+        {
+            return $"Service API access requires the '{OidcConstants.GrantTypes.ClientCredentials}' grant type.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Sensitive Service API scopes in <paramref name="effectiveScopes"/> that the
+    /// client doesn't already have.
+    /// </summary>
+    internal static IReadOnlyList<ServiceScopeDefinition> NewSensitiveServiceScopes(
+        IEnumerable<string>? effectiveScopes,
+        IEnumerable<string> currentScopes)
+    {
+        var current = currentScopes.ToHashSet(StringComparer.Ordinal);
+        return (effectiveScopes ?? Enumerable.Empty<string>())
+            .Where(s => !current.Contains(s))
+            .Select(ServiceScopes.Find)
+            .OfType<ServiceScopeDefinition>()
+            .Where(d => d.RequiresExplicitGrant)
+            .DistinctBy(d => d.Name)
+            .ToList();
+    }
+
+    /// <summary>
+    /// A sensitive scope is handed to a client only by an admin who could do the
+    /// same thing themselves: they must hold its admin permission, which wildcards
+    /// and the SuperAdmin shortcut never satisfy. Scopes the client already has
+    /// aren't re-checked, so other edits to the client still save.
+    /// </summary>
+    private async Task<ActionResult?> RejectUnheldSensitiveScopesAsync(
+        IEnumerable<string>? effectiveScopes,
+        IEnumerable<string> currentScopes)
+    {
+        foreach (var scope in NewSensitiveServiceScopes(effectiveScopes, currentScopes))
+        {
+            var held = await _authorization.AuthorizeAsync(
+                User, null, PermissionPolicyConstants.PolicyPrefix + scope.RequiredAdminPermission);
+            if (!held.Succeeded)
+            {
+                _logger.LogWarning(
+                    "Admin {AdminId} tried to grant {Scope} without holding {Permission}",
+                    AdminUserId, scope.Name, scope.RequiredAdminPermission);
+                return StatusCode(403, new
+                {
+                    error = "permission_required",
+                    error_description =
+                        $"Granting '{scope.Name}' requires you to hold the '{scope.RequiredAdminPermission}' permission, " +
+                        "assigned to one of your roles by name. Wildcard and SuperAdmin access don't include it."
+                });
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Validates mTLS / token endpoint auth method settings (RFC 8705).
+    /// When token_endpoint_auth_method is "tls_client_auth", exactly one SAN/DN identifier must be provided.
+    /// Returns an error message if validation fails, null if successful.
+    /// </summary>
+    internal static string? ValidateMtlsSettings(
+        string? tokenEndpointAuthMethod,
+        string? tlsClientAuthSubjectDn,
+        string? tlsClientAuthSanDns,
+        string? tlsClientAuthSanUri,
+        string? tlsClientAuthSanEmail,
+        string? tlsClientAuthSanIp)
+    {
+        if (!string.Equals(tokenEndpointAuthMethod, "tls_client_auth", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var identifiers = new[] { tlsClientAuthSubjectDn, tlsClientAuthSanDns, tlsClientAuthSanUri, tlsClientAuthSanEmail, tlsClientAuthSanIp };
+        var providedCount = identifiers.Count(v => !string.IsNullOrEmpty(v));
+
+        if (providedCount == 0)
+        {
+            return "When token_endpoint_auth_method is 'tls_client_auth', exactly one of TlsClientAuthSubjectDn, TlsClientAuthSanDns, TlsClientAuthSanUri, TlsClientAuthSanEmail, or TlsClientAuthSanIp must be provided";
+        }
+
+        if (providedCount > 1)
+        {
+            return "When token_endpoint_auth_method is 'tls_client_auth', only one of TlsClientAuthSubjectDn, TlsClientAuthSanDns, TlsClientAuthSanUri, TlsClientAuthSanEmail, or TlsClientAuthSanIp may be provided";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Validates that client claims don't contain protected claim types.
     /// Protected claims include system claims like "permissions", "role", "tenant_id", etc.
     /// Returns an error message if validation fails, null if successful.
     /// </summary>
+    /// <summary>
+    /// Validates custom authorize-parameter claim mappings: each entry needs a
+    /// parameter and a claim type, and the claim type must not be a protected /
+    /// system-managed claim. Returns an error message, or null when valid.
+    /// </summary>
+    private static string? ValidateAuthorizeParameters(ICollection<ClientAuthorizeParameterDto>? parameters)
+    {
+        if (parameters == null || parameters.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var p in parameters)
+        {
+            if (string.IsNullOrWhiteSpace(p.Parameter) || string.IsNullOrWhiteSpace(p.ClaimType))
+            {
+                return "Each authorize parameter mapping requires both 'parameter' and 'claimType'";
+            }
+        }
+
+        var protectedClaims = parameters
+            .Where(p => ReservedClaimTypes.IsProtectedClaimType(p.ClaimType))
+            .Select(p => p.ClaimType)
+            .Distinct()
+            .ToList();
+
+        if (protectedClaims.Count > 0)
+        {
+            return $"The following claim types are protected and cannot be sourced from an authorize parameter: {string.Join(", ", protectedClaims)}";
+        }
+
+        return null;
+    }
+
     private static string? ValidateClientClaims(ICollection<ClientClaimDto>? claims)
     {
         if (claims == null || claims.Count == 0)
@@ -741,293 +1198,3 @@ public class ClientsController : AdminBaseController
         return null;
     }
 }
-
-#region DTOs
-
-public class ClientClaimDto
-{
-    public string Type { get; set; } = null!;
-    public string Value { get; set; } = null!;
-}
-
-public class ClientPropertyDto
-{
-    public string Key { get; set; } = null!;
-    public string Value { get; set; } = null!;
-}
-
-public class AllowedUserDto
-{
-    public string SubjectId { get; set; } = null!;
-    public string? DisplayName { get; set; }
-}
-
-public class ClientListDto
-{
-    public string ClientId { get; set; } = null!;
-    public string? ClientName { get; set; }
-    public string? Description { get; set; }
-    public bool Enabled { get; set; }
-    public List<string> AllowedGrantTypes { get; set; } = new();
-    public bool RequireClientSecret { get; set; }
-    public bool RequirePkce { get; set; }
-    public DateTime Created { get; set; }
-    public DateTime? Updated { get; set; }
-}
-
-public class ClientSecretDto
-{
-    public int Id { get; set; }
-    public string? Description { get; set; }
-    public DateTime? Expiration { get; set; }
-    public string Type { get; set; } = "SharedSecret";
-    public DateTime Created { get; set; }
-    /// <summary>
-    /// Last 3 characters of the unhashed secret value, for identification.
-    /// Note: This is stored separately at secret creation time, not derived from the hash.
-    /// </summary>
-    public string? LastThreeChars { get; set; }
-}
-
-public class ClientDetailDto : ClientListDto
-{
-    // Basic settings
-    public string? ClientUri { get; set; }
-    public string? LogoUri { get; set; }
-    public DateTime? LastAccessed { get; set; }
-
-    // Client secrets (hashed values not exposed, only metadata)
-    public List<ClientSecretDto> Secrets { get; set; } = new();
-
-    // Authentication settings
-    public bool AllowPlainTextPkce { get; set; }
-    public bool RequireRequestObject { get; set; }
-    public bool RequireDPoP { get; set; }
-    public bool RequirePushedAuthorization { get; set; }
-    public int PushedAuthorizationLifetime { get; set; }
-
-    // Consent settings
-    public bool RequireConsent { get; set; }
-    public bool AllowRememberConsent { get; set; }
-    public int? ConsentLifetime { get; set; }
-
-    // Token settings
-    public bool AllowOfflineAccess { get; set; }
-    public bool AllowAccessTokensViaBrowser { get; set; }
-    public bool AlwaysIncludeUserClaimsInIdToken { get; set; }
-    public int AccessTokenLifetime { get; set; }
-    public int IdentityTokenLifetime { get; set; }
-    public int AuthorizationCodeLifetime { get; set; }
-    public int AbsoluteRefreshTokenLifetime { get; set; }
-    public int SlidingRefreshTokenLifetime { get; set; }
-    public int RefreshTokenUsage { get; set; }
-    public int RefreshTokenExpiration { get; set; }
-    public bool UpdateAccessTokenClaimsOnRefresh { get; set; }
-    public int AccessTokenType { get; set; }
-    public string? AllowedIdentityTokenSigningAlgorithms { get; set; }
-    public bool IncludeJwtId { get; set; }
-
-    // Client claims settings
-    public bool AlwaysSendClientClaims { get; set; }
-    public string ClientClaimsPrefix { get; set; } = "client_";
-    public string? PairWiseSubjectSalt { get; set; }
-
-    // Logout settings
-    public string? FrontChannelLogoutUri { get; set; }
-    public bool FrontChannelLogoutSessionRequired { get; set; }
-    public string? BackChannelLogoutUri { get; set; }
-    public bool BackChannelLogoutSessionRequired { get; set; }
-
-    // SSO and device settings
-    public bool EnableLocalLogin { get; set; }
-    public int? UserSsoLifetime { get; set; }
-    public string? UserCodeType { get; set; }
-    public int DeviceCodeLifetime { get; set; }
-
-    // CIBA settings
-    public bool CibaEnabled { get; set; }
-    public string CibaTokenDeliveryMode { get; set; } = "poll";
-    public string? CibaClientNotificationEndpoint { get; set; }
-    public int CibaRequestLifetime { get; set; }
-    public int CibaPollingInterval { get; set; }
-    public bool CibaRequireUserCode { get; set; }
-
-    // Collections
-    public List<string> RedirectUris { get; set; } = new();
-    public List<string> PostLogoutRedirectUris { get; set; } = new();
-    public List<string> AllowedScopes { get; set; } = new();
-    public List<string> AllowedCorsOrigins { get; set; } = new();
-    public List<ClientClaimDto> Claims { get; set; } = new();
-    public List<ClientPropertyDto> Properties { get; set; } = new();
-    public List<string> IdentityProviderRestrictions { get; set; } = new();
-    public List<string> AllowedRoles { get; set; } = new();
-    public List<AllowedUserDto> AllowedUsers { get; set; } = new();
-}
-
-public class CreateClientRequest : IClientCollections
-{
-    // Required
-    public string ClientId { get; set; } = null!;
-
-    // Basic settings
-    public string? ClientName { get; set; }
-    public string? Description { get; set; }
-    public string? ClientUri { get; set; }
-    public string? LogoUri { get; set; }
-    public string? ClientSecret { get; set; }
-    public bool? Enabled { get; set; }
-
-    // Authentication settings
-    public bool? RequireClientSecret { get; set; }
-    public bool? RequirePkce { get; set; }
-    public bool? AllowPlainTextPkce { get; set; }
-    public bool? RequireRequestObject { get; set; }
-    public bool? RequireDPoP { get; set; }
-    public bool? RequirePushedAuthorization { get; set; }
-    public int? PushedAuthorizationLifetime { get; set; }
-
-    // Consent settings
-    public bool? RequireConsent { get; set; }
-    public bool? AllowRememberConsent { get; set; }
-    public int? ConsentLifetime { get; set; }
-
-    // Token settings
-    public bool? AllowOfflineAccess { get; set; }
-    public bool? AllowAccessTokensViaBrowser { get; set; }
-    public bool? AlwaysIncludeUserClaimsInIdToken { get; set; }
-    public int? AccessTokenLifetime { get; set; }
-    public int? IdentityTokenLifetime { get; set; }
-    public int? AuthorizationCodeLifetime { get; set; }
-    public int? AbsoluteRefreshTokenLifetime { get; set; }
-    public int? SlidingRefreshTokenLifetime { get; set; }
-    public int? RefreshTokenUsage { get; set; }
-    public int? RefreshTokenExpiration { get; set; }
-    public bool? UpdateAccessTokenClaimsOnRefresh { get; set; }
-    public int? AccessTokenType { get; set; }
-    public string? AllowedIdentityTokenSigningAlgorithms { get; set; }
-    public bool? IncludeJwtId { get; set; }
-
-    // Client claims settings
-    public bool? AlwaysSendClientClaims { get; set; }
-    public string? ClientClaimsPrefix { get; set; }
-    public string? PairWiseSubjectSalt { get; set; }
-
-    // Logout settings
-    public string? FrontChannelLogoutUri { get; set; }
-    public bool? FrontChannelLogoutSessionRequired { get; set; }
-    public string? BackChannelLogoutUri { get; set; }
-    public bool? BackChannelLogoutSessionRequired { get; set; }
-
-    // SSO and device settings
-    public bool? EnableLocalLogin { get; set; }
-    public int? UserSsoLifetime { get; set; }
-    public string? UserCodeType { get; set; }
-    public int? DeviceCodeLifetime { get; set; }
-
-    // CIBA settings
-    public bool? CibaEnabled { get; set; }
-    public string? CibaTokenDeliveryMode { get; set; }
-    public string? CibaClientNotificationEndpoint { get; set; }
-    public int? CibaRequestLifetime { get; set; }
-    public int? CibaPollingInterval { get; set; }
-    public bool? CibaRequireUserCode { get; set; }
-
-    // Collections
-    public ICollection<string>? AllowedGrantTypes { get; set; }
-    public ICollection<string>? RedirectUris { get; set; }
-    public ICollection<string>? PostLogoutRedirectUris { get; set; }
-    public ICollection<string>? AllowedScopes { get; set; }
-    public ICollection<string>? AllowedCorsOrigins { get; set; }
-    public ICollection<ClientClaimDto>? Claims { get; set; }
-    public ICollection<ClientPropertyDto>? Properties { get; set; }
-    public ICollection<string>? IdentityProviderRestrictions { get; set; }
-    public ICollection<string>? AllowedRoles { get; set; }
-    public ICollection<AllowedUserDto>? AllowedUsers { get; set; }
-}
-
-public class UpdateClientRequest : IClientCollections
-{
-    // Basic settings
-    public string? ClientName { get; set; }
-    public string? Description { get; set; }
-    public string? ClientUri { get; set; }
-    public string? LogoUri { get; set; }
-    public string? ClientSecret { get; set; }
-    public bool? Enabled { get; set; }
-
-    // Authentication settings
-    public bool? RequireClientSecret { get; set; }
-    public bool? RequirePkce { get; set; }
-    public bool? AllowPlainTextPkce { get; set; }
-    public bool? RequireRequestObject { get; set; }
-    public bool? RequireDPoP { get; set; }
-    public bool? RequirePushedAuthorization { get; set; }
-    public int? PushedAuthorizationLifetime { get; set; }
-
-    // Consent settings
-    public bool? RequireConsent { get; set; }
-    public bool? AllowRememberConsent { get; set; }
-    public int? ConsentLifetime { get; set; }
-
-    // Token settings
-    public bool? AllowOfflineAccess { get; set; }
-    public bool? AllowAccessTokensViaBrowser { get; set; }
-    public bool? AlwaysIncludeUserClaimsInIdToken { get; set; }
-    public int? AccessTokenLifetime { get; set; }
-    public int? IdentityTokenLifetime { get; set; }
-    public int? AuthorizationCodeLifetime { get; set; }
-    public int? AbsoluteRefreshTokenLifetime { get; set; }
-    public int? SlidingRefreshTokenLifetime { get; set; }
-    public int? RefreshTokenUsage { get; set; }
-    public int? RefreshTokenExpiration { get; set; }
-    public bool? UpdateAccessTokenClaimsOnRefresh { get; set; }
-    public int? AccessTokenType { get; set; }
-    public string? AllowedIdentityTokenSigningAlgorithms { get; set; }
-    public bool? IncludeJwtId { get; set; }
-
-    // Client claims settings
-    public bool? AlwaysSendClientClaims { get; set; }
-    public string? ClientClaimsPrefix { get; set; }
-    public string? PairWiseSubjectSalt { get; set; }
-
-    // Logout settings
-    public string? FrontChannelLogoutUri { get; set; }
-    public bool? FrontChannelLogoutSessionRequired { get; set; }
-    public string? BackChannelLogoutUri { get; set; }
-    public bool? BackChannelLogoutSessionRequired { get; set; }
-
-    // SSO and device settings
-    public bool? EnableLocalLogin { get; set; }
-    public int? UserSsoLifetime { get; set; }
-    public string? UserCodeType { get; set; }
-    public int? DeviceCodeLifetime { get; set; }
-
-    // CIBA settings
-    public bool? CibaEnabled { get; set; }
-    public string? CibaTokenDeliveryMode { get; set; }
-    public string? CibaClientNotificationEndpoint { get; set; }
-    public int? CibaRequestLifetime { get; set; }
-    public int? CibaPollingInterval { get; set; }
-    public bool? CibaRequireUserCode { get; set; }
-
-    // Collections
-    public ICollection<string>? AllowedGrantTypes { get; set; }
-    public ICollection<string>? RedirectUris { get; set; }
-    public ICollection<string>? PostLogoutRedirectUris { get; set; }
-    public ICollection<string>? AllowedScopes { get; set; }
-    public ICollection<string>? AllowedCorsOrigins { get; set; }
-    public ICollection<ClientClaimDto>? Claims { get; set; }
-    public ICollection<ClientPropertyDto>? Properties { get; set; }
-    public ICollection<string>? IdentityProviderRestrictions { get; set; }
-    public ICollection<string>? AllowedRoles { get; set; }
-    public ICollection<AllowedUserDto>? AllowedUsers { get; set; }
-}
-
-public class RegenerateSecretResponse
-{
-    public string ClientId { get; set; } = null!;
-    public string ClientSecret { get; set; } = null!;
-    public int SecretId { get; set; }
-}
-
-#endregion

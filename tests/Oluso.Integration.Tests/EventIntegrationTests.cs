@@ -3,13 +3,9 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Oluso.Core.Events;
-using Oluso.EntityFramework;
-using Oluso.Enterprise.Ldap.Server;
-using Oluso.Enterprise.Scim.EntityFramework;
+using Oluso.Integration.Tests.Fixtures;
 using Xunit;
 
 namespace Oluso.Integration.Tests;
@@ -26,6 +22,7 @@ public class EventIntegrationTests : IClassFixture<EventIntegrationTests.EventTe
     {
         _factory = factory;
         _client = factory.CreateClient();
+        _client.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
     }
 
     public Task InitializeAsync()
@@ -165,59 +162,16 @@ public class EventIntegrationTests : IClassFixture<EventIntegrationTests.EventTe
     }
 
     /// <summary>
-    /// Custom factory that registers a test event sink for capturing events.
+    /// The standard test host plus a sink that captures raised events.
     /// </summary>
-    public class EventTestFactory : WebApplicationFactory<Program>
+    public class EventTestFactory : OlusoWebApplicationFactory
     {
         public TestEventSink TestEventSink { get; } = new();
-        private readonly string _databaseName = $"OlusoEventTestDb_{Guid.NewGuid()}";
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            builder.UseEnvironment("Testing");
-
-            builder.ConfigureServices(services =>
-            {
-                // Remove LDAP server
-                var ldapHostedService = services.SingleOrDefault(
-                    d => d.ImplementationType == typeof(LdapServerHostedService));
-                if (ldapHostedService != null)
-                {
-                    services.Remove(ldapHostedService);
-                }
-
-                // Remove existing DbContexts
-                RemoveDbContextRegistrations<OlusoDbContext>(services);
-                RemoveDbContextRegistrations<ScimDbContext>(services);
-
-                // Add in-memory database
-                services.AddDbContext<OlusoDbContext>(options =>
-                    options.UseInMemoryDatabase(_databaseName));
-                services.AddDbContext<ScimDbContext>(options =>
-                    options.UseInMemoryDatabase($"{_databaseName}_Scim"));
-
-                // Register our test event sink
-                services.AddSingleton<IOlusoEventSink>(TestEventSink);
-
-                // Ensure database is created
-                var sp = services.BuildServiceProvider();
-                using var scope = sp.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<OlusoDbContext>();
-                db.Database.EnsureCreated();
-            });
-        }
-
-        private static void RemoveDbContextRegistrations<TContext>(IServiceCollection services) where TContext : DbContext
-        {
-            var optionsDescriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(DbContextOptions<TContext>));
-            if (optionsDescriptor != null)
-                services.Remove(optionsDescriptor);
-
-            var contextDescriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(TContext));
-            if (contextDescriptor != null)
-                services.Remove(contextDescriptor);
+            base.ConfigureWebHost(builder);
+            builder.ConfigureServices(services => services.AddSingleton<IOlusoEventSink>(TestEventSink));
         }
     }
 

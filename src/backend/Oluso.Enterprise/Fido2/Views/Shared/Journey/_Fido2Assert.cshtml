@@ -2,7 +2,13 @@
 @using Oluso.Enterprise.Fido2
 @model Fido2AssertViewModel
 
-<div class="fido2-assert-card">
+<div class="fido2-assert-card"
+     id="fido2AssertContainer"
+     data-msg-not-supported="@Localizer["passkey_assert_not_supported"]"
+     data-msg-failed="@Localizer["passkey_assert_failed"]"
+     data-msg-cancelled="@Localizer["passkey_assert_cancelled"]"
+     data-msg-security-error="@Localizer["passkey_assert_security_error"]"
+     data-msg-no-credentials="@Localizer["passkey_assert_no_credentials"]">
     @if (!Model?.IsPasskeyOnly == true && !string.IsNullOrEmpty(Model?.DisplayName))
     {
         <div class="user-info">
@@ -15,7 +21,7 @@
     }
     else
     {
-        <h1 class="title">Sign In with Passkey</h1>
+        <h1 class="title">@Localizer["passkey_assert_title"]</h1>
     }
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
@@ -30,24 +36,24 @@
                 <path fill="currentColor" d="M32 16c-5.52 0-10 4.48-10 10 0 3.4 1.7 6.38 4.29 8.19V40c0 .83.67 1.5 1.5 1.5h1.5v3c0 .83.67 1.5 1.5 1.5h2.21c.83 0 1.5-.67 1.5-1.5v-3h1.5c.83 0 1.5-.67 1.5-1.5v-5.81C39.3 32.38 42 29.4 42 26c0-5.52-4.48-10-10-10zm0 14c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
             </svg>
         </div>
-        <h3>Use your passkey</h3>
-        <p>Your browser will prompt you to use your fingerprint, face, or security key</p>
+        <h3>@Localizer["passkey_assert_prompt"]</h3>
+        <p>@Localizer["passkey_assert_description"]</p>
         <div class="spinner" id="spinner" style="display: none;">
             <div class="spinner-border" role="status">
-                <span class="visually-hidden">Waiting...</span>
+                <span class="visually-hidden">@Localizer["passkey_assert_waiting"]</span>
             </div>
         </div>
     </div>
 
     <button type="button" id="retryButton" class="btn btn-primary btn-block" style="display: none;">
-        Try Again
+        @Localizer["passkey_assert_retry"]
     </button>
 
     @if (Model?.AllowFallback == true)
     {
         <hr />
         <p class="text-center text-muted">
-            <a href="?fallback=password">Use password instead</a>
+            <a href="?fallback=password">@Localizer["fido2_assert_use_password"]</a>
         </p>
     }
 </div>
@@ -60,11 +66,12 @@
 
 <script>
 (function() {
-    const options = @Html.Raw(JsonSerializer.Serialize(Model?.Options));
+    const container = document.getElementById('fido2AssertContainer');
+    const options = @Html.Raw(JsonSerializer.Serialize(Model?.Options, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
 
     if (!options || !window.PublicKeyCredential) {
         document.getElementById('passkeyPrompt').innerHTML =
-            '<div class="alert alert-warning">Passkeys are not supported on this browser.</div>';
+            '<div class="alert alert-warning">' + container.dataset.msgNotSupported + '</div>';
         return;
     }
 
@@ -127,13 +134,13 @@
             spinner.style.display = 'none';
             retryButton.style.display = 'block';
 
-            let message = 'Authentication failed';
+            let message = container.dataset.msgFailed;
             if (error.name === 'NotAllowedError') {
-                message = 'Authentication was cancelled. Click "Try Again" to retry.';
+                message = container.dataset.msgCancelled;
             } else if (error.name === 'SecurityError') {
-                message = 'Security error. Make sure you are on a secure connection.';
+                message = container.dataset.msgSecurityError;
             } else if (error.name === 'InvalidStateError') {
-                message = 'No matching credentials found.';
+                message = container.dataset.msgNoCredentials;
             }
 
             const promptEl = document.getElementById('passkeyPrompt');

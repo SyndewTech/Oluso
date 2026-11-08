@@ -1,0 +1,135 @@
+@model BusinessVerificationViewModel
+
+<div class="business-verification-form">
+    <h2>@Localizer["business_verification_title"]</h2>
+    <p class="description">@Localizer["business_verification_description"]</p>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorKey))
+    {
+        <div class="alert alert-danger" role="alert">
+            @Localizer[Model.ErrorKey, Model.MaxDocumentSizeMb, Model.MaxDocuments]
+        </div>
+    }
+
+    <form method="post" id="business-verification-form" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="submit" />
+
+        <div class="form-group mb-3">
+            <label for="country" class="form-label">@Localizer["business_verification_country_label"]</label>
+            <select id="country" name="country" class="form-select" required>
+                @if (Model.Countries.Count > 1)
+                {
+                    <option value="">@Localizer["business_verification_country_placeholder"]</option>
+                }
+                @foreach (var country in Model.Countries)
+                {
+                    <option value="@country.Code" selected="@(string.Equals(country.Code, Model.Country, StringComparison.OrdinalIgnoreCase))">@country.Flag @country.Name</option>
+                }
+            </select>
+        </div>
+
+        @foreach (var registry in BusinessVerificationViewModel.RegistrationTypes.Where(r => Model.Countries.Any(c => c.Code == r.Key)))
+        {
+            <div class="form-group mb-3" data-registration-types-for="@registry.Key">
+                <label for="registrationType-@registry.Key" class="form-label">@Localizer["business_verification_type_label"]</label>
+                <select id="registrationType-@registry.Key" name="registrationType" class="form-select">
+                    <option value="">@Localizer["business_verification_type_from_number"]</option>
+                    @foreach (var type in registry.Value)
+                    {
+                        <option value="@type" selected="@(string.Equals(type, Model.RegistrationType, StringComparison.OrdinalIgnoreCase))">@Localizer[$"business_verification_type_{registry.Key.ToLowerInvariant()}_{type.ToLowerInvariant()}"]</option>
+                    }
+                </select>
+                <small class="form-text text-muted">@Localizer[$"business_verification_type_help_{registry.Key.ToLowerInvariant()}"]</small>
+            </div>
+        }
+
+        <div class="form-group mb-3">
+            <label for="registrationNumber" class="form-label">@Localizer["business_verification_number_label"]</label>
+            <input type="text"
+                   id="registrationNumber"
+                   name="registrationNumber"
+                   class="form-control"
+                   placeholder="@Localizer["business_verification_number_placeholder"]"
+                   value="@Model.RegistrationNumber"
+                   autocomplete="off"
+                   maxlength="40"
+                   required
+                   autofocus />
+        </div>
+
+        <div class="form-group mb-3">
+            <label for="businessName" class="form-label">@Localizer["business_verification_name_label"]</label>
+            <input type="text"
+                   id="businessName"
+                   name="businessName"
+                   class="form-control"
+                   placeholder="@Localizer["business_verification_name_placeholder"]"
+                   value="@Model.BusinessName"
+                   autocomplete="organization"
+                   maxlength="300"
+                   required="@Model.RequireBusinessName" />
+            @if (Model.RequireBusinessName)
+            {
+                <small class="form-text text-muted">@Localizer["business_verification_name_help"]</small>
+            }
+        </div>
+
+        @if (Model.ShowDocuments)
+        {
+            <fieldset class="form-group mb-3">
+                <legend class="form-label">@Localizer["business_verification_documents_label"]</legend>
+                <p class="form-text text-muted">@Localizer["business_verification_documents_help"]</p>
+                <input type="file"
+                       id="documents"
+                       name="@BusinessVerificationStepHandler.DocumentsField"
+                       class="form-control"
+                       accept="@Model.DocumentsAccept"
+                       @(Model.MaxDocuments > 1 ? "multiple" : "") />
+                <label class="form-label mt-2 d-block" for="documents-camera">@Localizer["journey_upload_take_photo"]</label>
+                <input type="file"
+                       id="documents-camera"
+                       name="@BusinessVerificationStepHandler.DocumentsField"
+                       class="form-control"
+                       accept="image/*"
+                       capture="environment" />
+                <small class="form-text text-muted d-block">@Localizer["journey_upload_limits", Model.MaxDocumentSizeMb, Model.MaxDocuments]</small>
+            </fieldset>
+        }
+
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-primary">@Localizer["business_verification_button"]</button>
+        </div>
+    </form>
+
+    <script>
+    (function () {
+        var form = document.getElementById('business-verification-form');
+        if (!form) return;
+        var country = form.querySelector('select[name="country"]');
+        function sync() {
+            form.querySelectorAll('[data-registration-types-for]').forEach(function (group) {
+                var active = country && country.value === group.getAttribute('data-registration-types-for');
+                group.style.display = active ? '' : 'none';
+                group.querySelectorAll('select').forEach(function (select) { select.disabled = !active; });
+            });
+        }
+        if (country) country.addEventListener('change', sync);
+        sync();
+        @if (Model.DocumentsRequired)
+        {
+            <text>
+        form.addEventListener('submit', function (e) {
+            var chosen = Array.prototype.some.call(form.querySelectorAll('input[type="file"]'), function (input) { return input.files && input.files.length > 0; });
+            if (!chosen) {
+                e.preventDefault();
+                var input = document.getElementById('documents');
+                input.setCustomValidity(@Html.Raw(System.Text.Json.JsonSerializer.Serialize(Localizer["business_verification_documents_missing"].Value)));
+                input.reportValidity();
+                input.addEventListener('change', function () { input.setCustomValidity(''); }, { once: true });
+            }
+        });
+            </text>
+        }
+    })();
+    </script>
+</div>

@@ -9,115 +9,137 @@
         </div>
     }
 
-    <h1 class="title">@(Model?.TenantName ?? "Sign In")</h1>
-    <p class="subtitle">Enter your credentials to continue</p>
+    <h1 class="title">@Localizer["composite_login_title"]</h1>
+    <p class="subtitle">@Localizer["composite_login_subtitle"]</p>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
     {
         <div class="alert alert-danger">@Model.ErrorMessage</div>
     }
 
-    @if (Model?.ShowLocalLogin == true)
-    {
-        <form method="post" id="loginForm">
-            <div class="form-group">
-                <label for="username">Username or Email</label>
-                <input type="text"
-                       id="username"
-                       name="username"
-                       class="form-control"
-                       value="@Model?.Username"
-                       autofocus
-                       autocomplete="username"
-                       required />
-            </div>
-
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password"
-                       id="password"
-                       name="password"
-                       class="form-control"
-                       autocomplete="current-password"
-                       required />
-            </div>
-
-            @if (Model?.AllowRememberMe == true)
-            {
-                <div class="form-check">
-                    <input type="checkbox"
-                           id="rememberMe"
-                           name="rememberMe"
-                           class="form-check-input"
-                           value="true"
-                           @(Model?.RememberMe == true ? "checked" : "") />
-                    <label class="form-check-label" for="rememberMe">Remember me</label>
-                </div>
-            }
-
-            <button type="submit" class="btn btn-primary btn-block">Sign In</button>
-        </form>
+    @{
+        // Method render order is driven by the step's loginLayout config.
+        // Rendering server-side (rather than CSS reordering) keeps the
+        // "or" dividers correct no matter which methods are enabled.
+        var methodOrder = Model?.LoginLayout switch
+        {
+            "social-first" => new[] { "external", "local", "passkey" },
+            "passkey-first" => new[] { "passkey", "local", "external" },
+            "email-expandable" => new[] { "external", "passkey", "local" },
+            _ => new[] { "local", "passkey", "external" }
+        };
+        // In email-expandable the local form is collapsed behind a button.
+        var localCollapsed = Model?.LoginLayout == "email-expandable";
+        var showLocal = Model?.ShowLocalLogin == true;
+        var showPasskey = Model?.ShowPasskey == true;
+        var showExternal = Model?.ShowExternalLogin == true && Model?.ExternalProviders?.Any() == true;
+        var visibleMethods = methodOrder.Where(m =>
+            (m == "local" && showLocal) ||
+            (m == "passkey" && showPasskey) ||
+            (m == "external" && showExternal)).ToList();
     }
 
-    @if (Model?.ShowPasskey == true)
-    {
-        <div class="passkey-section">
-            @if (Model?.ShowLocalLogin == true)
+    <div class="login-methods">
+        @for (var i = 0; i < visibleMethods.Count; i++)
+        {
+            var method = visibleMethods[i];
+            if (i > 0)
             {
-                <div class="divider">
-                    <span>or</span>
-                </div>
+                var dividerText = method == "external"
+                    ? Localizer["composite_login_external_divider"].Value
+                    : Localizer["composite_login_divider_or"].Value;
+                <div class="divider"><span>@dividerText</span></div>
             }
-            <form method="post" id="passkeyForm">
-                <input type="hidden" name="action" value="passkey_login" />
-                @if (!Model.PasskeyUsernameless)
-                {
-                    <input type="hidden" name="username" id="passkeyUsername" />
-                }
-                <button type="submit" class="btn btn-outline-primary btn-block btn-passkey" id="passkeyButton">
-                    <svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                        <path d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v2c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-2h1c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
-                    </svg>
-                    Sign in with Passkey
-                </button>
-            </form>
-        </div>
-    }
 
-    @if (Model?.ShowExternalLogin == true && Model?.ExternalProviders?.Any() == true)
-    {
-        <div class="external-section">
-            <div class="divider">
-                <span>or continue with</span>
-            </div>
-            <div class="external-providers">
-                @foreach (var provider in Model.ExternalProviders)
-                {
-                    <form method="post" style="display: inline;">
-                        <input type="hidden" name="provider" value="@provider.Scheme" />
-                        <button type="submit" class="btn btn-outline-secondary btn-block btn-external">
-                            @if (!string.IsNullOrEmpty(provider.IconUrl))
-                            {
-                                <img src="@provider.IconUrl" alt="" class="provider-icon" />
-                            }
-                            @provider.DisplayName
+            if (method == "local" && localCollapsed)
+            {
+                <details class="local-disclosure" open="@(visibleMethods.Count == 1)">
+                    <summary class="btn btn-block btn-external local-disclosure-summary">
+                        <svg class="provider-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="3" y="5" width="18" height="14" rx="2" />
+                            <path d="m3 7 9 6 9-6" />
+                        </svg>
+                        @Localizer["composite_login_email_button"]
+                    </summary>
+                    <form method="post" id="loginForm" class="local-section local-section-expanded">
+                        @await Html.PartialAsync("Journey/_CompositeLocalFields", Model)
+                    </form>
+                </details>
+            }
+            else if (method == "local")
+            {
+                <form method="post" id="loginForm" class="local-section">
+                    @await Html.PartialAsync("Journey/_CompositeLocalFields", Model)
+                </form>
+            }
+            else if (method == "passkey")
+            {
+                <div class="passkey-section">
+                    <form method="post" id="passkeyForm">
+                        <input type="hidden" name="action" value="passkey_login" />
+                        @if (!Model!.PasskeyUsernameless)
+                        {
+                            <input type="hidden" name="username" id="passkeyUsername" />
+                        }
+                        @{
+                            var passkeyBtnClass = Model?.PrimaryAction == "passkey"
+                                ? "btn btn-primary btn-block btn-passkey"
+                                : "btn btn-outline-primary btn-block btn-passkey";
+                        }
+                        <button type="submit" class="@passkeyBtnClass" id="passkeyButton">
+                            <svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                <path d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v2c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-2h1c.55 0 1-.45 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
+                            </svg>
+                            @Localizer["composite_login_passkey_button"]
                         </button>
                     </form>
-                }
-            </div>
-        </div>
-    }
+                </div>
+            }
+            else if (method == "external")
+            {
+                <div class="external-section">
+                    <div class="external-providers">
+                        @foreach (var provider in Model!.ExternalProviders)
+                        {
+                            var ptype = Oluso.UI.ViewModels.ProviderCss.TypeToken(provider.ProviderType);
+                            var sslug = Oluso.UI.ViewModels.ProviderCss.SchemeSlug(provider.Scheme);
+                            var externalBtnClass = Model?.PrimaryAction == "external"
+                                ? "btn btn-primary btn-block btn-external"
+                                : "btn btn-outline-secondary btn-block btn-external";
+                            <form method="post" style="display: inline;">
+                                <input type="hidden" name="provider" value="@provider.Scheme" />
+                                <button type="submit" class="@externalBtnClass provider-@ptype provider-scheme-@sslug" data-provider="@ptype" data-scheme="@provider.Scheme">
+                                    @await Html.PartialAsync("Journey/_ProviderIcon", new Oluso.UI.ViewModels.ProviderIconModel
+                                    {
+                                        ProviderType = provider.ProviderType,
+                                        IconUrl = provider.IconUrl,
+                                        DisplayName = provider.DisplayName
+                                    })
+                                    @provider.DisplayName
+                                </button>
+                            </form>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        @if (ViewData[Oluso.UI.Pages.Journey.IndexModel.OrgSignInUrlKey] is string { Length: > 0 } orgSignInUrl)
+        {
+            @await Html.PartialAsync("_OrgSignInLink", orgSignInUrl)
+        }
+    </div>
 
     <div class="footer-links">
         @if (Model?.AllowForgotPassword == true)
         {
-            <a href="@(Model?.ForgotPasswordUrl ?? "?action=forgot_password")">Forgot your password?</a>
+            <a href="@(Model?.ForgotPasswordUrl ?? "?action=forgot_password")">@Localizer["composite_login_forgot_password"]</a>
         }
 
         @if (Model?.AllowRegistration == true)
         {
             <span class="separator">|</span>
-            <a href="@(Model?.RegistrationUrl ?? "?action=register")">Create an account</a>
+            <a href="@(Model?.RegistrationUrl ?? "?action=register")">@Localizer["composite_login_create_account"]</a>
         }
     </div>
 </div>
@@ -130,6 +152,17 @@ document.getElementById('passkeyForm').addEventListener('submit', function(e) {
     if (username) {
         document.getElementById('passkeyUsername').value = username;
     }
+});
+</script>
+}
+
+@if (Model?.LoginLayout == "email-expandable")
+{
+@* Password managers scan for sign-in fields when the page loads, and skip the ones in the closed disclosure.
+   Focusing the username field when it opens makes them offer the saved logins. *@
+<script>
+document.querySelector('.local-disclosure')?.addEventListener('toggle', function () {
+    if (this.open) document.getElementById('username')?.focus();
 });
 </script>
 }

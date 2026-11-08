@@ -18,6 +18,7 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
     private readonly IProfileService _profileService;
     private readonly IPersistedGrantStore _grantStore;
     private readonly IClientStore _clientStore;
+    private readonly IClientUserAccess _clientUserAccess;
     private readonly ILogger<AuthorizationCodeGrantHandler> _logger;
 
     public string GrantType => OidcConstants.GrantTypes.AuthorizationCode;
@@ -28,8 +29,10 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
         IProfileService profileService,
         IPersistedGrantStore grantStore,
         IClientStore clientStore,
+        IClientUserAccess clientUserAccess,
         ILogger<AuthorizationCodeGrantHandler> logger)
     {
+        _clientUserAccess = clientUserAccess;
         _codeStore = codeStore;
         _pkceValidator = pkceValidator;
         _profileService = profileService;
@@ -40,14 +43,18 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
 
     public async Task<GrantResult> HandleAsync(TokenRequest request, CancellationToken cancellationToken = default)
     {
-        // Code presence is validated by TokenRequestValidator
-        _logger.LogDebug("Processing authorization_code grant for code: {Code}", request.Code![..Math.Min(10, request.Code.Length)]);
+        // Validate code parameter is present (RFC 6749 Section 4.1.3)
+        if (string.IsNullOrEmpty(request.Code))
+        {
+            _logger.LogWarning("Authorization code is missing from token request");
+            return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Authorization code is missing");
+        }
 
         // Look up authorization code
         var authCode = await _codeStore.GetAsync(request.Code, cancellationToken);
         if (authCode == null)
         {
-            _logger.LogWarning("Authorization code not found in store: {Code}", request.Code[..Math.Min(10, request.Code.Length)]);
+            _logger.LogWarning("Authorization code not found in store");
             return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Invalid authorization code");
         }
 
@@ -91,11 +98,31 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
             return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Authorization code was issued to different client");
         }
 
-        // Validate redirect_uri matches
+        // RFC 9449 §10: a code bound to a DPoP key (dpop_jkt at /authorize) is redeemed only with a
+        // proof signed by that key.
+        if (authCode.Properties != null
+            && authCode.Properties.TryGetValue(Oidc.OidcProtocolService.AuthorizationCodeDPoPJktProperty, out var codeJkt)
+            && !string.IsNullOrEmpty(codeJkt)
+            && !string.Equals(codeJkt, request.DPoPKeyThumbprint, StringComparison.Ordinal))
+        {
+            return GrantResult.Failure(OidcConstants.Errors.InvalidDPoPProof,
+                "This authorization code is bound to a DPoP key; present a DPoP proof signed by that key.");
+        }
+
+        // Validate redirect_uri matches exactly (RFC 6749 Section 4.1.3 — "identical" comparison)
         if (!string.IsNullOrEmpty(authCode.RedirectUri) &&
             !string.Equals(authCode.RedirectUri, request.RedirectUri, StringComparison.Ordinal))
         {
             return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "redirect_uri does not match");
+        }
+
+        // RFC 8707: resources named at sign-in apply to the whole grant; a token request may name
+        // some of them, but not others.
+        var resources = ResourceIndicators.Narrow(authCode.Resources, request.Resource.ToList());
+        if (resources == null)
+        {
+            return GrantResult.Failure(OidcConstants.Errors.InvalidTarget,
+                "The requested resource was not part of the authorization request");
         }
 
         // Validate PKCE if code_challenge was used
@@ -125,35 +152,15 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
                 return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "User is not active");
             }
 
-            // Validate AllowedUsers restriction
-            if (request.Client?.AllowedUsers != null && request.Client.AllowedUsers.Count > 0)
+            // The client's user restrictions, against the tenant this code was issued for.
+            if (request.Client != null)
             {
-                if (!request.Client.AllowedUsers.Contains(authCode.SubjectId))
+                var denial = await _clientUserAccess.FindDenialAsync(
+                    request.Client.ClientId, ClientUserRestrictions.From(request.Client),
+                    authCode.SubjectId, authCode.TenantId, cancellationToken);
+                if (denial != null)
                 {
-                    _logger.LogWarning(
-                        "User {SubjectId} not in AllowedUsers for client {ClientId}",
-                        authCode.SubjectId, request.Client.ClientId);
-                    return GrantResult.Failure(OidcConstants.Errors.AccessDenied,
-                        "User is not authorized to access this application");
-                }
-            }
-
-            // Validate AllowedRoles restriction
-            if (request.Client?.AllowedRoles != null && request.Client.AllowedRoles.Count > 0)
-            {
-                var userRoles = await _profileService.GetUserRolesAsync(authCode.SubjectId, cancellationToken);
-                var hasAllowedRole = request.Client.AllowedRoles.Any(r =>
-                    userRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
-
-                if (!hasAllowedRole)
-                {
-                    _logger.LogWarning(
-                        "User {SubjectId} does not have any required role for client {ClientId}. User roles: [{UserRoles}], Required: [{AllowedRoles}]",
-                        authCode.SubjectId, request.Client.ClientId,
-                        string.Join(", ", userRoles),
-                        string.Join(", ", request.Client.AllowedRoles));
-                    return GrantResult.Failure(OidcConstants.Errors.AccessDenied,
-                        "User does not have the required role to access this application");
+                    return GrantResult.Failure(OidcConstants.Errors.AccessDenied, denial);
                 }
             }
         }
@@ -170,6 +177,24 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
             claims[OidcConstants.StandardClaims.Nonce] = authCode.Nonce;
         }
 
+        // Surface allowlisted custom authorize parameters captured at /authorize
+        // (transported under a prefix in the code's claim bag) as AdditionalData,
+        // keyed by parameter name, so the AuthorizeParameterClaimsProvider can map
+        // and validate them into real claims at issuance.
+        Dictionary<string, object>? authorizeParameters = null;
+        if (authCode.Claims != null)
+        {
+            foreach (var claim in authCode.Claims)
+            {
+                if (claim.Key.StartsWith(Core.Domain.Entities.ClientAuthorizeParameter.TransportClaimPrefix, StringComparison.Ordinal))
+                {
+                    authorizeParameters ??= new Dictionary<string, object>(StringComparer.Ordinal);
+                    var paramName = claim.Key[Core.Domain.Entities.ClientAuthorizeParameter.TransportClaimPrefix.Length..];
+                    authorizeParameters[paramName] = claim.Value;
+                }
+            }
+        }
+
         // Load profile claims based on scopes
         if (!string.IsNullOrEmpty(authCode.SubjectId) && request.Client != null)
         {
@@ -182,6 +207,8 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
                 authCode.Scopes,
                 "TokenEndpoint",
                 "oidc",
+                request.Resource,
+                authorizeParameters,
                 cancellationToken);
 
             foreach (var claim in profileClaims)
@@ -190,11 +217,18 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
             }
         }
 
-        // Merge with any claims stored in the authorization code
+        // Merge with any claims stored in the authorization code, skipping the
+        // authorize-parameter transport keys — those are inputs to the claims
+        // provider above, not claims, and must never leak into the token.
         if (authCode.Claims != null)
         {
             foreach (var claim in authCode.Claims)
             {
+                if (claim.Key.StartsWith(Core.Domain.Entities.ClientAuthorizeParameter.TransportClaimPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 if (!claims.ContainsKey(claim.Key))
                 {
                     claims[claim.Key] = claim.Value;
@@ -207,17 +241,20 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
         if (!string.IsNullOrEmpty(authCode.SubjectId) && authCode.Scopes.Contains(OidcConstants.Scopes.Permissions))
         {
             var tenantId = claims.TryGetValue("tenant_id", out var tid) ? tid?.ToString() : null;
-            permissions = (await _profileService.GetUserPermissionsAsync(
-                authCode.SubjectId, tenantId, cancellationToken)).ToList();
+            permissions = (await _profileService.GetUserPermissionsAsync(authCode.SubjectId, tenantId, cancellationToken))?.ToList();
         }
 
         return new GrantResult
         {
             SubjectId = authCode.SubjectId,
             SessionId = authCode.SessionId,
+            Amr = AuthorizationCodes.ReadAmr(authCode).ToList(),
+            Acr = AuthorizationCodes.ReadAcr(authCode),
             Scopes = authCode.Scopes,
             Claims = claims,
-            Permissions = permissions
+            Permissions = permissions ?? new List<string>(),
+            Resources = resources.ToList(),
+            GrantedResources = authCode.Resources.Count > 0 ? authCode.Resources.ToList() : resources.ToList()
         };
     }
 }

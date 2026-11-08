@@ -25,6 +25,8 @@ public class ServiceUsersController : ServiceBaseController
     private readonly IOlusoUserService _userService;
     private readonly IRoleStore _roleStore;
     private readonly IOlusoEventService _eventService;
+    private readonly IRoleGrantService _roleGrants;
+    private readonly IModuleAdminAssignmentNotifier _moduleAdminNotifier;
     private readonly ILogger<ServiceUsersController> _logger;
 
     public ServiceUsersController(
@@ -32,14 +34,28 @@ public class ServiceUsersController : ServiceBaseController
         IOlusoUserService userService,
         IRoleStore roleStore,
         IOlusoEventService eventService,
+        IRoleGrantService roleGrants,
+        IModuleAdminAssignmentNotifier moduleAdminNotifier,
         ILogger<ServiceUsersController> logger)
         : base(tenantContext)
     {
         _userService = userService;
         _roleStore = roleStore;
         _eventService = eventService;
+        _roleGrants = roleGrants;
+        _moduleAdminNotifier = moduleAdminNotifier;
         _logger = logger;
     }
+
+    private RoleGrantActor Actor() => new(ClientId, $"Service client {ClientId}", ClientIp);
+
+    private EventOrigin Origin => EventOrigin.ServiceClient(ClientId, ClientIp);
+
+    private Task RaiseRoleChangeAsync(string userId, Core.Domain.Entities.OlusoRole role, bool removed, CancellationToken cancellationToken) =>
+        _eventService.RaiseAsync(removed
+            ? new UserRoleRemovedEvent { TenantId = TenantId, SubjectId = userId, RoleId = role.Id, RoleName = role.Name!, Origin = Origin }
+            : new UserRoleAssignedEvent { TenantId = TenantId, SubjectId = userId, RoleId = role.Id, RoleName = role.Name!, Origin = Origin },
+            cancellationToken);
 
     /// <summary>
     /// Get all users for the client's tenant
@@ -106,15 +122,23 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
-        if (user == null || user.TenantId != TenantId)
+        if (user == null)
         {
             return NotFound();
         }
 
-        var roles = await _userService.GetRolesAsync(userId, cancellationToken);
+        var roles = await RoleNamesInTenantAsync(userId, cancellationToken);
         var claims = await _userService.GetClaimsAsync(userId, cancellationToken);
+
+        // GetClaimsAsync adds role claims from the ambient role lookup; this
+        // tenant's roles replace them.
+        var claimDtos = claims
+            .Where(c => c.Type != System.Security.Claims.ClaimTypes.Role)
+            .Select(c => new ServiceUserClaimDto { Type = c.Type, Value = c.Value })
+            .Concat(roles.Select(r => new ServiceUserClaimDto { Type = System.Security.Claims.ClaimTypes.Role, Value = r }))
+            .ToList();
 
         return Ok(new ServiceUserDetailDto
         {
@@ -127,8 +151,8 @@ public class ServiceUsersController : ServiceBaseController
             IsActive = user.IsActive,
             EmailVerified = user.EmailVerified,
             PhoneNumber = user.PhoneNumber,
-            Roles = roles.ToList(),
-            Claims = claims.Select(c => new ServiceUserClaimDto { Type = c.Type, Value = c.Value }).ToList(),
+            Roles = roles,
+            Claims = claimDtos,
             CustomProperties = user.CustomProperties?.ToDictionary(k => k.Key, v => v.Value),
             LastLoginAt = user.LastLoginAt
         });
@@ -145,14 +169,14 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByEmailAsync(email, cancellationToken);
+        var user = await _userService.FindByEmailInTenantAsync(email, TenantId!, cancellationToken);
 
-        if (user == null || user.TenantId != TenantId)
+        if (user == null)
         {
             return NotFound();
         }
 
-        var roles = await _userService.GetRolesAsync(user.Id, cancellationToken);
+        var roles = await RoleNamesInTenantAsync(user.Id, cancellationToken);
 
         return Ok(new ServiceUserDto
         {
@@ -165,7 +189,7 @@ public class ServiceUsersController : ServiceBaseController
             IsActive = user.IsActive,
             EmailVerified = user.EmailVerified,
             PhoneNumber = user.PhoneNumber,
-            Roles = roles.ToList(),
+            Roles = roles,
             LastLoginAt = user.LastLoginAt
         });
     }
@@ -176,11 +200,19 @@ public class ServiceUsersController : ServiceBaseController
     [HttpPost]
     public async Task<ActionResult<ServiceUserDto>> CreateUser(
         [FromBody] ServiceCreateUserRequest request,
+        [FromServices] ITenantEmailDomainStore emailDomains,
         CancellationToken cancellationToken)
     {
         if (!HasScope(ServiceScopes.UsersWrite))
         {
             return Forbid();
+        }
+
+        // Saying an address is verified is trusted only for the tenant's own verified domains.
+        var markVerified = request.EmailVerified == true;
+        if (markVerified && !await emailDomains.IsVerifiedForTenantAsync(TenantId ?? "", request.Email, cancellationToken))
+        {
+            return BadRequest(new { errors = new[] { "An address can be marked verified only at an email domain this organization has verified. Leave it unverified: the person confirms it with a code when they sign in." } });
         }
 
         var createRequest = new Oluso.Core.Services.CreateUserRequest
@@ -192,33 +224,28 @@ public class ServiceUsersController : ServiceBaseController
             LastName = request.LastName,
             PhoneNumber = request.PhoneNumber,
             TenantId = TenantId,
-            RequireEmailVerification = !(request.EmailVerified ?? false)
+            RequireEmailVerification = !(request.EmailVerified ?? false),
+            ClientId = ClientId
         };
 
+        using var origin = EventOriginScope.Begin(Origin);
         var result = await _userService.CreateUserAsync(createRequest, cancellationToken);
 
         if (!result.Succeeded)
         {
-            return BadRequest(new { errors = result.Errors ?? new[] { result.Error ?? "Unknown error" } });
+            return BadRequest(new { errors = result.MessagesOr("Unknown error") });
         }
 
         _logger.LogInformation("Service client {ClientId} created user {UserId} ({Email}) for tenant {TenantId}",
             ClientId, result.UserId, request.Email, TenantId);
 
-        // Raise audit event
-        await _eventService.RaiseAsync(new ServiceUserCreatedEvent
+        if (markVerified)
         {
-            TenantId = TenantId,
-            ClientId = ClientId,
-            IpAddress = ClientIp,
-            ResourceId = result.UserId,
-            ResourceName = request.Email,
-            Email = request.Email,
-            Username = request.UserName
-        }, cancellationToken);
+            await _userService.SetEmailVerifiedAsync(result.UserId!, true, cancellationToken);
+        }
 
-        var user = result.User ?? await _userService.FindByIdAsync(result.UserId!, cancellationToken);
-        var roles = await _userService.GetRolesAsync(result.UserId!, cancellationToken);
+        var user = await _userService.FindByIdAsync(result.UserId!, cancellationToken);
+        var roles = await RoleNamesInTenantAsync(result.UserId!, cancellationToken);
 
         return CreatedAtAction(nameof(GetUser), new { userId = result.UserId }, new ServiceUserDto
         {
@@ -229,8 +256,8 @@ public class ServiceUsersController : ServiceBaseController
             LastName = request.LastName,
             DisplayName = request.DisplayName,
             IsActive = true,
-            EmailVerified = request.EmailVerified ?? false,
-            Roles = roles.ToList()
+            EmailVerified = user?.EmailVerified ?? false,
+            Roles = roles
         });
     }
 
@@ -248,17 +275,25 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
         if (user == null)
         {
             return NotFound();
         }
 
-        // Check tenant access
+        // A member whose record lives in another tenant: their profile is managed
+        // from that tenant, the same rule the admin Users API applies.
         if (user.TenantId != TenantId)
         {
-            return NotFound();
+            return StatusCode(403, new
+            {
+                error = "user_owned_by_another_tenant",
+                error_description =
+                    "This user belongs to another tenant and has access here through tenant membership. " +
+                    "Their profile is managed from their home tenant.",
+                ownerTenantId = user.TenantId
+            });
         }
 
         var updateRequest = new Oluso.Core.Services.UpdateUserRequest
@@ -270,27 +305,19 @@ public class ServiceUsersController : ServiceBaseController
             Picture = request.Picture
         };
 
+        using var origin = EventOriginScope.Begin(Origin);
         var result = await _userService.UpdateUserAsync(userId, updateRequest, cancellationToken);
 
         if (!result.Succeeded)
         {
-            return BadRequest(new { errors = result.Errors ?? new[] { result.Error ?? "Unknown error" } });
+            return BadRequest(new { errors = result.MessagesOr("Unknown error") });
         }
 
         _logger.LogInformation("Service client {ClientId} updated user {UserId}", ClientId, userId);
 
-        // Raise audit event
-        await _eventService.RaiseAsync(new ServiceUserUpdatedEvent
-        {
-            TenantId = TenantId,
-            ClientId = ClientId,
-            IpAddress = ClientIp,
-            ResourceId = userId,
-            ResourceName = user.Email
-        }, cancellationToken);
-
         var updatedUser = result.User ?? await _userService.FindByIdAsync(userId, cancellationToken);
-        var roles = await _userService.GetRolesAsync(userId, cancellationToken);
+
+        var roles = await RoleNamesInTenantAsync(userId, cancellationToken);
 
         return Ok(new ServiceUserDto
         {
@@ -302,12 +329,12 @@ public class ServiceUsersController : ServiceBaseController
             DisplayName = updatedUser?.DisplayName,
             IsActive = updatedUser?.IsActive ?? true,
             EmailVerified = updatedUser?.EmailVerified ?? false,
-            Roles = roles.ToList()
+            Roles = roles
         });
     }
 
     /// <summary>
-    /// Delete a user
+    /// Permanently delete a user whose home tenant is the client's tenant.
     /// </summary>
     [HttpDelete("{userId}")]
     public async Task<IActionResult> DeleteUser(string userId, CancellationToken cancellationToken)
@@ -317,30 +344,38 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
         if (user == null)
         {
             return NotFound();
         }
 
-        // Check tenant access
         if (user.TenantId != TenantId)
         {
-            return NotFound();
+            return StatusCode(403, new
+            {
+                error = "user_owned_by_another_tenant",
+                error_description =
+                    "This user belongs to another tenant and has access here through tenant membership. " +
+                    "Their account can only be deleted from their home tenant.",
+                ownerTenantId = user.TenantId
+            });
+        }
+
+        using var origin = EventOriginScope.Begin(Origin);
+        var result = await _userService.DeleteUserAsync(userId, cancellationToken);
+        if (!result.Succeeded)
+        {
+            return result.Error switch
+            {
+                UserDeletionErrors.NotFound => NotFound(),
+                UserDeletionErrors.ProtectedIdentity => StatusCode(403, new { error = result.Error, error_description = result.ErrorDescription }),
+                _ => BadRequest(new { error = result.Error, error_description = result.MessageOr("The user could not be deleted") })
+            };
         }
 
         _logger.LogInformation("Service client {ClientId} deleted user {UserId}", ClientId, userId);
-
-        // Raise audit event
-        await _eventService.RaiseAsync(new ServiceUserDeletedEvent
-        {
-            TenantId = TenantId,
-            ClientId = ClientId,
-            IpAddress = ClientIp,
-            ResourceId = userId,
-            ResourceName = user.Email
-        }, cancellationToken);
 
         return NoContent();
     }
@@ -349,28 +384,22 @@ public class ServiceUsersController : ServiceBaseController
     /// Get roles assigned to a user
     /// </summary>
     [HttpGet("{userId}/roles")]
-    public async Task<ActionResult<IEnumerable<string>>> GetUserRoles(string userId, CancellationToken cancellationToken)
+    public async Task<ActionResult<IEnumerable<ServiceUserRoleDto>>> GetUserRoles(string userId, CancellationToken cancellationToken)
     {
         if (!HasScope(ServiceScopes.UsersRead))
         {
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
         if (user == null)
         {
             return NotFound();
         }
 
-        // Check tenant access
-        if (user.TenantId != TenantId)
-        {
-            return NotFound();
-        }
-
-        var roles = await _userService.GetRolesAsync(userId, cancellationToken);
-        return Ok(roles);
+        var roles = await _roleStore.GetUserRolesInTenantAsync(userId, TenantId, cancellationToken);
+        return Ok(roles.Select(ToServiceUserRoleDto));
     }
 
     /// <summary>
@@ -387,84 +416,75 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
         if (user == null)
         {
             return NotFound();
         }
 
-        // Check tenant access - can only modify users in own tenant
-        if (user.TenantId != TenantId)
-        {
-            return NotFound();
-        }
+        using var origin = EventOriginScope.Begin(Origin);
+        var heldRows = (await _roleStore.GetUserRolesInTenantAsync(userId, TenantId, cancellationToken)).ToList();
+        var heldIds = heldRows.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
 
-        // Service clients cannot assign system-level roles
-        var systemRoles = request.Roles
-            .Where(r => Authorization.ReservedClaimTypes.IsReservedRoleName(r))
+        // System roles the user already holds are outside a service client's
+        // reach: they stay whether or not the request lists them.
+        var heldReserved = heldRows
+            .Where(r => Authorization.ReservedClaimTypes.IsReservedRoleName(r.Name!))
             .ToList();
+        var heldReservedIds = heldReserved.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
 
-        if (systemRoles.Any())
+        var requestedIds = request.RoleIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Where(id => !heldReservedIds.Contains(id))
+            .ToList();
+        var (error, requestedRows) = await ResolveAssignableRolesAsync(requestedIds, cancellationToken);
+        if (error != null)
         {
-            _logger.LogWarning(
-                "Service client {ClientId} attempted to assign system roles {Roles} to user {UserId}",
-                ClientId, string.Join(", ", systemRoles), userId);
-            return BadRequest(new { error = $"Cannot assign system roles: {string.Join(", ", systemRoles)}" });
+            return error;
         }
 
-        // Validate all roles belong to the tenant or are global roles
-        var invalidRoles = new List<string>();
-        foreach (var roleName in request.Roles)
-        {
-            var role = await _roleStore.GetByNameAsync(roleName, TenantId, cancellationToken);
-            if (role == null)
-            {
-                invalidRoles.Add(roleName);
-            }
-            else if (role.TenantId != null && role.TenantId != TenantId)
-            {
-                invalidRoles.Add(roleName);
-            }
-        }
-
-        if (invalidRoles.Any())
-        {
-            return BadRequest(new { error = $"Invalid or inaccessible roles: {string.Join(", ", invalidRoles)}" });
-        }
-
-        var result = await _userService.SetRolesAsync(userId, request.Roles, cancellationToken);
+        var rows = requestedRows.Concat(heldReserved).ToList();
+        var result = await _userService.SetRolesByIdAsync(userId, rows.Select(r => r.Id), cancellationToken);
 
         if (!result.Succeeded)
         {
-            return BadRequest(new { errors = result.Errors ?? new[] { result.Error ?? "Unknown error" } });
+            return BadRequest(new { errors = result.MessagesOr("Unknown error") });
         }
+
+        var targetIds = rows.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+        await _moduleAdminNotifier.NotifyAsync(
+            TenantId!, userId, rows.Where(r => !heldIds.Contains(r.Id)), Actor(), cancellationToken);
+        await _moduleAdminNotifier.NotifyRemovedAsync(
+            TenantId!, userId, heldRows.Where(r => !targetIds.Contains(r.Id)), Actor(), cancellationToken);
+
+        var roleNames = rows.Select(r => r.Name!).ToList();
 
         _logger.LogInformation(
             "Service client {ClientId} set roles for user {UserId}: {Roles}",
-            ClientId, userId, string.Join(", ", request.Roles));
+            ClientId, userId, string.Join(", ", roleNames));
 
-        // Raise audit event
-        await _eventService.RaiseAsync(new ServiceUserRolesUpdatedEvent
+        foreach (var role in rows.Where(r => !heldIds.Contains(r.Id)))
+            await RaiseRoleChangeAsync(userId, role, removed: false, cancellationToken);
+        foreach (var role in heldRows.Where(r => !targetIds.Contains(r.Id)))
+            await RaiseRoleChangeAsync(userId, role, removed: true, cancellationToken);
+
+        return Ok(new
         {
-            TenantId = TenantId,
-            ClientId = ClientId,
-            IpAddress = ClientIp,
-            ResourceId = userId,
-            ResourceName = user.Email,
-            Roles = request.Roles
-        }, cancellationToken);
-
-        return Ok(new { message = "Roles updated successfully", roles = request.Roles });
+            message = "Roles updated successfully",
+            roleIds = rows.Select(r => r.Id),
+            roles = roleNames
+        });
     }
 
     /// <summary>
     /// Add a role to a user
     /// </summary>
-    [HttpPost("{userId}/roles/{roleName}")]
+    [HttpPost("{userId}/roles/{roleId}")]
     public async Task<IActionResult> AddUserRole(
         string userId,
-        string roleName,
+        string roleId,
         CancellationToken cancellationToken)
     {
         if (!HasScope(ServiceScopes.UsersManageRoles))
@@ -472,55 +492,37 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
         if (user == null)
         {
             return NotFound();
         }
 
-        if (user.TenantId != TenantId)
+        var (error, rows) = await ResolveAssignableRolesAsync(new[] { roleId }, cancellationToken);
+        if (error != null)
         {
-            return NotFound();
+            return error;
         }
 
-        // Service clients cannot assign system-level roles
-        if (Authorization.ReservedClaimTypes.IsReservedRoleName(roleName))
-        {
-            return BadRequest(new { error = $"Cannot assign system role: {roleName}" });
-        }
-
-        // Validate role belongs to the tenant or is a global role
-        var role = await _roleStore.GetByNameAsync(roleName, TenantId, cancellationToken);
-        if (role == null || (role.TenantId != null && role.TenantId != TenantId))
-        {
-            return BadRequest(new { error = $"Invalid or inaccessible role: {roleName}" });
-        }
-
-        var currentRoles = await _userService.GetRolesAsync(userId, cancellationToken);
-        var newRoles = currentRoles.Append(roleName).Distinct().ToList();
-
-        var result = await _userService.SetRolesAsync(userId, newRoles, cancellationToken);
-
-        if (!result.Succeeded)
-        {
-            return BadRequest(new { errors = result.Errors ?? new[] { result.Error ?? "Unknown error" } });
-        }
+        using var origin = EventOriginScope.Begin(Origin);
+        var role = rows[0];
+        await _roleGrants.GrantAsync(role.Id, userId, TenantId!, Actor(), cancellationToken);
 
         _logger.LogInformation(
-            "Service client {ClientId} added role {RoleName} to user {UserId}",
-            ClientId, roleName, userId);
+            "Service client {ClientId} added role {RoleName} ({RoleId}) to user {UserId}",
+            ClientId, role.Name, role.Id, userId);
 
-        return Ok(new { message = "Role added successfully" });
+        return Ok(new { message = "Role added successfully", roleId = role.Id, role = role.Name });
     }
 
     /// <summary>
     /// Remove a role from a user
     /// </summary>
-    [HttpDelete("{userId}/roles/{roleName}")]
+    [HttpDelete("{userId}/roles/{roleId}")]
     public async Task<IActionResult> RemoveUserRole(
         string userId,
-        string roleName,
+        string roleId,
         CancellationToken cancellationToken)
     {
         if (!HasScope(ServiceScopes.UsersManageRoles))
@@ -528,34 +530,90 @@ public class ServiceUsersController : ServiceBaseController
             return Forbid();
         }
 
-        var user = await _userService.FindByIdAsync(userId, cancellationToken);
+        var user = await _userService.FindByIdInTenantAsync(userId, TenantId!, cancellationToken);
 
         if (user == null)
         {
             return NotFound();
         }
 
-        if (user.TenantId != TenantId)
+        var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
+        if (role == null || (role.TenantId != null && role.TenantId != TenantId))
         {
-            return NotFound();
+            return NotFound(new { error = $"Unknown role id for this tenant: {roleId}" });
         }
 
-        var currentRoles = await _userService.GetRolesAsync(userId, cancellationToken);
-        var newRoles = currentRoles.Where(r => r != roleName).ToList();
-
-        var result = await _userService.SetRolesAsync(userId, newRoles, cancellationToken);
-
-        if (!result.Succeeded)
+        // Service clients can neither grant nor revoke system-level roles
+        if (Authorization.ReservedClaimTypes.IsReservedRoleName(role.Name!))
         {
-            return BadRequest(new { errors = result.Errors ?? new[] { result.Error ?? "Unknown error" } });
+            _logger.LogWarning(
+                "Service client {ClientId} attempted to remove system role {RoleName} from user {UserId}",
+                ClientId, role.Name, userId);
+            return BadRequest(new { error = $"Cannot remove system roles: {role.Name}" });
         }
+
+        using var origin = EventOriginScope.Begin(Origin);
+        await _roleGrants.RevokeAsync(role.Id, userId, TenantId!, Actor(), cancellationToken);
 
         _logger.LogInformation(
-            "Service client {ClientId} removed role {RoleName} from user {UserId}",
-            ClientId, roleName, userId);
+            "Service client {ClientId} removed role {RoleName} ({RoleId}) from user {UserId}",
+            ClientId, role.Name, role.Id, userId);
 
         return NoContent();
     }
+
+    /// <summary>
+    /// Resolves role ids to rows a service client may assign: rows of this
+    /// tenant or platform-wide, never a reserved platform role. An id outside
+    /// the tenant is a 404 reported as unknown rather than by name, the same
+    /// answer as an id that doesn't exist.
+    /// </summary>
+    private async Task<(IActionResult? Error, IReadOnlyList<Core.Domain.Entities.OlusoRole> Rows)> ResolveAssignableRolesAsync(
+        IReadOnlyList<string> roleIds,
+        CancellationToken cancellationToken)
+    {
+        var rows = (await _roleStore.GetByIdsAsync(roleIds, cancellationToken))
+            .Where(r => r.TenantId == null || r.TenantId == TenantId)
+            .ToList();
+
+        var unknown = roleIds.Except(rows.Select(r => r.Id), StringComparer.Ordinal).ToList();
+        if (unknown.Count > 0)
+        {
+            return (NotFound(new { error = $"Unknown role id(s) for this tenant: {string.Join(", ", unknown)}" }), rows);
+        }
+
+        // Service clients cannot assign system-level roles
+        var reserved = rows
+            .Where(r => Authorization.ReservedClaimTypes.IsReservedRoleName(r.Name!))
+            .Select(r => r.Name!)
+            .ToList();
+        if (reserved.Count > 0)
+        {
+            _logger.LogWarning(
+                "Service client {ClientId} attempted to assign system roles {Roles}",
+                ClientId, string.Join(", ", reserved));
+            return (BadRequest(new { error = $"Cannot assign system roles: {string.Join(", ", reserved)}" }), rows);
+        }
+
+        return (null, rows);
+    }
+
+    /// <summary>
+    /// Names of the roles the user holds in the client's tenant, read from the
+    /// tenant's role rows by id — never the user's roles elsewhere.
+    /// </summary>
+    private async Task<List<string>> RoleNamesInTenantAsync(string userId, CancellationToken cancellationToken) =>
+        (await _roleStore.GetUserRolesInTenantAsync(userId, TenantId, cancellationToken))
+            .Select(r => r.Name!)
+            .ToList();
+
+    private static ServiceUserRoleDto ToServiceUserRoleDto(Core.Domain.Entities.OlusoRole role) => new()
+    {
+        Id = role.Id,
+        Name = role.Name!,
+        DisplayName = role.DisplayName ?? role.Name!,
+        IsGlobal = role.TenantId == null
+    };
 }
 
 #region DTOs
@@ -619,9 +677,24 @@ public class ServiceUpdateUserRequest
     public bool? IsActive { get; set; }
 }
 
+/// <summary>
+/// Replaces the user's roles. Role ids, never names: a tenant row and a
+/// platform-wide row may share a name.
+/// </summary>
 public class ServiceSetUserRolesRequest
 {
-    public List<string> Roles { get; set; } = new();
+    public List<string> RoleIds { get; set; } = new();
+}
+
+/// <summary>
+/// A role the user holds in the client's tenant.
+/// </summary>
+public class ServiceUserRoleDto
+{
+    public string Id { get; set; } = null!;
+    public string Name { get; set; } = null!;
+    public string DisplayName { get; set; } = null!;
+    public bool IsGlobal { get; set; }
 }
 
 #endregion
@@ -659,39 +732,8 @@ public abstract class ServiceActionEvent : OlusoEvent
     /// Name of the resource for display purposes
     /// </summary>
     public string? ResourceName { get; init; }
-}
 
-public class ServiceUserCreatedEvent : ServiceActionEvent
-{
-    public override string EventType => "service.user.created";
-    public override string ResourceType => "User";
-    public override string? WebhookEventType => "service.user_created";
-
-    public required string Email { get; init; }
-    public string? Username { get; init; }
-}
-
-public class ServiceUserUpdatedEvent : ServiceActionEvent
-{
-    public override string EventType => "service.user.updated";
-    public override string ResourceType => "User";
-    public override string? WebhookEventType => "service.user_updated";
-}
-
-public class ServiceUserDeletedEvent : ServiceActionEvent
-{
-    public override string EventType => "service.user.deleted";
-    public override string ResourceType => "User";
-    public override string? WebhookEventType => "service.user_deleted";
-}
-
-public class ServiceUserRolesUpdatedEvent : ServiceActionEvent
-{
-    public override string EventType => "service.user.roles_updated";
-    public override string ResourceType => "UserRole";
-    public override string? WebhookEventType => "service.user_roles_updated";
-
-    public List<string> Roles { get; init; } = new();
+    protected override EventOrigin? ImpliedOrigin() => EventOrigin.ServiceClient(ClientId, IpAddress);
 }
 
 #endregion

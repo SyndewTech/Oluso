@@ -14,7 +14,7 @@ namespace Oluso.Protocols.Oidc;
 /// Implements OpenID Connect Client Initiated Backchannel Authentication Flow.
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
-public class OidcCibaController : ControllerBase
+public class OidcCibaController : OidcControllerBase
 {
     private readonly ICibaService _cibaService;
     private readonly IClientAuthenticator _clientAuthenticator;
@@ -82,6 +82,7 @@ public class OidcCibaController : ControllerBase
         {
             ClientId = clientEntity.ClientId,
             ClientName = clientEntity.ClientName,
+            TenantId = clientEntity.TenantId,
             CibaEnabled = clientEntity.CibaEnabled,
             CibaTokenDeliveryMode = clientEntity.CibaTokenDeliveryMode,
             CibaClientNotificationEndpoint = clientEntity.CibaClientNotificationEndpoint,

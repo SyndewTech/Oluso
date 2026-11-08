@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Oluso.Account.Dto.Ciba;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Account.Events;
 using Oluso.Core.Events;
 using Oluso.Core.Services;
 
@@ -175,49 +177,3 @@ public class CibaController : AccountBaseController
         ExpiresAt = request.ExpiresAt
     };
 }
-
-#region DTOs
-
-public class CibaRequestListDto
-{
-    public List<CibaRequestDto> Requests { get; set; } = new();
-    public int TotalCount { get; set; }
-}
-
-public class CibaRequestDto
-{
-    public string AuthReqId { get; set; } = null!;
-    public string ClientId { get; set; } = null!;
-    public string? ClientName { get; set; }
-    public string? ClientLogoUri { get; set; }
-    public string? BindingMessage { get; set; }
-    public List<string> RequestedScopes { get; set; } = new();
-    public string Status { get; set; } = null!;
-    public DateTime CreatedAt { get; set; }
-    public DateTime ExpiresAt { get; set; }
-}
-
-#endregion
-
-#region Events
-
-public class CibaRequestApprovedEvent : OlusoEvent
-{
-    public override string Category => "Authentication";
-    public override string EventType => "CibaRequestApproved";
-    public string? SubjectId { get; set; }
-    public string? AuthReqId { get; set; }
-    public string? SessionId { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-public class CibaRequestDeniedEvent : OlusoEvent
-{
-    public override string Category => "Authentication";
-    public override string EventType => "CibaRequestDenied";
-    public string? SubjectId { get; set; }
-    public string? AuthReqId { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-#endregion

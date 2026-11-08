@@ -1,10 +1,13 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Oluso.Core.Conditions;
+using Oluso.Core.Locale;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
+using Oluso.Core.Storage;
 using Oluso.Core.UserJourneys;
 
 namespace Oluso.UserJourneys.Steps;
@@ -23,11 +26,30 @@ namespace Oluso.UserJourneys.Steps;
 /// - cancelButtonText: cancel button label
 /// - allowCancel: show cancel button (default: false)
 ///
-/// Field types: text, email, phone, number, date, textarea, select, radio, checkbox, hidden
+/// Field types: text, email, phone, number, date, textarea, select, radio, checkbox, hidden, file
+/// <para>File fields accept the kinds in fileTypes (pdf, jpeg, png, gif, webp, heic; checked by
+/// content), up to maxFileSizeMb each and maxFiles in all, and store them as attachments of
+/// the journey; the field's value is the comma-separated attachment ids. capture asks
+/// phones to open the camera.</para>
 /// </remarks>
 public class DynamicFormStepHandler : IStepHandler
 {
     public string StepType => "dynamic_form";
+
+    public const string FileFieldType = "file";
+    public static readonly string[] DefaultFileTypes = { FileContentSniffer.Pdf, FileContentSniffer.Jpeg, FileContentSniffer.Png };
+    public const int DefaultMaxFileSizeMb = 10;
+    public const int DefaultMaxFiles = 1;
+
+    public Task<StepConfigurationValidationResult> ValidateConfigurationAsync(IDictionary<string, object>? configuration)
+    {
+        var fields = configuration is not null && configuration.TryGetValue("fields", out var raw) ? raw : null;
+        if (!StepConfigurationHelpers.IsNonEmptyList(fields))
+        {
+            return Task.FromResult(StepConfigurationValidationResult.Invalid("At least one form field is required"));
+        }
+        return Task.FromResult(StepConfigurationValidationResult.Valid());
+    }
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
@@ -35,11 +57,18 @@ public class DynamicFormStepHandler : IStepHandler
 
         var config = ParseConfiguration(context);
         var culture = GetCurrentCulture(context);
+        var input = NormalizePhoneInput(context.UserInput, config.Fields, out var phoneErrors);
 
         // Check if user submitted the form
         if (!string.IsNullOrEmpty(context.GetInput("__submitted")))
         {
-            var validationErrors = ValidateInput(context.UserInput, config.Fields, culture);
+            var validationErrors = ValidateInput(input, config.Fields, culture);
+            foreach (var phoneError in phoneErrors)
+            {
+                validationErrors[phoneError.Key] = phoneError.Value;
+            }
+
+            var uploads = await ValidateFilesAsync(context, config.Fields, input, validationErrors, cancellationToken);
 
             if (validationErrors.Count > 0)
             {
@@ -47,7 +76,7 @@ public class DynamicFormStepHandler : IStepHandler
                 {
                     Title = GetLocalizedText(config.Title, config.LocalizedTitles, culture),
                     Description = GetLocalizedText(config.Description, config.LocalizedDescriptions, culture),
-                    Fields = BuildFieldViewModels(config.Fields, context.UserInput, validationErrors, culture),
+                    Fields = BuildFieldViewModels(config.Fields, input, validationErrors, culture),
                     SubmitButtonText = GetLocalizedText(config.SubmitButtonText, config.LocalizedSubmitButtonTexts, culture) ?? "Continue",
                     CancelButtonText = GetLocalizedText(config.CancelButtonText, config.LocalizedCancelButtonTexts, culture),
                     ShowCancel = config.AllowCancel
@@ -58,7 +87,8 @@ public class DynamicFormStepHandler : IStepHandler
             var outputData = new Dictionary<string, object>();
             foreach (var field in config.Fields)
             {
-                if (context.UserInput.TryGetValue(field.Name, out var value))
+                // Answers to fields the user couldn't see (their condition isn't met) aren't kept.
+                if (input.TryGetValue(field.Name, out var value) && IsShown(field, input))
                 {
                     var stringValue = value?.ToString();
                     if (!string.IsNullOrEmpty(stringValue))
@@ -72,6 +102,10 @@ public class DynamicFormStepHandler : IStepHandler
 
             // Run pre-completion validators (e.g., duplicate check)
             var validationError = await context.ValidateBeforeCompletionAsync(outputData, cancellationToken);
+            if (validationError == null && uploads.Count > 0)
+            {
+                await SaveFilesAsync(context, config.Fields, uploads, outputData, cancellationToken);
+            }
             if (validationError != null)
             {
                 logger.LogInformation("Pre-completion validation failed: {Error}", validationError);
@@ -79,7 +113,7 @@ public class DynamicFormStepHandler : IStepHandler
                 {
                     Title = GetLocalizedText(config.Title, config.LocalizedTitles, culture),
                     Description = GetLocalizedText(config.Description, config.LocalizedDescriptions, culture),
-                    Fields = BuildFieldViewModels(config.Fields, context.UserInput, null, culture),
+                    Fields = BuildFieldViewModels(config.Fields, input, null, culture),
                     SubmitButtonText = GetLocalizedText(config.SubmitButtonText, config.LocalizedSubmitButtonTexts, culture) ?? "Continue",
                     CancelButtonText = GetLocalizedText(config.CancelButtonText, config.LocalizedCancelButtonTexts, culture),
                     ShowCancel = config.AllowCancel,
@@ -88,19 +122,31 @@ public class DynamicFormStepHandler : IStepHandler
             }
 
             // Persist fields marked with persistToUser to user properties
-            var fieldsToSave = config.Fields.Where(f => f.PersistToUser).ToList();
+            var fieldsToSave = config.Fields.Where(f => f.PersistToUser && IsShown(f, input)).ToList();
+            if (fieldsToSave.Any() && string.IsNullOrEmpty(context.UserId))
+            {
+                logger.LogInformation(
+                    "Form step {StepId} has fields to save to the user, but no one is signed in yet; they stay in the journey",
+                    context.StepId);
+            }
             if (fieldsToSave.Any() && !string.IsNullOrEmpty(context.UserId))
             {
                 var userService = context.ServiceProvider.GetService<IOlusoUserService>();
                 if (userService != null)
                 {
+                    // Seed customProperties from the user's existing map so
+                    // we merge rather than replace — UpdateUserAsync swaps
+                    // the entire bag when CustomProperties is non-null.
+                    var existingUser = await userService.FindByIdAsync(context.UserId, cancellationToken);
                     string? firstName = null, lastName = null, phoneNumber = null, picture = null;
-                    var customProperties = new Dictionary<string, string>();
+                    var customProperties = existingUser?.CustomProperties != null
+                        ? new Dictionary<string, string>(existingUser.CustomProperties, StringComparer.OrdinalIgnoreCase)
+                        : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     var updatedFields = new List<string>();
 
                     foreach (var field in fieldsToSave)
                     {
-                        if (context.UserInput.TryGetValue(field.Name, out var value))
+                        if (input.TryGetValue(field.Name, out var value))
                         {
                             var stringValue = value?.ToString();
                             if (!string.IsNullOrEmpty(stringValue))
@@ -171,6 +217,16 @@ public class DynamicFormStepHandler : IStepHandler
                             logger.LogWarning(
                                 "Failed to persist properties to user {UserId}: {Error}",
                                 context.UserId, updateResult.ErrorDescription);
+                            return StepHandlerResult.ShowUi(config.ViewName, new DynamicFormViewModel
+                            {
+                                Title = GetLocalizedText(config.Title, config.LocalizedTitles, culture),
+                                Description = GetLocalizedText(config.Description, config.LocalizedDescriptions, culture),
+                                Fields = BuildFieldViewModels(config.Fields, input, null, culture),
+                                SubmitButtonText = GetLocalizedText(config.SubmitButtonText, config.LocalizedSubmitButtonTexts, culture) ?? "Continue",
+                                CancelButtonText = GetLocalizedText(config.CancelButtonText, config.LocalizedCancelButtonTexts, culture),
+                                ShowCancel = config.AllowCancel,
+                                FormError = updateResult.MessageOr("We couldn't save your details. Please try again.")
+                            });
                         }
                     }
                 }
@@ -185,6 +241,20 @@ public class DynamicFormStepHandler : IStepHandler
         if (!string.IsNullOrEmpty(context.GetInput("__cancel")) && config.AllowCancel)
         {
             return StepHandlerResult.Fail("user_cancelled", "User cancelled the form");
+        }
+
+        // Lock source-driven values (query / session) into the journey
+        // data bag on first render so they survive step transitions and
+        // any post submission missing the hidden input.
+        foreach (var fieldConfig in config.Fields.Where(IsSourceDriven))
+        {
+            var dataKey = fieldConfig.ClaimType ?? fieldConfig.Name;
+            if (!string.IsNullOrEmpty(context.GetData<string>(dataKey))) continue;
+            var resolved = ResolveSourceValue(fieldConfig, context);
+            if (!string.IsNullOrEmpty(resolved))
+            {
+                context.SetData(dataKey, resolved);
+            }
         }
 
         // Show the form
@@ -211,22 +281,33 @@ public class DynamicFormStepHandler : IStepHandler
         return StepHandlerResult.ShowUi(config.ViewName, viewModel);
     }
 
+    private static bool IsSourceDriven(FormFieldConfig f) =>
+        !string.IsNullOrEmpty(f.Source) &&
+        !string.Equals(f.Source, "user_input", StringComparison.OrdinalIgnoreCase);
+
+    private static string? ResolveSourceValue(FormFieldConfig field, StepExecutionContext context)
+    {
+        var key = string.IsNullOrEmpty(field.SourceKey) ? field.Name : field.SourceKey!;
+        return field.Source?.ToLowerInvariant() switch
+        {
+            "query" => context.GetInput(key),
+            "session" or "cookie" => context.GetData<string>(key),
+            _ => null,
+        };
+    }
+
     private DynamicFormConfig ParseConfiguration(StepExecutionContext context)
     {
         var logger = context.ServiceProvider.GetRequiredService<ILogger<DynamicFormStepHandler>>();
 
         var config = new DynamicFormConfig
         {
-            ViewName = context.GetConfig("viewName", "Journey/_DynamicForm"),
-            Title = context.GetConfig<string?>("title", null),
-            Description = context.GetConfig<string?>("description", null),
-            SubmitButtonText = context.GetConfig<string?>("submitButtonText", null),
-            CancelButtonText = context.GetConfig<string?>("cancelButtonText", null),
-            AllowCancel = context.GetConfig("allowCancel", false),
-            LocalizedTitles = context.GetConfig<Dictionary<string, string>?>("localizedTitles", null),
-            LocalizedDescriptions = context.GetConfig<Dictionary<string, string>?>("localizedDescriptions", null),
-            LocalizedSubmitButtonTexts = context.GetConfig<Dictionary<string, string>?>("localizedSubmitButtonTexts", null),
-            LocalizedCancelButtonTexts = context.GetConfig<Dictionary<string, string>?>("localizedCancelButtonTexts", null)
+            ViewName = context.GetConfig("viewName", "Journey/_DynamicForm")!,
+            Title = context.GetLocalizedConfig("title"),
+            Description = context.GetLocalizedConfig("description"),
+            SubmitButtonText = context.GetLocalizedConfig("submitButtonText"),
+            CancelButtonText = context.GetLocalizedConfig("cancelButtonText"),
+            AllowCancel = context.GetConfig("allowCancel", false)
         };
 
         // Parse fields
@@ -235,7 +316,7 @@ public class DynamicFormStepHandler : IStepHandler
         {
             foreach (var fieldElement in fieldsConfig)
             {
-                var field = ParseField(fieldElement);
+                var field = ParseField(fieldElement, context.ResolvedLocale);
                 if (field != null)
                 {
                     config.Fields.Add(field);
@@ -264,72 +345,263 @@ public class DynamicFormStepHandler : IStepHandler
         return config;
     }
 
-    private static FormFieldConfig? ParseField(JsonElement element)
+    /// <summary>
+    /// A form described in the same shape as this step's settings (title, description,
+    /// submitButtonText, fields), for other steps (e.g. plugins) that need input.
+    /// </summary>
+    public static DynamicFormViewModel FromDefinition(JsonElement definition, string locale, IDictionary<string, object>? values = null)
+    {
+        var fields = definition.TryGetPropertyIgnoreCase("fields", out var list) && list.ValueKind == JsonValueKind.Array
+            ? list.EnumerateArray().Select(f => ParseField(f, locale)).OfType<FormFieldConfig>().ToList()
+            : [];
+
+        return new DynamicFormViewModel
+        {
+            Title = ResolveLocalizedProp(definition, "title", locale),
+            Description = ResolveLocalizedProp(definition, "description", locale),
+            Fields = BuildFieldViewModels(fields, values, null, locale),
+            SubmitButtonText = ResolveLocalizedProp(definition, "submitButtonText", locale) ?? "Continue",
+            FormError = definition.GetStringSetting("error"),
+        };
+    }
+
+    private static FormFieldConfig? ParseField(JsonElement element, string locale)
     {
         if (element.ValueKind != JsonValueKind.Object)
             return null;
 
         var field = new FormFieldConfig
         {
-            Name = element.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? "" : "",
-            Type = element.TryGetProperty("type", out var typeProp) ? typeProp.GetString() ?? "text" : "text",
-            Label = element.TryGetProperty("label", out var labelProp) ? labelProp.GetString() : null,
-            Placeholder = element.TryGetProperty("placeholder", out var placeholderProp) ? placeholderProp.GetString() : null,
-            Description = element.TryGetProperty("description", out var descProp) ? descProp.GetString() : null,
-            Required = element.TryGetProperty("required", out var requiredProp) && requiredProp.GetBoolean(),
-            ClaimType = element.TryGetProperty("claimType", out var claimProp) ? claimProp.GetString() : null,
-            DefaultValue = element.TryGetProperty("defaultValue", out var defaultProp) ? defaultProp.GetString() : null,
-            Pattern = element.TryGetProperty("pattern", out var patternProp) ? patternProp.GetString() : null,
-            PatternError = element.TryGetProperty("patternError", out var patternErrProp) ? patternErrProp.GetString() : null,
-            MinLength = element.TryGetProperty("minLength", out var minLenProp) ? minLenProp.GetInt32() : null,
-            MaxLength = element.TryGetProperty("maxLength", out var maxLenProp) ? maxLenProp.GetInt32() : null,
-            Min = element.TryGetProperty("min", out var minProp) ? minProp.GetString() : null,
-            Max = element.TryGetProperty("max", out var maxProp) ? maxProp.GetString() : null,
-            Rows = element.TryGetProperty("rows", out var rowsProp) ? rowsProp.GetInt32() : null,
-            ReadOnly = element.TryGetProperty("readOnly", out var readOnlyProp) && readOnlyProp.GetBoolean(),
-            Hidden = element.TryGetProperty("hidden", out var hiddenProp) && hiddenProp.GetBoolean(),
-            Group = element.TryGetProperty("group", out var groupProp) ? groupProp.GetString() : null,
-            PersistToUser = element.TryGetProperty("persistToUser", out var persistProp) && persistProp.GetBoolean(),
-            UserPropertyName = element.TryGetProperty("userPropertyName", out var propNameProp) ? propNameProp.GetString() : null
+            Name = element.GetStringSetting("name") ?? "",
+            Type = element.GetStringSetting("type") ?? "text",
+            Label = ResolveLocalizedProp(element, "label", locale),
+            Placeholder = ResolveLocalizedProp(element, "placeholder", locale),
+            Description = ResolveLocalizedProp(element, "description", locale),
+            Required = element.GetBoolSetting("required"),
+            // Blank means unset: the field's own name is used.
+            ClaimType = Blank(element.GetStringSetting("claimType")),
+            DefaultValue = element.GetStringSetting("defaultValue"),
+            Pattern = element.GetStringSetting("pattern"),
+            PatternError = element.GetStringSetting("patternError"),
+            MinLength = element.GetIntSetting("minLength"),
+            MaxLength = element.GetIntSetting("maxLength"),
+            Min = element.GetStringSetting("min"),
+            Max = element.GetStringSetting("max"),
+            Rows = element.GetIntSetting("rows"),
+            ReadOnly = element.GetBoolSetting("readOnly"),
+            Hidden = element.GetBoolSetting("hidden"),
+            Group = element.GetStringSetting("group"),
+            PersistToUser = element.GetBoolSetting("persistToUser"),
+            UserPropertyName = Blank(element.GetStringSetting("userPropertyName")),
+            Source = element.GetStringSetting("source"),
+            SourceKey = element.GetStringSetting("sourceKey"),
+            PhoneFormat = element.GetStringSetting("phoneFormat"),
+            PhoneDefaultCountry = element.GetStringSetting("phoneDefaultCountry"),
+            MaxFileSizeMb = element.GetIntSetting("maxFileSizeMb"),
+            MaxFiles = element.GetIntSetting("maxFiles"),
+            Capture = element.GetBoolSetting("capture")
         };
 
+        if (element.TryGetPropertyIgnoreCase("fileTypes", out var fileTypes) && fileTypes.ValueKind == JsonValueKind.Array)
+        {
+            field.FileTypes = fileTypes.EnumerateArray()
+                .Select(JsonLookup.AsString)
+                .Where(t => !string.IsNullOrWhiteSpace(t) && FileContentSniffer.Types.ContainsKey(t!))
+                .Select(t => t!.ToLowerInvariant())
+                .Distinct()
+                .ToList();
+        }
+
         // Parse options for select/radio/checkbox fields
-        if (element.TryGetProperty("options", out var optionsProp) && optionsProp.ValueKind == JsonValueKind.Array)
+        if (element.TryGetPropertyIgnoreCase("options", out var optionsProp) && optionsProp.ValueKind == JsonValueKind.Array)
         {
             foreach (var optionElement in optionsProp.EnumerateArray())
             {
-                if (optionElement.ValueKind == JsonValueKind.String)
+                if (optionElement.ValueKind is JsonValueKind.String or JsonValueKind.Number)
                 {
-                    var value = optionElement.GetString() ?? "";
+                    var value = JsonLookup.AsString(optionElement) ?? "";
                     field.Options.Add(new FormFieldOption { Value = value, Label = value });
                 }
                 else if (optionElement.ValueKind == JsonValueKind.Object)
                 {
                     field.Options.Add(new FormFieldOption
                     {
-                        Value = optionElement.TryGetProperty("value", out var v) ? v.GetString() ?? "" : "",
-                        Label = optionElement.TryGetProperty("label", out var l) ? l.GetString() ?? "" : ""
+                        Value = optionElement.GetStringSetting("value") ?? "",
+                        Label = ResolveLocalizedProp(optionElement, "label", locale) ?? ""
                     });
                 }
             }
         }
 
         // Parse conditional visibility
-        if (element.TryGetProperty("showWhen", out var showWhenProp) && showWhenProp.ValueKind == JsonValueKind.Object)
+        if (element.TryGetPropertyIgnoreCase("showWhen", out var showWhenProp) && showWhenProp.ValueKind == JsonValueKind.Object)
         {
             field.ShowWhen = new FormFieldCondition
             {
-                Field = showWhenProp.TryGetProperty("field", out var f) ? f.GetString() ?? "" : "",
-                Operator = showWhenProp.TryGetProperty("operator", out var op) ? op.GetString() ?? "equals" : "equals",
-                Value = showWhenProp.TryGetProperty("value", out var val) ? val.GetString() ?? "" : ""
+                Field = showWhenProp.GetStringSetting("field") ?? "",
+                Operator = showWhenProp.GetStringSetting("operator") ?? "equals",
+                Value = showWhenProp.GetStringSetting("value") ?? ""
             };
         }
 
         return field;
     }
 
+    /// <summary>Whether a field's showWhen condition is met by the answers given (always, without one).</summary>
+    private static bool IsShown(FormFieldConfig field, IDictionary<string, object> input)
+    {
+        if (field.ShowWhen == null || string.IsNullOrEmpty(field.ShowWhen.Field)) return true;
+        var answer = input.TryGetValue(field.ShowWhen.Field, out var value) ? value : null;
+        return ConditionOperators.Evaluate(field.ShowWhen.Operator, ConditionOperators.ToValues(answer), field.ShowWhen.Value);
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static bool IsFileField(FormFieldConfig field) =>
+        field.Type.Equals(FileFieldType, StringComparison.OrdinalIgnoreCase);
+
+    internal static JourneyUploadPolicy UploadPolicy(FormFieldConfig field) => new()
+    {
+        AllowedKinds = field.FileTypes is { Count: > 0 } kinds ? kinds : DefaultFileTypes,
+        MaxBytes = (long)(field.MaxFileSizeMb is > 0 ? field.MaxFileSizeMb.Value : DefaultMaxFileSizeMb) * 1024 * 1024,
+        MaxFiles = field.MaxFiles is > 0 ? field.MaxFiles.Value : DefaultMaxFiles,
+    };
+
+    /// <summary>
+    /// Checks the files posted to each shown file field. A required field is met by new files
+    /// or by files kept from an earlier submission in this journey.
+    /// </summary>
+    private static async Task<Dictionary<string, List<AcceptedJourneyFile>>> ValidateFilesAsync(
+        StepExecutionContext context, List<FormFieldConfig> fields, IDictionary<string, object> input,
+        Dictionary<string, string> errors, CancellationToken cancellationToken)
+    {
+        var accepted = new Dictionary<string, List<AcceptedJourneyFile>>(StringComparer.OrdinalIgnoreCase);
+        var fileFields = fields.Where(f => IsFileField(f) && !f.Hidden && !f.ReadOnly && IsShown(f, input)).ToList();
+        if (fileFields.Count == 0) return accepted;
+
+        var uploads = context.ServiceProvider.GetRequiredService<IJourneyFileUploadService>();
+        foreach (var field in fileFields)
+        {
+            var files = context.GetInputFiles(field.Name);
+            if (files.Count == 0)
+            {
+                if (field.Required && string.IsNullOrEmpty(context.GetDataString(field.ClaimType ?? field.Name)))
+                    errors[field.Name] = $"{field.Label ?? field.Name} is required";
+                continue;
+            }
+
+            var policy = UploadPolicy(field);
+            var ok = new List<AcceptedJourneyFile>();
+            var error = await uploads.ValidateAsync(files, policy, ok, cancellationToken);
+            if (error != null)
+            {
+                errors[field.Name] = UiStringDefaults.Resolve($"journey_upload_error_{error}",
+                    policy.MaxBytes / (1024 * 1024), policy.MaxFiles);
+                continue;
+            }
+            accepted[field.Name] = ok;
+        }
+        return accepted;
+    }
+
+    private static async Task SaveFilesAsync(
+        StepExecutionContext context, List<FormFieldConfig> fields, Dictionary<string, List<AcceptedJourneyFile>> uploads,
+        IDictionary<string, object> outputData, CancellationToken cancellationToken)
+    {
+        var service = context.ServiceProvider.GetRequiredService<IJourneyFileUploadService>();
+        foreach (var field in fields.Where(f => uploads.ContainsKey(f.Name)))
+        {
+            var ids = new List<string>();
+            foreach (var file in uploads[field.Name])
+            {
+                var saved = await service.SaveAsync(new JourneyUploadRequest
+                {
+                    TenantId = context.TenantId ?? throw new InvalidOperationException("File fields need an organisation"),
+                    JourneyId = context.JourneyId,
+                    UserId = context.UserId,
+                    File = file,
+                    EntityType = JourneyUploads.EntityType,
+                    EntityId = context.JourneyId,
+                    SubEntityType = "field",
+                    SubEntityId = field.Name,
+                }, cancellationToken);
+                ids.Add(saved.Id);
+            }
+
+            var dataKey = field.ClaimType ?? field.Name;
+            var value = string.Join(',', ids);
+            context.SetData(dataKey, value);
+            outputData[dataKey] = value;
+        }
+    }
+
+    private static bool IsInternationalPhone(FormFieldConfig field) =>
+        (field.Type.Equals("tel", StringComparison.OrdinalIgnoreCase) || field.Type.Equals("phone", StringComparison.OrdinalIgnoreCase))
+        && PhoneNumberInput.IsInternational(field.PhoneFormat);
+
+    /// <summary>
+    /// Fold each international phone field's country + national inputs into one
+    /// E.164 value under the field's own name, so validation, journey data, claims,
+    /// and persisted user properties all see the canonical number.
+    /// </summary>
+    private static IDictionary<string, object> NormalizePhoneInput(
+        IDictionary<string, object> userInput,
+        List<FormFieldConfig> fields,
+        out Dictionary<string, string> errors)
+    {
+        errors = new Dictionary<string, string>();
+        var input = new Dictionary<string, object>(userInput);
+
+        foreach (var field in fields.Where(IsInternationalPhone))
+        {
+            var national = input.TryGetValue(field.Name, out var raw) ? raw?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(national))
+            {
+                continue;
+            }
+
+            var country = input.TryGetValue(field.Name + PhoneNumberInput.CountryInputSuffix, out var c) ? c?.ToString() : null;
+            if (PhoneNumberInput.TryCompose(country, national, out var e164, out var error))
+            {
+                input[field.Name] = e164;
+            }
+            else
+            {
+                errors[field.Name] = error;
+            }
+        }
+
+        return input;
+    }
+
+    private static string? ResolvePhoneCountry(FormFieldConfig field, IDictionary<string, object>? values, string culture)
+    {
+        if (values != null && values.TryGetValue(field.Name + PhoneNumberInput.CountryInputSuffix, out var chosen)
+            && SupportedCountries.GetByCode(chosen?.ToString()) is { } picked)
+        {
+            return picked.Code;
+        }
+
+        var current = values != null && values.TryGetValue(field.Name, out var v) ? v?.ToString() : field.DefaultValue;
+        var (fromValue, _) = PhoneNumberInput.Split(current);
+        if (fromValue != null)
+        {
+            return fromValue.Code;
+        }
+
+        return SupportedCountries.GetByCode(field.PhoneDefaultCountry)?.Code
+            ?? SupportedCountries.FromCulture(culture)?.Code;
+    }
+
+    private static string? ResolvePhoneNational(FormFieldConfig field, IDictionary<string, object>? values)
+    {
+        var current = values != null && values.TryGetValue(field.Name, out var v) ? v?.ToString() : field.DefaultValue;
+        var (country, national) = PhoneNumberInput.Split(current);
+        return country != null ? national : current;
+    }
+
     private static Dictionary<string, string> ValidateInput(
-        IDictionary<string, object?> input,
+        IDictionary<string, object> input,
         List<FormFieldConfig> fields,
         string culture)
     {
@@ -337,7 +609,8 @@ public class DynamicFormStepHandler : IStepHandler
 
         foreach (var field in fields)
         {
-            if (field.Hidden || field.ReadOnly)
+            // A field shown only under a condition isn't required while it's hidden.
+            if (field.Hidden || field.ReadOnly || !IsShown(field, input) || IsFileField(field))
                 continue;
 
             var value = input.TryGetValue(field.Name, out var v) ? v?.ToString() : null;
@@ -411,8 +684,15 @@ public class DynamicFormStepHandler : IStepHandler
 
                 case "tel":
                 case "phone":
-                    if (!Regex.IsMatch(value, @"^[\d\s\-\+\(\)]+$"))
+                    if (PhoneNumberInput.IsInternational(field.PhoneFormat))
+                    {
+                        if (!PhoneNumberInput.IsValidE164(value))
+                            errors[field.Name] = "Enter a valid phone number for the selected country";
+                    }
+                    else if (!PhoneNumberInput.IsValidLocal(value))
+                    {
                         errors[field.Name] = "Invalid phone number";
+                    }
                     break;
 
                 case "url":
@@ -427,7 +707,7 @@ public class DynamicFormStepHandler : IStepHandler
 
     private static List<DynamicFormFieldViewModel> BuildFieldViewModels(
         List<FormFieldConfig> fields,
-        IDictionary<string, object?>? values,
+        IDictionary<string, object>? values,
         Dictionary<string, string>? errors,
         string culture)
     {
@@ -455,11 +735,20 @@ public class DynamicFormStepHandler : IStepHandler
             Rows = f.Rows,
             ReadOnly = f.ReadOnly,
             Hidden = f.Hidden,
+            PhoneFormat = f.PhoneFormat,
+            PhoneCountries = IsInternationalPhone(f) ? SupportedCountries.All : null,
+            PhoneCountry = IsInternationalPhone(f) ? ResolvePhoneCountry(f, values, culture) : null,
+            PhoneNational = IsInternationalPhone(f) ? ResolvePhoneNational(f, values) : null,
+            FileAccept = IsFileField(f) ? UploadPolicy(f).AcceptAttribute : null,
+            FileCapture = IsFileField(f) && f.Capture,
+            MaxFiles = IsFileField(f) ? UploadPolicy(f).MaxFiles : null,
+            MaxFileSizeMb = IsFileField(f) ? f.MaxFileSizeMb ?? DefaultMaxFileSizeMb : null,
             Group = f.Group,
             ShowWhen = f.ShowWhen != null ? new DynamicFormConditionViewModel
             {
                 Field = f.ShowWhen.Field,
-                Operator = f.ShowWhen.Operator,
+                // The page evaluates canonical operator names only.
+                Operator = ConditionOperators.Normalize(f.ShowWhen.Operator) ?? "eq",
                 Value = f.ShowWhen.Value
             } : null
         }).ToList();
@@ -468,6 +757,18 @@ public class DynamicFormStepHandler : IStepHandler
     private static string GetCurrentCulture(StepExecutionContext context)
     {
         return CultureInfo.CurrentCulture.Name ?? "en";
+    }
+
+    private static string? ResolveLocalizedProp(JsonElement element, string propertyName, string locale)
+    {
+        if (!element.TryGetPropertyIgnoreCase(propertyName, out var prop)) return null;
+        if (prop.ValueKind == JsonValueKind.String) return prop.GetString();
+        if (prop.ValueKind == JsonValueKind.Object)
+        {
+            var ls = System.Text.Json.JsonSerializer.Deserialize<Oluso.Core.Locale.LocalizedString>(prop.GetRawText());
+            return ls?.Resolve(locale);
+        }
+        return null;
     }
 
     private static string? GetLocalizedText(
@@ -552,6 +853,43 @@ internal class FormFieldConfig
     /// The property name to use when persisting to user. Defaults to ClaimType or Name.
     /// </summary>
     public string? UserPropertyName { get; set; }
+
+    /// <summary>
+    /// Where the field's value should be auto-populated from when the form
+    /// is first rendered. <c>null</c> or <c>"user_input"</c> means the user
+    /// fills it. <c>"query"</c> reads from the request query string,
+    /// <c>"cookie"</c> from request cookies, <c>"session"</c> from the
+    /// journey-state data bag. Auto-populated fields are typically rendered
+    /// <see cref="Hidden"/>.
+    /// </summary>
+    public string? Source { get; set; }
+
+    /// <summary>
+    /// Key in the source bag — e.g. <c>"utm_campaign"</c> when <see cref="Source"/>
+    /// is <c>"query"</c>. Falls back to <see cref="Name"/> when unset.
+    /// </summary>
+    public string? SourceKey { get; set; }
+
+    /// <summary>
+    /// Phone fields only: <c>"international"</c> (default) shows a country picker and
+    /// stores E.164; <c>"local"</c> takes the number as dialled locally, unchanged.
+    /// </summary>
+    public string? PhoneFormat { get; set; }
+
+    /// <summary>ISO 3166-1 alpha-2 country preselected in the picker; defaults to the journey culture's region.</summary>
+    public string? PhoneDefaultCountry { get; set; }
+
+    /// <summary>File fields: <see cref="FileContentSniffer"/> kinds accepted.</summary>
+    public List<string>? FileTypes { get; set; }
+
+    /// <summary>File fields: largest file accepted, in megabytes.</summary>
+    public int? MaxFileSizeMb { get; set; }
+
+    /// <summary>File fields: most files accepted.</summary>
+    public int? MaxFiles { get; set; }
+
+    /// <summary>File fields: ask phones to open the rear camera.</summary>
+    public bool Capture { get; set; }
 }
 
 internal class FormFieldOption
@@ -607,6 +945,24 @@ public class DynamicFormFieldViewModel
     public bool Hidden { get; set; }
     public string? Group { get; set; }
     public DynamicFormConditionViewModel? ShowWhen { get; set; }
+
+    /// <summary>"international" (country picker + E.164) or "local"; phone fields only.</summary>
+    public string? PhoneFormat { get; set; }
+    /// <summary>Countries offered by the picker, when the field is an international phone.</summary>
+    public IReadOnlyList<CountryInfo>? PhoneCountries { get; set; }
+    /// <summary>Selected country code for the picker.</summary>
+    public string? PhoneCountry { get; set; }
+    /// <summary>The number without the country code, as typed.</summary>
+    public string? PhoneNational { get; set; }
+
+    /// <summary>File fields: the input's accept attribute.</summary>
+    public string? FileAccept { get; set; }
+
+    /// <summary>File fields: open the camera on phones.</summary>
+    public bool FileCapture { get; set; }
+
+    public int? MaxFiles { get; set; }
+    public int? MaxFileSizeMb { get; set; }
 }
 
 public class DynamicFormOptionViewModel

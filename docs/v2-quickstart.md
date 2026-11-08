@@ -1,10 +1,12 @@
 # Oluso v2 Quick Start Guide
 
-This guide covers the modular setup options for Oluso Identity Server v2.
+This guide covers the modular setup options for Oluso Identity Server v2. The reference host for everything
+below is `samples/Oluso.Sample/Program.cs`.
 
 ## Table of Contents
 
 - [Project Structure](#project-structure)
+- [Run the Sample](#run-the-sample)
 - [Basic Setup](#basic-setup)
 - [User Journey Engine](#user-journey-engine)
 - [Step Handlers](#step-handlers)
@@ -21,6 +23,8 @@ This guide covers the modular setup options for Oluso Identity Server v2.
   - [Custom Authentication Steps](#custom-authentication-steps)
 - [Journey Policies](#journey-policies)
 - [Signing Keys](#signing-keys)
+- [Enterprise Modules](#enterprise-modules)
+- [Complete Example](#complete-example)
 - [Events, Webhooks, and Audit Logging](#events-webhooks-and-audit-logging)
 - [Webhooks](#webhooks)
 - [Audit Logging](#audit-logging)
@@ -36,65 +40,157 @@ Oluso v2 organizes code into `backend` and `frontend` folders within `src/`:
 
 ```
 src/
-├── backend/                    # .NET projects
-│   ├── Oluso/                  # Core identity server
-│   ├── Oluso.Core/             # Domain entities and interfaces
-│   ├── Oluso.EntityFramework/  # EF Core stores
-│   ├── Oluso.Admin/            # Admin API controllers
-│   ├── Oluso.Account/          # Account API (end-user self-service)
-│   ├── Oluso.UI/               # Razor views and UI components
-│   └── Oluso.Enterprise/       # Enterprise add-ons
-│       ├── Fido2/              # FIDO2/Passkeys
-│       ├── Saml/               # SAML IdP
-│       ├── Scim/               # SCIM provisioning
-│       └── Ldap/               # LDAP authentication
+├── backend/                        # .NET 10 projects
+│   ├── Oluso/                      # Identity server: OIDC endpoints, journeys, builder extensions
+│   ├── Oluso.Core/                 # Domain entities, interfaces, events, licensing
+│   ├── Oluso.EntityFramework/      # EF Core stores, OlusoDbContext, migrations
+│   ├── Oluso.Admin/                # Admin API controllers
+│   ├── Oluso.Account/              # Account API (end-user self-service)
+│   ├── Oluso.UI/                   # Razor pages and journey views
+│   ├── Oluso.Telemetry.Abstractions/
+│   ├── Oluso.Telemetry.OpenTelemetry/
+│   └── Oluso.Enterprise/           # Enterprise add-ons
+│       ├── Fido2/                  # FIDO2/Passkeys
+│       ├── Saml/                   # SAML 2.0 IdP and SP
+│       ├── Scim/                   # SCIM 2.0 provisioning
+│       ├── Ldap/                   # LDAP authentication and LDAP server
+│       ├── Verification/           # Business (KYB) verification
+│       ├── AzureKeyVault/          # Key Vault signing keys and certificates
+│       ├── AzureBlob/              # Blob file storage
+│       ├── AzureDataProtection/    # Shared Data Protection key ring
+│       ├── AzureWebhooks/          # Queue-based webhook retries
+│       └── Cloudflare/             # Custom hostnames
 │
-├── frontend/                   # React/TypeScript projects
-│   ├── package.json            # npm workspace root
-│   ├── AdminUI/                # Admin dashboard SPA
-│   ├── AccountUI/              # End-user self-service portal
-│   ├── ui-core/                # Shared components (@oluso/ui-core)
-│   └── libs/                   # UI plugin packages
-│       ├── fido2-ui/           # @oluso/fido2-ui
-│       ├── saml-ui/            # @oluso/saml-ui
-│       ├── scim-ui/            # @oluso/scim-ui
-│       └── telemetry-ui/       # @oluso/telemetry-ui
+└── frontend/                       # Angular / Nx workspace
+    ├── package.json
+    ├── apps/
+    │   ├── admin-standalone/       # Admin dashboard SPA
+    │   ├── account-standalone/     # End-user self-service portal
+    │   └── workspace-standalone/   # Workspace SPA
+    └── libs/
+        ├── ui-core/                # Shared components and plugin models (@oluso/ui-core)
+        ├── admin-ui/ account-ui/ workspace-ui/ journey-ui/ auth/
+        └── plugins/                # UI plugins
+            ├── fido2/              # @oluso/plugin-fido2
+            ├── ldap/               # @oluso/plugin-ldap
+            ├── saml/               # @oluso/plugin-saml
+            ├── scim/               # @oluso/plugin-scim
+            ├── telemetry/          # @oluso/plugin-telemetry
+            └── verification/       # @oluso/plugin-verification
 ```
 
-### Frontend Workspaces
+The JavaScript/TypeScript client SDK (`@oluso/sdk`) lives in `sdk/js`; see `sdk/js/README.md`.
 
-The frontend uses npm workspaces. Run commands from `src/frontend/`:
+### NuGet Packages
+
+The backend projects are published to NuGet with the `Syndew.` prefix on the package ID (assembly names and
+namespaces stay `Oluso.*`):
+
+| Package | Contains |
+|---------|----------|
+| `Syndew.Oluso` | `AddOluso`, the OIDC server, journeys, EF store registration (brings in `Syndew.Oluso.Core` and `Syndew.Oluso.EntityFramework`) |
+| `Syndew.Oluso.UI` | Razor login, consent and journey views |
+| `Syndew.Oluso.Admin` | Admin API (`AddOlusoAdmin`) |
+| `Syndew.Oluso.Account` | Account API (`AddOlusoAccount`) |
+| `Syndew.Oluso.Enterprise.Fido2`, `.Saml`, `.Scim`, `.Ldap`, `.Verification`, `.AzureKeyVault`, ... | Enterprise add-ons |
+| `Syndew.Oluso.Telemetry.OpenTelemetry` | OpenTelemetry pipeline and telemetry API |
+
+```bash
+dotnet add package Syndew.Oluso
+dotnet add package Syndew.Oluso.UI
+dotnet add package Syndew.Oluso.Admin
+dotnet add package Syndew.Oluso.Account
+```
+
+Inside this repository, reference the projects directly instead, as `samples/Oluso.Sample/Oluso.Sample.csproj`
+does.
+
+### Frontend Workspace
+
+The frontend is an Nx workspace. Run commands from `src/frontend/`:
 
 ```bash
 cd src/frontend
-npm install              # Install all workspace dependencies
-npm run build -w AdminUI # Build AdminUI
-npm run dev -w AdminUI   # Dev server for AdminUI
+npm install                          # Install dependencies
+npx nx serve admin-standalone        # Admin UI dev server (port 4201)
+npx nx serve account-standalone      # Account UI dev server (port 4200)
+npx nx build admin-standalone        # Production build
 ```
+
+Each app reads its backend URL at runtime from `public/config.js` (`serverUrl`, default
+`http://localhost:5050`).
 
 ### UI Plugin Architecture
 
-Both Admin and Account UIs use a plugin system for extensibility. Plugins are defined in `@oluso/ui-core`:
+The Admin and Account UIs are extended with plugins. The plugin models (`AdminPlugin`, `AccountPlugin`) are
+defined in `@oluso/ui-core`:
 
 ```typescript
-import { AdminUIPlugin, AccountUIPlugin } from '@oluso/ui-core';
+import { AdminPlugin, AccountPlugin } from '@oluso/ui-core';
 
-// Admin plugin (for AdminUI)
-const samlPlugin: AdminUIPlugin = {
-  id: 'saml',
-  name: 'SAML',
-  navigation: [{ id: 'saml', name: 'SAML Apps', href: '/saml', icon: ShieldCheckIcon }],
-  routes: [{ path: '/saml', component: SamlAppsPage }],
+// Admin plugin (for the Admin UI)
+export const SAML_PLUGIN: AdminPlugin = {
+  name: 'oluso-saml',
+  version: '1.0.0',
+  routes: [{ path: 'saml', children: SAML_ROUTES }],
+  navItems: [
+    { id: 'saml', label: 'SAML', path: '/saml', icon: 'shield-check', order: 10 },
+  ],
 };
 
-// Account plugin (for AccountUI - end-user self-service)
-const passkeysPlugin: AccountUIPlugin = {
-  id: 'passkeys',
-  name: 'Passkeys',
-  navigation: [{ label: 'Passkeys', path: '/security/passkeys', group: 'settings' }],
-  routes: [{ path: '/security/passkeys', component: PasskeysPage }],
+// Account plugin (for the Account UI - end-user self-service)
+export const FIDO2_ACCOUNT_PLUGIN: AccountPlugin = {
+  name: 'oluso-fido2-account',
+  version: '1.0.0',
+  routes: [{ path: 'security/passkeys', component: PasskeysPageComponent }],
+  securityTabs: [
+    { id: 'passkeys', label: 'Passkeys', icon: 'fingerprint', component: PasskeysPageComponent, order: 30 },
+  ],
 };
 ```
+
+Plugins are registered at app start-up through `PluginService` (see
+`apps/admin-standalone/src/app/app.config.ts`):
+
+```typescript
+pluginService.registerAdminPlugin(SAML_PLUGIN);
+pluginService.registerAccountPlugin(FIDO2_ACCOUNT_PLUGIN);
+```
+
+---
+
+## Run the Sample
+
+`samples/Oluso.Sample` wires up every public module. Its `appsettings.json` uses SQLite and localhost URLs
+(the frontends on ports 4200 to 4202), with outgoing email and SMS turned off. The settings it needs are:
+
+```json
+{
+  "ConnectionStrings": {
+    "OlusoDb": "Data Source=Oluso.db"
+  },
+  "Oluso": {
+    "IssuerUri": "http://localhost:5050",
+    "Database": { "Provider": "Sqlite" }
+  }
+}
+```
+
+```bash
+cd samples/Oluso.Sample
+dotnet run
+```
+
+The server listens on `http://localhost:5050`. On start-up it applies all database migrations
+(see [migrations.md](./migrations.md)) and seeds a super admin (`superadmin@oluso.local` / `SuperAdmin123!`),
+test users and clients. Swagger UI is at `/swagger` in Development. Every seeded account, client and
+secret is listed under [Test Credentials](../README.md#test-credentials) in the README.
+
+To run it in Docker with the portals behind Caddy, use `docker compose up` from the repository root
+(`https://localhost:8443`). [docker.md](./docker.md) covers databases, volumes, configuration, running on a
+real domain and troubleshooting.
+
+For production settings, start from `templates/appsettings.Production.json`.
 
 ---
 
@@ -102,39 +198,141 @@ const passkeysPlugin: AccountUIPlugin = {
 
 ### Minimal Configuration
 
+A working host needs the Oluso builder, a store, MVC with the Oluso conventions applied, and the Oluso
+middleware:
+
 ```csharp
-builder.Services.AddOluso(builder.Configuration)
-    .AddUserJourneysWithDefaults();
+using Oluso;
+using Oluso.EntityFramework;
+using Oluso.UI;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var olusoBuilder = builder.Services.AddOluso(builder.Configuration)
+    .AddMultiTenancy()
+    .AddUserJourneyEngine()
+    .AddSigningKeys()
+    .AddEntityFrameworkStoresForProvider(
+        builder.Configuration.GetValue<string>("Oluso:Database:Provider", "Sqlite")!,
+        builder.Configuration.GetConnectionString("OlusoDb")!);
+
+// Oluso's protocol endpoints are MVC controllers; ApplyOlusoConventions adds their routes
+builder.Services.AddControllers()
+    .ApplyOlusoConventions(olusoBuilder);
+
+// Login, consent and journey pages
+builder.Services.AddOlusoUI();
+builder.Services.AddRazorPages();
+
+// Empty "Oluso" policy: Oluso's ICorsPolicyProvider builds it from Oluso:Cors:Origins and client origins
+builder.Services.AddCors(options => options.AddPolicy("Oluso", _ => { }));
+
+var app = builder.Build();
+
+await app.MigrateOlusoDatabaseAsync();
+
+app.UseStaticFiles();
+app.UseRouting();
+app.UseCors("Oluso");
+app.UseAuthentication();
+app.UseOluso();       // Host validation, tenant resolution, sign-in rate limits. After UseAuthentication.
+app.UseOlusoUI();
+app.UseAuthorization();
+
+app.MapRazorPages();
+app.MapControllers();
+app.MapOlusoRealtime(); // SignalR hub used by the frontends
+
+app.Run();
 ```
 
 Configuration in `appsettings.json`:
+
 ```json
 {
+  "ConnectionStrings": {
+    "OlusoDb": "Data Source=Oluso.db"
+  },
   "Oluso": {
-    "IssuerUri": "https://auth.example.com"
+    "IssuerUri": "https://auth.example.com",
+    "Database": { "Provider": "Sqlite" },
+    "Cors": { "Origins": [ "https://app.example.com" ] }
   }
 }
 ```
 
-### With Entity Framework
+`Oluso:Database:Provider` accepts `Sqlite` (default), `SqlServer` or `PostgreSQL` (`Postgres`).
+`MigrateOlusoDatabaseAsync()` creates and upgrades the schema on start-up, so there is no separate migration
+step.
+
+`AddOluso` already registers the OIDC endpoints, the event service, feature gating and database-driven external
+providers. The OIDC endpoints are served at `/.well-known/openid-configuration`, `/.well-known/jwks`,
+`/connect/authorize`, `/connect/token`, `/connect/userinfo`, `/connect/revocation`, `/connect/introspect`,
+`/connect/endsession`, `/connect/deviceauthorization`, `/connect/par` and `/connect/ciba`.
+
+Clients, users and tenants live in the database. Create them through the Admin API/UI, or seed them at start-up
+the way `samples/Oluso.Sample/SeedData.cs` does.
+
+### Admin and Account APIs
+
+```csharp
+using Oluso.Admin;
+using Oluso.Account;
+
+var olusoBuilder = builder.Services.AddOluso(builder.Configuration)
+    // ...
+    .AddAdminApi(mvc => mvc
+        .AddOlusoAdmin()      // /api/admin/*
+        .AddOlusoAccount());  // /api/account/*
+```
+
+The MVC configuration is applied by `ApplyOlusoConventions(olusoBuilder)`, so keep that call on
+`AddControllers()`.
+
+### With Your Own DbContext
+
+Instead of the built-in `OlusoDbContext`, the stores can use your context if it implements `IOlusoDbContext`:
 
 ```csharp
 builder.Services.AddOluso(builder.Configuration)
     .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
+    .AddUserJourneyEngine();
 ```
 
-### With Custom Options
+You then own that context's migrations. The provider-specific helpers (`AddEntityFrameworkStoresSqlite`,
+`AddEntityFrameworkStoresSqlServer`, `AddEntityFrameworkStoresNpgsql`, or `AddEntityFrameworkStoresForProvider`)
+use Oluso's own migrations.
+
+### Core Options
+
+Core options bind from the `Oluso` configuration section:
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `Oluso:IssuerUri` | Public issuer URL; also the base domain for tenant subdomains | none |
+| `Oluso:WorkspaceBaseUrl` | Base URL of the workspace SPA for user-facing links | `IssuerUri` |
+| `Oluso:RunSigningKeyMaintenanceInProcess` | Run the hourly signing key maintenance in this host | `true` |
+| `Oluso:RunDomainChecksInProcess` | Run the custom domain and email domain checks in this host; with several instances, leave it on in exactly one | `true` |
+| `Oluso:EnableOrganizationSignIn` | Offer "Sign in with your organisation" on platform login pages | `true` |
+| `Oluso:HostValidation:Enabled` | Reject requests for unknown hosts | `false` |
+| `Oluso:Cors:Origins` | Platform CORS origins | empty |
+
+Set them in configuration rather than in code: the `AddOluso(configuration, options => ...)` overload only
+changes the builder's own copy and does not reach `IOptions<OlusoOptions>`.
+
+### Multi-Tenancy Options
 
 ```csharp
-builder.Services.AddOluso(builder.Configuration, options =>
-{
-    options.IssuerUri = "https://auth.example.com";
-    options.AutoMigrate = true;
-})
-.AddEntityFrameworkStores<ApplicationDbContext>()
-.AddUserJourneysWithDefaults();
+builder.Services.AddOluso(builder.Configuration)
+    .AddMultiTenancy(options =>
+    {
+        // Header (X-Tenant-Id) and query string (?tenant=) are always checked first
+        options.ResolutionStrategy = TenantResolutionStrategy.Subdomain; // acme.auth.example.com -> "acme"
+        options.BaseDomain = "auth.example.com"; // Derived from IssuerUri when not set
+    });
 ```
+
+`TenantResolutionStrategy` values: `Header` (default), `Subdomain`, `Domain`.
 
 ---
 
@@ -146,14 +344,14 @@ The User Journey Engine provides a flexible, policy-driven authentication flow s
 
 ```csharp
 builder.Services.AddOluso(builder.Configuration)
-    .AddUserJourneysWithDefaults();
+    .AddUserJourneyEngine();
 ```
 
 This registers all built-in step handlers:
 
 **UI Steps:**
 - `local_login` - Username/password authentication
-- `composite_login` - Combined local and external login
+- `composite_login` - Combined local, passkey and external login
 - `signup` - User registration
 - `mfa` - Multi-factor authentication
 - `consent` - OAuth scope consent
@@ -162,9 +360,11 @@ This registers all built-in step handlers:
 - `external_login` - Social/external identity providers
 - `passwordless_email` - Email OTP/magic links
 - `passwordless_sms` - SMS OTP
+- `email_verification` - Email address verification
 - `link_account` - Account linking
 - `terms_acceptance` - Terms acceptance step
 - `dynamic_form` - Custom form collection
+- `custom_page` - Custom content page
 - `captcha` - CAPTCHA verification
 
 **Logic Steps (no UI):**
@@ -175,8 +375,27 @@ This registers all built-in step handlers:
 - `webhook` - Webhook notifications
 - `create_user` - User creation
 - `update_user` - User profile update
+- `assign_roles` - Role assignment
+- `custom_plugin` - Dispatches to a registered custom step or plugin
+
+Enterprise modules add their own steps (for example `fido2_login`, `fido2_register`, `saml`, `ldap`).
+
+Engine options bind from `Oluso:UserJourneys` and can be changed in code:
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine(options =>
+    {
+        options.DefaultJourneyTimeoutMinutes = 30;
+        options.MaxStepsPerJourney = 50;
+        options.PluginDirectory = "/plugins";
+        options.EnablePluginHotReload = true;
+    });
+```
 
 ### Selective Step Registration
+
+`AddUserJourneys` registers the core journey services and only the steps you add:
 
 ```csharp
 builder.Services.AddOluso(builder.Configuration)
@@ -189,13 +408,16 @@ builder.Services.AddOluso(builder.Configuration)
         journeys.AddPasswordReset();
         journeys.AddExternalLogin();
 
-        // Or add all built-in steps at once
+        // Or add all built-in UI steps at once
         // journeys.AddBuiltInSteps();
 
         // Or add all including logic steps
         // journeys.AddAllBuiltInSteps();
     });
 ```
+
+`AddUserJourneys` can also follow `AddUserJourneyEngine()` to change stores (see
+[State Storage](#state-storage)).
 
 ---
 
@@ -209,7 +431,7 @@ Username/password authentication with lockout support.
 journeys.AddLocalLogin();
 ```
 
-**View:** `Views/Journey/_LocalLogin.cshtml`
+**View:** `Views/Shared/Journey/_LocalLogin.cshtml`
 
 **Policy Configuration:**
 ```json
@@ -221,12 +443,16 @@ journeys.AddLocalLogin();
       "configuration": {
         "allowRememberMe": true,
         "allowSelfRegistration": false,
-        "allowForgotPassword": true
+        "allowForgotPassword": true,
+        "showPasskey": false
       }
     }
   ]
 }
 ```
+
+On success the step takes the `auth_local` branch (or `auth_passkey` after a passkey sign-in) when the policy
+defines one, and otherwise continues to the next step.
 
 ### Sign Up
 
@@ -236,7 +462,7 @@ User registration with email verification and terms acceptance.
 journeys.AddSignUp();
 ```
 
-**View:** `Views/Journey/_SignUp.cshtml`
+**View:** `Views/Shared/Journey/_SignUp.cshtml`
 
 **Policy Configuration:**
 ```json
@@ -249,9 +475,10 @@ journeys.AddSignUp();
         "allowSelfRegistration": true,
         "requireEmailVerification": true,
         "requireTermsAcceptance": true,
-        "allowedEmailDomains": "example.com,company.org",
+        "allowedEmailDomains": ["example.com", "company.org"],
         "termsUrl": "https://example.com/terms",
-        "privacyUrl": "https://example.com/privacy"
+        "privacyUrl": "https://example.com/privacy",
+        "defaultRoles": ["User"]
       }
     }
   ]
@@ -267,11 +494,13 @@ journeys.AddMfa();
 ```
 
 **Views:**
-- `Views/Journey/_MfaVerify.cshtml` - Code entry
-- `Views/Journey/_MfaSetup.cshtml` - Method selection
-- `Views/Journey/_MfaTotpSetup.cshtml` - Authenticator app setup
-- `Views/Journey/_MfaEmailSetup.cshtml` - Email verification setup
-- `Views/Journey/_MfaRecoveryCodes.cshtml` - Recovery codes display
+- `Views/Shared/Journey/_MfaVerify.cshtml` - Code entry
+- `Views/Shared/Journey/_MfaSetup.cshtml` - Method selection
+- `Views/Shared/Journey/_MfaTotpSetup.cshtml` - Authenticator app setup
+- `Views/Shared/Journey/_MfaEmailSetup.cshtml` - Email verification setup
+- `Views/Shared/Journey/_MfaSmsSetup.cshtml` - SMS verification setup
+- `Views/Shared/Journey/_MfaRecoveryCodes.cshtml` - Recovery codes display
+- `Views/Shared/Journey/_MfaRecoveryVerify.cshtml` - Recovery code entry
 
 **Policy Configuration:**
 ```json
@@ -282,17 +511,19 @@ journeys.AddMfa();
       "type": "mfa",
       "configuration": {
         "required": true,
-        "methods": ["totp", "email"]
+        "methods": ["totp", "email"],
+        "allowSetup": true,
+        "rememberDevice": true,
+        "rememberDeviceDays": 30
       }
     }
   ]
 }
 ```
 
-**Custom MFA Service:**
-```csharp
-builder.Services.AddScoped<IMfaService, CustomMfaService>();
-```
+`methods` defaults to `["totp", "email"]`; `sms` is also supported.
+
+**Custom MFA Service:** see [MFA Configuration](#mfa-configuration).
 
 ### Consent
 
@@ -302,7 +533,7 @@ OAuth scope consent screen for client applications.
 journeys.AddConsent();
 ```
 
-**View:** `Views/Journey/_Consent.cshtml`
+**View:** `Views/Shared/Journey/_Consent.cshtml`
 
 **Policy Configuration:**
 ```json
@@ -310,7 +541,11 @@ journeys.AddConsent();
   "steps": [
     {
       "id": "consent",
-      "type": "consent"
+      "type": "consent",
+      "configuration": {
+        "allowRemember": true,
+        "rememberDays": 30
+      }
     }
   ]
 }
@@ -325,9 +560,9 @@ journeys.AddPasswordReset();
 ```
 
 **Views:**
-- `Views/Journey/_PasswordResetRequest.cshtml` - Email entry
-- `Views/Journey/_PasswordResetVerify.cshtml` - Code verification
-- `Views/Journey/_PasswordResetNewPassword.cshtml` - New password entry
+- `Views/Shared/Journey/_PasswordResetRequest.cshtml` - Email entry
+- `Views/Shared/Journey/_PasswordResetVerify.cshtml` - Code verification
+- `Views/Shared/Journey/_PasswordResetNewPassword.cshtml` - New password entry
 
 **Policy Configuration:**
 ```json
@@ -349,6 +584,11 @@ journeys.AddPasswordReset();
 }
 ```
 
+Reset and verification emails are sent through the messaging services; register them with
+`builder.Services.AddMessaging(builder.Configuration)` (namespace `Oluso.Messaging`) and configure
+`Oluso:Messaging:Email` (`Provider`, `FromAddress`, `FromName`, and the provider's settings such as
+`SendGrid:ApiKey`).
+
 ### External Login
 
 Social and enterprise identity provider authentication.
@@ -357,7 +597,7 @@ Social and enterprise identity provider authentication.
 journeys.AddExternalLogin();
 ```
 
-**View:** `Views/Journey/_ExternalLogin.cshtml`
+**View:** `Views/Shared/Journey/_ExternalLogin.cshtml`
 
 **Policy Configuration:**
 ```json
@@ -367,7 +607,7 @@ journeys.AddExternalLogin();
       "id": "external",
       "type": "external_login",
       "configuration": {
-        "providers": ["google", "microsoft", "github"],
+        "providers": ["Google", "Microsoft", "GitHub"],
         "autoRedirect": false,
         "autoProvision": true
       }
@@ -380,7 +620,16 @@ journeys.AddExternalLogin();
 
 ## State Storage
 
-### In-Memory (Default, Development Only)
+Journey state is held by an `IJourneyStateStore`.
+
+| Setup | Store |
+|-------|-------|
+| Journey engine without EF stores | `InMemoryJourneyStateStore` (single instance, development only) |
+| With `AddEntityFrameworkStores*` | `JourneyStateStore`, persisted in the Oluso database |
+| `journeys.UseDistributedCache()` | `DistributedCacheJourneyStateStore` on `IDistributedCache` |
+| `journeys.UseStateStore<T>()` | Your own store |
+
+### In-Memory (Development Only)
 
 ```csharp
 journeys.UseStateStore<InMemoryJourneyStateStore>();
@@ -395,13 +644,11 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.Configuration = "localhost:6379";
 });
 
-// Then use it for journey state
-builder.Services.AddOluso()
-    .AddUserJourneys(journeys =>
-    {
-        journeys.AddBuiltInSteps();
-        journeys.UseDistributedCache();
-    });
+// Then use it for journey state. Call it after the EF stores so it replaces their store.
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddUserJourneys(journeys => journeys.UseDistributedCache());
 ```
 
 **Configuration Options:**
@@ -419,11 +666,11 @@ builder.Services.AddSingleton(new DistributedCacheJourneyStateStoreOptions
 ```csharp
 public class DatabaseJourneyStateStore : IJourneyStateStore
 {
-    public Task<JourneyState?> GetAsync(string journeyId, CancellationToken ct) { ... }
-    public Task SaveAsync(JourneyState state, CancellationToken ct) { ... }
-    public Task DeleteAsync(string journeyId, CancellationToken ct) { ... }
-    public Task<IEnumerable<JourneyState>> GetByUserAsync(string userId, CancellationToken ct) { ... }
-    public Task CleanupExpiredAsync(CancellationToken ct) { ... }
+    public Task<JourneyState?> GetAsync(string journeyId, CancellationToken ct = default) { ... }
+    public Task SaveAsync(JourneyState state, CancellationToken ct = default) { ... }
+    public Task DeleteAsync(string journeyId, CancellationToken ct = default) { ... }
+    public Task<IEnumerable<JourneyState>> GetByUserAsync(string userId, CancellationToken ct = default) { ... }
+    public Task CleanupExpiredAsync(CancellationToken ct = default) { ... }
 }
 
 // Register
@@ -436,35 +683,46 @@ journeys.UseStateStore<DatabaseJourneyStateStore>();
 
 ### Option 1: Default Views (Oluso.UI Package)
 
-Install the `Oluso.UI` NuGet package for ready-to-use views:
+Add the `Syndew.Oluso.UI` NuGet package (or a project reference to `src/backend/Oluso.UI`) for ready-to-use
+views:
 
-```xml
-<PackageReference Include="Oluso.UI" Version="1.0.0" />
+```bash
+dotnet add package Syndew.Oluso.UI
 ```
 
-Views are automatically discovered from the Razor Class Library.
+```csharp
+builder.Services.AddOlusoUI();
+builder.Services.AddRazorPages();
+// ...
+app.UseOlusoUI();
+app.MapRazorPages();
+```
+
+Views are discovered from the Razor Class Library.
 
 ### Option 2: Custom Views (Recommended for Production)
 
-Create your own views in your host application:
+Steps render views by name (for example `Journey/_LocalLogin`). Create views with the same names in your host
+application:
 
 ```
 YourApp/
 └── Views/
-    └── Journey/
-        ├── _LocalLogin.cshtml
-        ├── _SignUp.cshtml
-        ├── _MfaVerify.cshtml
-        ├── _MfaSetup.cshtml
-        ├── _MfaTotpSetup.cshtml
-        ├── _MfaEmailSetup.cshtml
-        ├── _MfaRecoveryCodes.cshtml
-        ├── _Consent.cshtml
-        ├── _PasswordResetRequest.cshtml
-        ├── _PasswordResetVerify.cshtml
-        ├── _PasswordResetNewPassword.cshtml
-        ├── _ExternalLogin.cshtml
-        └── _Lockout.cshtml
+    └── Shared/
+        └── Journey/
+            ├── _LocalLogin.cshtml
+            ├── _SignUp.cshtml
+            ├── _MfaVerify.cshtml
+            ├── _MfaSetup.cshtml
+            ├── _MfaTotpSetup.cshtml
+            ├── _MfaEmailSetup.cshtml
+            ├── _MfaRecoveryCodes.cshtml
+            ├── _Consent.cshtml
+            ├── _PasswordResetRequest.cshtml
+            ├── _PasswordResetVerify.cshtml
+            ├── _PasswordResetNewPassword.cshtml
+            ├── _ExternalLogin.cshtml
+            └── _Lockout.cshtml
 ```
 
 Host application views take precedence over package views.
@@ -486,12 +744,15 @@ Each step handler provides a strongly-typed view model:
 
 ## MFA Configuration
 
+The EF stores register `IdentityMfaService`, built on ASP.NET Core Identity. To replace it, implement
+`IMfaService` and register it after the EF stores.
+
 ### Implement IMfaService
 
 ```csharp
 public class CustomMfaService : IMfaService
 {
-    public Task<MfaSetupResult> GenerateTotpSetupAsync(string userId, CancellationToken ct)
+    public Task<MfaSetupResult> GenerateTotpSetupAsync(string userId, CancellationToken ct = default)
     {
         // Generate TOTP shared key and QR code URI
         var key = GenerateSecretKey();
@@ -500,26 +761,27 @@ public class CustomMfaService : IMfaService
         return Task.FromResult(MfaSetupResult.Success(key, uri));
     }
 
-    public Task<bool> VerifyTotpCodeAsync(string userId, string code, CancellationToken ct)
+    public Task<bool> VerifyTotpCodeAsync(string userId, string code, CancellationToken ct = default)
     {
         // Verify TOTP code
         return Task.FromResult(ValidateTotpCode(userId, code));
     }
 
-    public Task<bool> SendVerificationCodeAsync(string userId, string provider, CancellationToken ct)
+    public Task<bool> SendVerificationCodeAsync(string userId, string provider, CancellationToken ct = default)
     {
         // Send code via email/SMS
         return Task.FromResult(true);
     }
 
-    public Task<MfaEnableResult> EnableMfaAsync(string userId, string provider, CancellationToken ct)
+    public Task<MfaEnableResult> EnableMfaAsync(string userId, string provider, CancellationToken ct = default)
     {
         // Enable MFA and generate recovery codes
         var recoveryCodes = GenerateRecoveryCodes(10);
         return Task.FromResult(MfaEnableResult.Success(recoveryCodes));
     }
 
-    // ... implement other methods
+    // Also: VerifyEmailCodeAsync, VerifySmsCodeAsync, DisableMfaAsync,
+    // GetEnabledProvidersAsync, GenerateRecoveryCodesAsync, VerifyRecoveryCodeAsync
 }
 
 // Register
@@ -535,77 +797,55 @@ External authentication allows users to sign in using their existing accounts fr
 Oluso provides comprehensive external authentication support with:
 
 - **Built-in Social Providers**: Google, Microsoft, Facebook, Twitter/X, GitHub, LinkedIn, and Apple Sign In
+- **Generic Providers**: any OpenID Connect or OAuth 2.0 provider
 - **Multi-Tenant Support**: Each tenant can have their own OAuth credentials configured in the database
 - **Proxy Mode**: Act as a federation broker without storing user data locally
 - **Token Caching**: Cache external tokens for subsequent API calls to upstream providers
 - **Claim Transformation**: Filter and transform claims from external providers
 
-### Quick Start: Static Providers
+### Quick Start: Database-Configured Providers
 
-For simple single-tenant setups where all users share the same OAuth app credentials, configure providers directly in your startup code:
+`AddOluso` turns on database-driven providers by default (`AddDynamicExternalProviders()`), and the EF stores
+supply the provider store. Add a provider for a tenant in the Admin UI (Identity Providers) or through
+`/api/admin/identity-providers`, then reference its scheme from an `external_login` or `composite_login` step.
+No code is needed per provider, and changes take effect without a restart.
 
-```csharp
-builder.Services.AddOluso(configuration)
-    .AddExternalAuthentication()
-    .AddGoogle(
-        clientId: configuration["Auth:Google:ClientId"],
-        clientSecret: configuration["Auth:Google:ClientSecret"])
-    .AddGitHub(
-        clientId: configuration["Auth:GitHub:ClientId"],
-        clientSecret: configuration["Auth:GitHub:ClientSecret"])
-    .AddMicrosoftAccount(
-        clientId: configuration["Auth:Microsoft:ClientId"],
-        clientSecret: configuration["Auth:Microsoft:ClientSecret"]);
-```
+### Supported Provider Types
 
-### Supported Providers
+Each provider requires credentials from its developer console:
 
-Oluso includes built-in support for the most popular OAuth providers. Each provider requires credentials from their developer console:
+| Provider | Provider Type | Required Settings | Developer Console |
+|----------|---------------|-------------------|-------------------|
+| Google | `Google` | ClientId, ClientSecret | [Google Cloud Console](https://console.cloud.google.com/) |
+| Microsoft | `Microsoft` | ClientId, ClientSecret | [Azure Portal](https://portal.azure.com/) |
+| Facebook | `Facebook` | AppId (ClientId), AppSecret (ClientSecret) | [Meta Developer Portal](https://developers.facebook.com/) |
+| Twitter/X | `Twitter` | ConsumerKey (ClientId), ConsumerSecret (ClientSecret) | [Twitter Developer Portal](https://developer.twitter.com/) |
+| GitHub | `GitHub` | ClientId, ClientSecret | [GitHub Developer Settings](https://github.com/settings/developers) |
+| LinkedIn | `LinkedIn` | ClientId, ClientSecret | [LinkedIn Developer Portal](https://developer.linkedin.com/) |
+| Apple | `Apple` | ClientId, TeamId, KeyId, PrivateKey | [Apple Developer Portal](https://developer.apple.com/) |
+| Any OpenID Connect provider | `Oidc` | ClientId, ClientSecret, Authority or MetadataAddress | |
+| Any OAuth 2.0 provider | `OAuth` | ClientId, ClientSecret, authorization, token and user info endpoints | |
 
-| Provider | Method | Required Parameters | Developer Console |
-|----------|--------|---------------------|-------------------|
-| Google | `AddGoogle()` | ClientId, ClientSecret | [Google Cloud Console](https://console.cloud.google.com/) |
-| Microsoft | `AddMicrosoftAccount()` | ClientId, ClientSecret | [Azure Portal](https://portal.azure.com/) |
-| Facebook | `AddFacebook()` | AppId, AppSecret | [Meta Developer Portal](https://developers.facebook.com/) |
-| Twitter/X | `AddTwitter()` | ConsumerKey, ConsumerSecret | [Twitter Developer Portal](https://developer.twitter.com/) |
-| GitHub | `AddGitHub()` | ClientId, ClientSecret | [GitHub Developer Settings](https://github.com/settings/developers) |
-| LinkedIn | `AddLinkedIn()` | ClientId, ClientSecret | [LinkedIn Developer Portal](https://developer.linkedin.com/) |
-| Apple | `AddApple()` | ClientId, TeamId, KeyId, PrivateKey | [Apple Developer Portal](https://developer.apple.com/) |
+### Static Providers in Code
 
-### Custom Scopes and Options
-
-Each provider method accepts an optional configuration callback to customize scopes, token handling, and other provider-specific options:
-
-```csharp
-builder.Services.AddOluso(configuration)
-    .AddGoogle(
-        clientId: "...",
-        clientSecret: "...",
-        configure: opt =>
-        {
-            opt.Scopes.Add("https://www.googleapis.com/auth/calendar.readonly");
-            opt.SaveTokens = true;
-        });
-```
-
-### Generic OAuth/OIDC Providers
-
-Beyond the built-in providers, you can integrate any OAuth 2.0 or OpenID Connect compliant identity provider. This is useful for enterprise SSO systems, custom identity providers, or providers not included in the built-in list:
+For a provider configured in code rather than in the database, register a generic OAuth or OpenID Connect
+scheme under a scheme name of your own:
 
 ```csharp
 // OAuth 2.0 provider
-builder.Services.AddOluso(configuration)
+builder.Services.AddOluso(builder.Configuration)
     .AddOAuthProvider("custom-oauth", "Custom Provider", options =>
     {
         options.ClientId = "...";
         options.ClientSecret = "...";
+        options.CallbackPath = "/signin-custom-oauth";
         options.AuthorizationEndpoint = "https://provider.example.com/authorize";
         options.TokenEndpoint = "https://provider.example.com/token";
         options.UserInformationEndpoint = "https://provider.example.com/userinfo";
     });
 
 // OpenID Connect provider
-builder.Services.AddOluso(configuration)
+builder.Services.AddOluso(builder.Configuration)
     .AddOidcProvider("custom-oidc", "Enterprise SSO", options =>
     {
         options.ClientId = "...";
@@ -615,6 +855,11 @@ builder.Services.AddOluso(configuration)
     });
 ```
 
+The provider-specific helpers (`AddGoogle`, `AddMicrosoftAccount`, `AddFacebook`, `AddTwitter`, `AddGitHub`,
+`AddLinkedIn`, `AddApple`) register under the provider's default scheme name (`Google`, `Microsoft`, and so on).
+`AddOluso` already reserves those names for the database-driven providers, so configure those providers in the
+database instead.
+
 ---
 
 ## Multi-Tenant External Providers
@@ -622,103 +867,89 @@ builder.Services.AddOluso(configuration)
 In multi-tenant SaaS applications, different tenants often need their own OAuth credentials. For example:
 
 - **White-label scenarios**: Each customer wants their own branded Google/Microsoft login
-- **Enterprise requirements**: Corporate clients require authentication through their own Azure AD tenant
+- **Enterprise requirements**: Corporate clients require authentication through their own corporate identity provider
 - **Compliance**: Some tenants may need their OAuth apps registered in specific regions
 
-With static provider configuration, all tenants share the same OAuth credentials. Dynamic provider configuration solves this by loading credentials per-tenant from your database at runtime.
+Dynamic provider configuration loads credentials per tenant from the database at runtime. A provider without a
+tenant applies to every tenant that has no provider of its own for that scheme.
 
 ### When to Use Dynamic Providers
 
 | Scenario | Use Static | Use Dynamic |
 |----------|------------|-------------|
-| Single-tenant app | ✅ | |
-| All tenants share OAuth apps | ✅ | |
+| Single-tenant app | ✅ | ✅ |
+| All tenants share OAuth apps | ✅ | ✅ |
 | Tenants have own OAuth apps | | ✅ |
 | White-label/branded login | | ✅ |
 | Enterprise SSO per tenant | | ✅ |
 
-### Enable Dynamic Providers
+### Dynamic Providers Are On by Default
+
+`AddOluso` calls `AddDynamicExternalProviders()` for you, with a 5 minute cache and tenant overrides enabled.
+Do not call it again: it registers the provider placeholder schemes, and registering them twice fails at
+start-up.
+
+The EF stores register `ExternalProviderConfigStore`, which reads the identity providers managed in the Admin UI.
+To load provider configuration from somewhere else, implement `IExternalProviderConfigStore` and register it
+after the EF stores:
 
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddDynamicExternalProviders()
-    .AddExternalProviderStore<EfExternalProviderStore>();
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddExternalProviderStore<MyExternalProviderStore>();
 ```
 
 ### Implement IExternalProviderConfigStore
 
-You need to implement `IExternalProviderConfigStore` to load provider configurations from your database. This interface is called whenever authentication is initiated, and Oluso will cache the results to minimize database lookups.
-
-Here's a complete example using Entity Framework Core:
+The store is called whenever authentication is initiated, and Oluso caches the results to minimize lookups:
 
 ```csharp
-public class EfExternalProviderStore : IExternalProviderConfigStore
+public class MyExternalProviderStore : IExternalProviderConfigStore
 {
-    private readonly ApplicationDbContext _dbContext;
     private readonly ITenantContext _tenantContext;
+    private readonly IMyProviderRepository _repository;
 
-    public EfExternalProviderStore(
-        ApplicationDbContext dbContext,
-        ITenantContext tenantContext)
+    public MyExternalProviderStore(ITenantContext tenantContext, IMyProviderRepository repository)
     {
-        _dbContext = dbContext;
         _tenantContext = tenantContext;
+        _repository = repository;
     }
 
     public async Task<IReadOnlyList<ExternalProviderDefinition>> GetEnabledProvidersAsync(
         CancellationToken cancellationToken = default)
     {
-        var tenantId = _tenantContext.TenantId;
-
-        return await _dbContext.ExternalProviders
-            .Where(p => p.Enabled)
-            .Where(p => p.TenantId == tenantId || p.TenantId == null)
-            .OrderByDescending(p => p.TenantId) // Tenant-specific first
-            .Select(p => new ExternalProviderDefinition
-            {
-                Id = p.Id,
-                TenantId = p.TenantId,
-                Scheme = p.Scheme,
-                DisplayName = p.DisplayName,
-                ProviderType = p.ProviderType,
-                ClientId = p.ClientId,
-                ClientSecret = _encryptor.Decrypt(p.ClientSecretEncrypted),
-                Scopes = p.Scopes,
-                // ... other properties
-            })
-            .ToListAsync(cancellationToken);
+        var rows = await _repository.GetEnabledAsync(_tenantContext.TenantId, cancellationToken);
+        return rows.Select(Map).ToList();
     }
 
     public async Task<ExternalProviderDefinition?> GetBySchemeAsync(
         string scheme,
         CancellationToken cancellationToken = default)
     {
-        var tenantId = _tenantContext.TenantId;
-
-        // Try tenant-specific first, fall back to global
-        var provider = await _dbContext.ExternalProviders
-            .Where(p => p.Scheme == scheme && p.Enabled)
-            .Where(p => p.TenantId == tenantId)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        provider ??= await _dbContext.ExternalProviders
-            .Where(p => p.Scheme == scheme && p.Enabled)
-            .Where(p => p.TenantId == null)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (provider == null) return null;
-
-        return new ExternalProviderDefinition
-        {
-            Id = provider.Id,
-            TenantId = provider.TenantId,
-            Scheme = provider.Scheme,
-            ProviderType = provider.ProviderType,
-            ClientId = provider.ClientId,
-            ClientSecret = _encryptor.Decrypt(provider.ClientSecretEncrypted),
-            // ... map other properties
-        };
+        // Tenant-specific first, then the global (TenantId == null) row
+        var row = await _repository.FindBySchemeAsync(_tenantContext.TenantId, scheme, cancellationToken);
+        return row == null ? null : Map(row);
     }
+
+    public async Task<ExternalProviderDefinition?> GetByIdAsync(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        var row = await _repository.FindByIdAsync(id, cancellationToken);
+        return row == null ? null : Map(row);
+    }
+
+    private static ExternalProviderDefinition Map(MyProviderRow row) => new()
+    {
+        Id = row.Id,
+        TenantId = row.TenantId,
+        Scheme = row.Scheme,
+        DisplayName = row.DisplayName,
+        ProviderType = row.ProviderType,
+        ClientId = row.ClientId,
+        ClientSecret = row.ClientSecret, // Decrypted; store it encrypted at rest
+        Scopes = row.Scopes,
+    };
 }
 ```
 
@@ -731,46 +962,19 @@ The `ExternalProviderDefinition` class contains all the information needed to co
 | `Id` | string | Unique identifier for this configuration |
 | `TenantId` | string? | Tenant this config belongs to (null = global/fallback) |
 | `Scheme` | string | Authentication scheme name (e.g., "Google", "Microsoft") |
-| `ProviderType` | string | Provider type for handler selection (see supported types below) |
+| `DisplayName` / `IconUrl` | string? | Shown on the login page |
+| `ProviderType` | string | Provider type for handler selection (see [Supported Provider Types](#supported-provider-types)) |
 | `ClientId` | string | OAuth Client ID from the provider's developer console |
-| `ClientSecret` | string | OAuth Client Secret (always store encrypted in database!) |
-| `Scopes` | string[] | OAuth scopes to request (e.g., ["openid", "profile", "email"]) |
+| `ClientSecret` | string | OAuth Client Secret (always store encrypted) |
+| `Authority` / `MetadataAddress` | string? | OpenID Connect discovery |
+| `AuthorizationEndpoint` / `TokenEndpoint` / `UserInfoEndpoint` | string? | Generic OAuth 2.0 endpoints |
+| `AppleTeamId` / `AppleKeyId` / `ApplePrivateKey` | string? | Sign in with Apple |
+| `Scopes` | IReadOnlyList&lt;string&gt; | OAuth scopes to request (e.g., ["openid", "profile", "email"]) |
 | `ProxyMode` | bool | Enable federation broker mode (see Proxy Mode section) |
 | `StoreUserLocally` | bool | Whether to create local user records on login |
 | `AutoProvisionUsers` | bool | Auto-create users on first external login |
-
-**Supported Provider Types:** `Google`, `Microsoft`, `Facebook`, `Twitter`, `GitHub`, `LinkedIn`, `Apple`, `Oidc`, `OAuth`
-
-### Database Schema Example
-
-Here's a recommended database schema for storing external provider configurations. Note that `ClientSecretEncrypted` should use your application's encryption mechanism:
-
-```sql
-CREATE TABLE ExternalProviders (
-    Id UNIQUEIDENTIFIER PRIMARY KEY,
-    TenantId UNIQUEIDENTIFIER NULL,
-    Scheme NVARCHAR(100) NOT NULL,
-    DisplayName NVARCHAR(200),
-    ProviderType NVARCHAR(50) NOT NULL,
-    Enabled BIT NOT NULL DEFAULT 1,
-    ClientId NVARCHAR(500) NOT NULL,
-    ClientSecretEncrypted NVARCHAR(1000) NOT NULL,
-    Scopes NVARCHAR(1000),
-    ProxyMode BIT NOT NULL DEFAULT 0,
-    StoreUserLocally BIT NOT NULL DEFAULT 1,
-    AutoProvisionUsers BIT NOT NULL DEFAULT 1,
-    CreatedAt DATETIME2 NOT NULL,
-    UpdatedAt DATETIME2
-);
-
--- Example: Global Google provider
-INSERT INTO ExternalProviders (Id, TenantId, Scheme, ProviderType, ClientId, ...)
-VALUES (NEWID(), NULL, 'Google', 'Google', 'global-google-client-id', ...);
-
--- Example: Tenant-specific Google provider (overrides global)
-INSERT INTO ExternalProviders (Id, TenantId, Scheme, ProviderType, ClientId, ...)
-VALUES (NEWID(), 'tenant-abc-id', 'Google', 'Google', 'tenant-abc-google-client-id', ...);
-```
+| `DefaultRoles` | IReadOnlyList&lt;string&gt; | Roles given to auto-provisioned users |
+| `AccessControl` | ExternalAccessControl? | Restrict who may sign in (allowed emails or a claim gate) |
 
 ### How Dynamic Resolution Works
 
@@ -794,35 +998,27 @@ When a user initiates external login, Oluso dynamically resolves the correct OAu
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Cache Configuration
+### Cache Invalidation
 
-Provider configurations are cached in memory to avoid database lookups on every authentication request. The cache is tenant-aware, so changing one tenant's configuration doesn't affect others:
-
-```csharp
-builder.Services.AddOluso(configuration)
-    .AddDynamicExternalProviders(options =>
-    {
-        options.CacheDurationMinutes = 5; // Default: 5 minutes
-        options.AllowTenantOverrides = true; // Tenant configs override global
-    });
-```
-
-To invalidate the cache (e.g., after admin updates provider config):
+Provider configurations are cached in memory (5 minutes) to avoid lookups on every authentication request. The
+cache is tenant-aware, so changing one tenant's configuration doesn't affect others. The Admin API clears the
+cache when a provider is created, updated or deleted. A custom store whose data changes elsewhere does the same
+through `IExternalSchemeCacheInvalidator`:
 
 ```csharp
 public class ExternalProviderAdminService
 {
-    private readonly DynamicOptionsCache _optionsCache;
-    private readonly DynamicSchemeCache _schemeCache;
+    private readonly IExternalSchemeCacheInvalidator _cacheInvalidator;
 
-    public async Task UpdateProviderAsync(string tenantId, ExternalProvider provider)
+    public ExternalProviderAdminService(IExternalSchemeCacheInvalidator cacheInvalidator)
+        => _cacheInvalidator = cacheInvalidator;
+
+    public async Task UpdateProviderAsync(string tenantId, string scheme)
     {
-        // Update in database
-        await _dbContext.SaveChangesAsync();
+        // Update in your store...
 
-        // Invalidate caches for this tenant
-        _optionsCache.InvalidateForTenant(tenantId);
-        _schemeCache.InvalidateForTenant(tenantId);
+        // Drop the cached scheme and options for this tenant
+        _cacheInvalidator.Invalidate(scheme, tenantId);
     }
 }
 ```
@@ -831,7 +1027,7 @@ public class ExternalProviderAdminService
 
 ## Proxy Mode (Federation Broker)
 
-By default, when a user authenticates via an external provider (e.g., Google), Oluso creates a local user record and links it to the external identity. However, some scenarios require **Proxy Mode** where Oluso acts purely as a federation broker—authenticating users without storing any local data.
+By default, when a user authenticates via an external provider (e.g., Google), Oluso creates a local user record and links it to the external identity. However, some scenarios require **Proxy Mode** where Oluso acts purely as a federation broker, authenticating users without storing any local data.
 
 ### When to Use Proxy Mode
 
@@ -847,19 +1043,21 @@ By default, when a user authenticates via an external provider (e.g., Google), O
 ### How Proxy Mode Works
 
 In proxy mode:
-1. User authenticates with external IdP (e.g., corporate Azure AD)
+1. User authenticates with external IdP (e.g., a corporate OpenID Connect provider)
 2. Oluso receives the authentication response with claims
-3. **No local user is created** — claims are passed through directly
+3. **No local user is created**: claims are passed through directly
 4. Oluso issues its own tokens containing the external claims
 5. External tokens can optionally be cached for upstream API calls
 
 ### Enable Proxy Mode
 
-To enable proxy mode, set `ProxyMode = true` in your provider configuration. You'll typically also set `StoreUserLocally = false`:
+Turn on proxy mode on the identity provider in the Admin UI, or set `ProxyMode = true` in the definition a
+custom store returns. You'll typically also set `StoreUserLocally = false`:
 
 ```csharp
 new ExternalProviderDefinition
 {
+    Id = "partner-sso",
     Scheme = "EnterpriseSSO",
     ProviderType = "Oidc",
     ClientId = "...",
@@ -892,32 +1090,39 @@ When proxy mode is enabled, Oluso issues tokens with a special subject format an
 | `idp` | Provider name (e.g., "EnterpriseSSO") |
 | `external_sub` | Original subject from external IdP |
 | `proxy_mode` | `true` |
-| `amr` | `["external", "{provider}", "proxy"]` |
+| `amr` | `["external", "{provider}", "proxy"]` (provider in lowercase) |
 
 Plus all claims from the external IdP (filtered by `ProxyIncludeClaims`/`ProxyExcludeClaims`).
 
 ### Token Caching for Proxy Mode
 
-In proxy mode, you may need to make API calls to the upstream identity provider on behalf of the user (e.g., fetching additional profile data, accessing Microsoft Graph, or calling Google APIs). Enable `CacheExternalTokens` to store the external access token for later use:
+In proxy mode, you may need to make API calls to the upstream identity provider on behalf of the user (e.g., fetching additional profile data or calling the provider's APIs). Enable `CacheExternalTokens` to store the external tokens for later use. They are cached under the proxy subject (the `sub` claim):
 
 ```csharp
 // Retrieve cached tokens in your application
 public class UserInfoProxyService
 {
     private readonly IExternalAuthService _externalAuth;
+    private readonly HttpClient _httpClient;
 
-    public async Task<ExternalUserInfo> GetUserInfoAsync(string sessionKey)
+    public UserInfoProxyService(IExternalAuthService externalAuth, HttpClient httpClient)
     {
-        var tokens = await _externalAuth.GetCachedTokensAsync(sessionKey);
+        _externalAuth = externalAuth;
+        _httpClient = httpClient;
+    }
 
-        if (tokens == null)
+    public async Task<ExternalUserInfo?> GetUserInfoAsync(string subject)
+    {
+        var tokens = await _externalAuth.GetCachedTokensAsync(subject);
+
+        if (tokens?.AccessToken == null)
             throw new InvalidOperationException("No cached tokens");
 
         // Use external access token to call upstream IdP
-        var response = await _httpClient.GetAsync(
-            "https://external-idp.com/userinfo",
-            new AuthenticationHeaderValue("Bearer", tokens.AccessToken));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://external-idp.com/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
 
+        using var response = await _httpClient.SendAsync(request);
         return await response.Content.ReadFromJsonAsync<ExternalUserInfo>();
     }
 }
@@ -939,78 +1144,97 @@ Implement `IExternalAuthService` to fully control external authentication behavi
 ```csharp
 public class CustomExternalAuthService : IExternalAuthService
 {
-    public async Task<IReadOnlyList<ExternalProviderInfo>> GetAvailableProvidersAsync(
-        CancellationToken ct)
+    public Task<IReadOnlyList<ExternalProviderInfo>> GetAvailableProvidersAsync(
+        CancellationToken ct = default)
     {
         // Return providers available for current tenant
     }
 
-    public async Task<ExternalProviderConfig?> GetProviderConfigAsync(
+    public Task<IReadOnlyList<ExternalProviderInfo>> GetAvailableProvidersAsync(
+        string clientId,
+        CancellationToken ct = default)
+    {
+        // Return providers available for a client
+    }
+
+    public Task<ExternalProviderConfig?> GetProviderConfigAsync(
         string provider,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         // Return configuration including proxy mode settings
     }
 
-    public async Task<ExternalChallengeResult> ChallengeAsync(
+    public Task<ExternalChallengeResult> ChallengeAsync(
         string provider,
         string returnUrl,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         // Initiate OAuth challenge
     }
 
-    public async Task<ExternalLoginResult?> GetExternalLoginResultAsync(
-        CancellationToken ct)
+    public Task<ExternalLoginResult?> GetExternalLoginResultAsync(
+        CancellationToken ct = default)
     {
         // Process OAuth callback, extract claims and tokens
     }
 
-    public async Task<string?> FindUserByLoginAsync(
+    public Task SignOutExternalAsync(CancellationToken ct = default)
+    {
+        // Clear the external sign-in cookie
+    }
+
+    public Task<IList<ExternalLoginInfo>> GetUserLoginsAsync(
+        string userId,
+        CancellationToken ct = default)
+    {
+        // List the user's linked external logins
+    }
+
+    public Task<string?> FindUserByLoginAsync(
         string provider,
         string providerKey,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         // Find local user by external login
     }
 
-    public async Task<ExternalLoginOperationResult> LinkLoginAsync(
+    public Task<ExternalLoginOperationResult> LinkLoginAsync(
         string userId,
         string provider,
         string providerKey,
         string? displayName,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         // Link external login to existing user
     }
 
-    public async Task<ExternalLoginOperationResult> UnlinkLoginAsync(
+    public Task<ExternalLoginOperationResult> UnlinkLoginAsync(
         string userId,
         string provider,
         string providerKey,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         // Unlink external login from user
     }
 
-    public async Task CacheExternalTokensAsync(
+    public Task CacheExternalTokensAsync(
         string sessionKey,
         ExternalTokenData tokens,
-        TimeSpan? expiry,
-        CancellationToken ct)
+        TimeSpan? expiry = null,
+        CancellationToken ct = default)
     {
         // Cache tokens for proxy mode
     }
 
-    public async Task<ExternalTokenData?> GetCachedTokensAsync(
+    public Task<ExternalTokenData?> GetCachedTokensAsync(
         string sessionKey,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         // Retrieve cached tokens
     }
 }
 
-// Register
+// Register (after the EF stores, which register the default)
 builder.Services.AddScoped<IExternalAuthService, CustomExternalAuthService>();
 ```
 
@@ -1032,7 +1256,7 @@ Configure the step in your journey policies:
         "providers": ["Google", "Microsoft", "GitHub"],
         "autoRedirect": false,
         "autoProvision": true,
-        "allowLinking": true
+        "claimMappings": { "upn": "email" }
       }
     }
   ]
@@ -1043,33 +1267,31 @@ Configure the step in your journey policies:
 |--------|-------------|---------|
 | `providers` | List of allowed provider schemes | All enabled |
 | `autoRedirect` | Auto-redirect if only one provider | `false` |
-| `autoProvision` | Create user on first login | `true` |
-| `allowLinking` | Allow linking to existing account | `true` |
+| `autoProvision` | Create user on first login (the provider's own setting wins when set) | `true` |
+| `proxyMode` | Proxy mode when the provider does not set it | `false` |
+| `claimMappings` | Map external claim types to Oluso claim types | none |
 
-**View:** `Views/Journey/_ExternalLogin.cshtml`
+**View:** `Views/Shared/Journey/_ExternalLogin.cshtml`
 
 ### Combining with Local Login
 
-A common pattern is to offer both local (username/password) and external login options. You can combine them in a single step or use branching:
+A common pattern is to offer both local (username/password) and external login options on one page with the
+`composite_login` step:
 
 ```json
 {
   "steps": [
     {
       "id": "login",
-      "type": "local_login",
+      "type": "composite_login",
       "configuration": {
-        "allowExternalProviders": true
-      },
-      "branches": {
-        "external": "external_auth"
-      }
-    },
-    {
-      "id": "external_auth",
-      "type": "external_login",
-      "configuration": {
-        "providers": ["Google", "Microsoft"]
+        "showLocalLogin": true,
+        "showExternalLogin": true,
+        "externalProviders": ["Google", "Microsoft"],
+        "showPasskey": false,
+        "allowRememberMe": true,
+        "allowForgotPassword": true,
+        "allowRegistration": false
       }
     },
     {
@@ -1086,45 +1308,59 @@ A common pattern is to offer both local (username/password) and external login o
 
 ### Implement IOlusoUserService
 
-Replace the default ASP.NET Identity user store with your own:
+Replace the default ASP.NET Identity user service with your own:
 
 ```csharp
-public class LdapUserService : IOlusoUserService
+public class DirectoryUserService : IOlusoUserService
 {
-    public async Task<UserValidationResult> ValidateCredentialsAsync(
-        string username, string password, CancellationToken ct)
-    {
-        // Validate against LDAP
-        var ldapUser = await _ldapClient.AuthenticateAsync(username, password);
+    private readonly IDirectoryClient _directory;
 
-        if (ldapUser == null)
+    public DirectoryUserService(IDirectoryClient directory) => _directory = directory;
+
+    public async Task<UserValidationResult> ValidateCredentialsAsync(
+        string username, string password, string? tenantId = null, CancellationToken ct = default)
+    {
+        var entry = await _directory.AuthenticateAsync(username, password, ct);
+
+        if (entry == null)
             return UserValidationResult.Failed("invalid_credentials", "Invalid username or password");
 
-        return UserValidationResult.Success(new OlusoUserInfo
+        return UserValidationResult.Successful(new ValidatedUser
         {
-            Id = ldapUser.Dn,
-            Username = ldapUser.SamAccountName,
-            Email = ldapUser.Email,
-            EmailConfirmed = true,
-            FirstName = ldapUser.GivenName,
-            LastName = ldapUser.Surname,
-            DisplayName = ldapUser.DisplayName
+            Id = entry.Id,
+            UserName = entry.UserName,
+            Email = entry.Email,
+            FirstName = entry.GivenName,
+            LastName = entry.Surname,
+            DisplayName = entry.DisplayName,
+            TenantId = tenantId
         });
     }
 
-    public async Task<OlusoUserInfo?> FindByIdAsync(string userId, CancellationToken ct)
+    public async Task<OlusoUserInfo?> FindByIdAsync(string userId, CancellationToken ct = default)
     {
-        // Lookup user in LDAP by DN
-        return await _ldapClient.FindByDnAsync(userId);
+        var entry = await _directory.FindByIdAsync(userId, ct);
+        return entry == null ? null : new OlusoUserInfo
+        {
+            Id = entry.Id,
+            Username = entry.UserName,
+            Email = entry.Email,
+            EmailVerified = true,
+            DisplayName = entry.DisplayName
+        };
     }
 
-    // ... implement other methods
+    // ... implement the other IOlusoUserService members
 }
 
 // Register
-builder.Services.AddOluso()
-    .AddUserService<LdapUserService>();
+builder.Services.AddOluso(builder.Configuration)
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddUserService<DirectoryUserService>();
 ```
+
+Call `.SkipIdentity()` before the EF stores to leave ASP.NET Core Identity out entirely. For an LDAP directory,
+the [LDAP module](#ldap-authentication-oluso-enterprise-ldap) already provides authentication.
 
 ---
 
@@ -1132,36 +1368,36 @@ builder.Services.AddOluso()
 
 ### Create a Custom Step
 
+Step handlers are registered as singletons; resolve scoped services from `context.ServiceProvider` (the
+request scope) inside `ExecuteAsync`. `ICustomStepHandler` extends `IStepHandler` and lets the step be
+registered with designer metadata (below).
+
 ```csharp
-public class CaptchaStepHandler : IStepHandler
+public class InviteCodeStepHandler : ICustomStepHandler
 {
-    public string StepType => "captcha";
+    public string StepType => "invite_code";
 
     public async Task<StepHandlerResult> ExecuteAsync(
         StepExecutionContext context,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
-        var response = context.GetInput("captcha_response");
+        var code = context.GetInput("invite_code");
 
-        if (string.IsNullOrEmpty(response))
+        if (string.IsNullOrEmpty(code))
         {
-            return StepHandlerResult.ShowUi("Journey/_Captcha", new CaptchaViewModel
+            return StepHandlerResult.ShowUi("Journey/_InviteCode", new InviteCodeViewModel());
+        }
+
+        var invites = context.ServiceProvider.GetRequiredService<IInviteService>();
+        if (!await invites.IsValidAsync(code, ct))
+        {
+            return StepHandlerResult.ShowUi("Journey/_InviteCode", new InviteCodeViewModel
             {
-                SiteKey = _options.SiteKey
+                ErrorMessage = "That invite code is not valid"
             });
         }
 
-        var isValid = await _captchaService.ValidateAsync(response);
-
-        if (!isValid)
-        {
-            return StepHandlerResult.ShowUi("Journey/_Captcha", new CaptchaViewModel
-            {
-                SiteKey = _options.SiteKey,
-                ErrorMessage = "Please complete the captcha"
-            });
-        }
-
+        context.SetData("invite_code", code);
         return StepHandlerResult.Continue();
     }
 }
@@ -1170,12 +1406,21 @@ public class CaptchaStepHandler : IStepHandler
 ### Register Custom Step
 
 ```csharp
-builder.Services.AddOluso()
-    .AddUserJourneys(journeys =>
-    {
-        journeys.AddBuiltInSteps();
-        journeys.AddStepHandler<CaptchaStepHandler>();
-    });
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddUserJourneys(journeys => journeys.AddStepHandler<InviteCodeStepHandler>());
+```
+
+To also list the step in the Admin UI journey designer with a description and category, register it with
+`AddCustomJourneyStep` instead:
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddCustomJourneyStep<InviteCodeStepHandler>(step => step
+        .WithDescription("Ask for an invite code")
+        .InCategory("Validation")
+        .FromModule("MyCompany.Invites"));
 ```
 
 ### Custom Authentication Steps
@@ -1189,13 +1434,14 @@ public class CustomAuthStepHandler : IStepHandler
 
     public async Task<StepHandlerResult> ExecuteAsync(
         StepExecutionContext context,
-        CancellationToken ct)
+        CancellationToken ct = default)
     {
         var username = context.GetInput("username");
         var token = context.GetInput("token");
 
         // Validate credentials...
-        var user = await _authService.ValidateAsync(username, token);
+        var authService = context.ServiceProvider.GetRequiredService<IMyTokenAuthService>();
+        var user = await authService.ValidateAsync(username, token, ct);
 
         if (user == null)
         {
@@ -1226,7 +1472,7 @@ public class CustomAuthStepHandler : IStepHandler
 |-----|-------------|---------|
 | `authenticated_at` | Timestamp when authentication occurred | `DateTime.UtcNow` |
 | `auth_method` | Authentication method (maps to `amr` claim) | `"pwd"`, `"fido2"`, `"saml"`, `"ldap"` |
-| `idp` | Identity provider for external logins | `"google"`, `"saml:okta"` |
+| `idp` | Identity provider for external logins | `"google"`, `"saml:partner"` |
 
 #### Alternative: Manual Data Setting
 
@@ -1253,14 +1499,19 @@ if (context.IsAuthenticated)
 
 ## Journey Policies
 
+A journey policy is an ordered list of steps. With the EF stores, policies are stored in the database
+(`JourneyPolicyStore`) and managed in the Admin UI journey designer or through `/api/admin/journeys`. A client
+can ask for a specific policy with the `policy` parameter on `/connect/authorize`.
+
 ### Define a Policy
 
 ```csharp
 var loginPolicy = new JourneyPolicy
 {
     Id = "default-login",
+    Slug = "default-login",
     Name = "Default Login Flow",
-    Type = JourneyType.Login,
+    Type = JourneyType.SignIn,
     Steps = new List<JourneyPolicyStep>
     {
         new() { Id = "login", Type = "local_login", Order = 1 },
@@ -1270,23 +1521,31 @@ var loginPolicy = new JourneyPolicy
 };
 ```
 
-### Register Policies
+`JourneyType` values include `SignIn`, `SignUp`, `SignInSignUp`, `PasswordReset`, `PasswordChange`,
+`ProfileEdit`, `LinkAccount`, `Consent`, data collection types (`Waitlist`, `ContactForm`, `Survey`, `Feedback`,
+`DataCollection`) and `Custom`.
+
+### Use a Custom Policy Store
 
 ```csharp
-builder.Services.AddOluso()
-    .AddUserJourneys(journeys =>
-    {
-        journeys.AddBuiltInSteps();
-        journeys.UsePolicyStore<DatabasePolicyStore>();
-    });
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddUserJourneys(journeys => journeys.UsePolicyStore<MyPolicyStore>());
 ```
 
 ### Policy with Branches
 
+A step's `Branches` map a branch id the step returns to the step that runs next. `local_login` returns
+`auth_local` after a password sign-in and `auth_passkey` after a passkey sign-in, so this policy skips MFA for
+passkeys:
+
 ```csharp
 var loginPolicy = new JourneyPolicy
 {
-    Id = "login-with-registration",
+    Id = "login-passkey-skips-mfa",
+    Slug = "login-passkey-skips-mfa",
+    Name = "Login (passkeys skip MFA)",
     Steps = new List<JourneyPolicyStep>
     {
         new()
@@ -1294,13 +1553,15 @@ var loginPolicy = new JourneyPolicy
             Id = "login",
             Type = "local_login",
             Order = 1,
+            Configuration = new Dictionary<string, object> { ["showPasskey"] = true },
             Branches = new Dictionary<string, string>
             {
-                ["register"] = "signup"
+                ["auth_local"] = "mfa",
+                ["auth_passkey"] = "consent"
             }
         },
-        new() { Id = "signup", Type = "signup", Order = 2 },
-        new() { Id = "mfa", Type = "mfa", Order = 3 }
+        new() { Id = "mfa", Type = "mfa", Order = 2 },
+        new() { Id = "consent", Type = "consent", Order = 3 }
     }
 };
 ```
@@ -1316,30 +1577,34 @@ Oluso provides a pluggable signing key infrastructure for token signing (JWT acc
 For simple deployments, keys are stored encrypted in your database using ASP.NET Core Data Protection:
 
 ```csharp
-builder.Services.AddOluso(configuration)
+builder.Services.AddOluso(builder.Configuration)
     .AddSigningKeys();
 ```
 
 This provides:
-- Automatic key generation (RS256 by default)
+- Automatic key generation (RS256 by default); a platform signing key is created at start-up when none exists
 - Key encryption at rest using Data Protection
-- Automatic key rotation support
+- Hourly maintenance that marks expired keys, rotates ahead of expiry and cleans up
 - JWKS endpoint for token validation
+
+Without `AddSigningKeys()` the EF stores fall back to `DevelopmentSigningCredentialStore`, which is for
+development only.
+
+Because local keys are encrypted with Data Protection, every instance must share the same Data Protection key
+ring (for example with `Syndew.Oluso.Enterprise.AzureDataProtection`); otherwise keys created by one instance
+cannot be read by another.
 
 ### Signing Key Options
 
 ```csharp
-builder.Services.AddOluso(configuration)
+builder.Services.AddOluso(builder.Configuration)
     .AddSigningKeys(options =>
     {
-        options.DefaultAlgorithm = "RS256";  // or ES256, RS384, etc.
-        options.DefaultKeySize = 2048;       // RSA key size
-        options.DefaultKeyLifetimeDays = 365;
-        options.AutoGenerateIfMissing = true;
-        options.EnableKeyRotation = true;
-        options.RotationOverlapDays = 7;     // Grace period for old keys
+        options.DefaultStorageProvider = KeyStorageProvider.Local; // or AzureKeyVault
     });
 ```
+
+`DefaultStorageProvider` chooses where new keys are created.
 
 ### Available Algorithms
 
@@ -1352,17 +1617,21 @@ builder.Services.AddOluso(configuration)
 | ES384 | EC | P-384 | Higher security EC |
 | ES512 | EC | P-521 | Maximum EC security |
 
+RSA keys below 2048 bits are rejected.
+
 ### Azure Key Vault (Enterprise)
 
 For production deployments requiring HSM-backed keys where the private key never leaves the vault:
 
 ```bash
 # Install the package
-dotnet add package Oluso.Enterprise.AzureKeyVault
+dotnet add package Syndew.Oluso.Enterprise.AzureKeyVault
 ```
 
 ```csharp
-builder.Services.AddOluso(configuration)
+using Oluso.Enterprise.AzureKeyVault;
+
+builder.Services.AddOluso(builder.Configuration)
     .AddSigningKeys()
     .AddOlusoAzureKeyVault();
 ```
@@ -1379,16 +1648,29 @@ builder.Services.AddOluso(configuration)
 
 ```json
 {
-  "AzureKeyVault": {
-    "VaultUri": "https://your-vault.vault.azure.net/"
+  "Oluso": {
+    "AzureKeyVault": {
+      "VaultUri": "https://your-vault.vault.azure.net/"
+    }
   }
 }
+```
+
+**Options:**
+
+```csharp
+.AddOlusoAzureKeyVault(options =>
+{
+    options.UseAsDefault = true;           // Key Vault is the default for new certificates (default: true)
+    options.UseHsmKeys = true;             // HSM-protected keys (Premium tier)
+    options.SkipLicenseValidation = false; // Development/testing only
+})
 ```
 
 **Use Key Vault as the default provider for new keys:**
 
 ```csharp
-builder.Services.AddOluso(configuration)
+builder.Services.AddOluso(builder.Configuration)
     .AddSigningKeys(opts => opts.DefaultStorageProvider = KeyStorageProvider.AzureKeyVault)
     .AddOlusoAzureKeyVault();
 ```
@@ -1409,39 +1691,28 @@ Azure Key Vault uses `DefaultAzureCredential` which supports:
 - Environment variables (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
 - Service principal
 
-**Development vs Production:**
+**Signing credential store by setup:**
 
-| Environment | Signing Credential Store | Key Storage |
-|-------------|-------------------------|-------------|
-| Development (no Key Vault) | `DevelopmentSigningCredentialStore` | In-memory RSA key |
-| Production with `AddOlusoAzureKeyVault()` | `SigningCredentialStore` | Azure Key Vault (or local fallback) |
+| Setup | Signing Credential Store | Key Storage |
+|-------|-------------------------|-------------|
+| EF stores only (development) | `DevelopmentSigningCredentialStore` | Development key |
+| `AddSigningKeys()` | `SigningCredentialStore` | Database, encrypted with Data Protection |
+| `AddSigningKeys()` + `AddOlusoAzureKeyVault()` | `SigningCredentialStore` | Azure Key Vault (or local when it is not the default) |
 
 ### Key Rotation
 
-Oluso supports automatic key rotation with configurable overlap periods:
+Rotation is built in. `SigningKeyMaintenanceBackgroundService` runs every hour and calls
+`ISigningKeyService.ProcessScheduledRotationsAsync()`, which marks expired keys, creates the next key ahead of
+expiry and cleans up. Rotated-out keys stay in the JWKS until they expire, so tokens they signed keep validating.
+
+To trigger maintenance from an external scheduler instead, set `Oluso:RunSigningKeyMaintenanceInProcess` to
+`false` and call `POST /api/system/maintenance/signing-keys`. Both paths are idempotent.
+
+To rotate on demand:
 
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddSigningKeys(options =>
-    {
-        options.EnableKeyRotation = true;
-        options.RotationOverlapDays = 7;  // Old key stays valid for verification
-    });
-
-// Schedule rotation (e.g., in a background service)
-public class KeyRotationService : BackgroundService
-{
-    private readonly ISigningKeyService _signingKeyService;
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            await _signingKeyService.ProcessScheduledRotationsAsync(stoppingToken);
-            await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
-        }
-    }
-}
+await signingKeyService.RotateKeysAsync();              // Platform/tenant keys
+await signingKeyService.RotateKeysAsync("my-client-id"); // One client's keys
 ```
 
 ### Per-Client Keys
@@ -1454,6 +1725,7 @@ await signingKeyService.GenerateKeyAsync(new GenerateKeyRequest
 {
     TenantId = "tenant-123",
     ClientId = "my-client-id",
+    KeyType = SigningKeyType.EC,
     Algorithm = "ES256",
     Name = "my-client-signing-key"
 });
@@ -1467,10 +1739,11 @@ var credentials = await signingKeyService.GetSigningCredentialsAsync("my-client-
 Oluso automatically exposes a JWKS (JSON Web Key Set) endpoint for token validation. Clients can fetch public keys from:
 
 ```
-GET /.well-known/jwks.json
+GET /.well-known/jwks
 ```
 
-The JWKS includes all active keys (current and those in rotation overlap period).
+The JWKS includes all active keys (current and those still within their validity after rotation). The URL is
+also published as `jwks_uri` in `/.well-known/openid-configuration`.
 
 ### Custom Key Material Provider
 
@@ -1509,35 +1782,49 @@ public class AwsKmsProvider : IKeyMaterialProvider
         return new SigningCredentials(kmsSecurityKey, key.Algorithm);
     }
 
-    // ... implement other methods
+    // Also: GetPublicKeyAsync, GetJsonWebKeyAsync, DeleteKeyAsync, IsAvailableAsync
 }
 
 // Register
-builder.Services.AddSingleton<IKeyMaterialProvider, AwsKmsProvider>();
+builder.Services.AddOluso(builder.Configuration)
+    .AddSigningKeys()
+    .AddKeyMaterialProvider<AwsKmsProvider>();
 ```
 
 ---
 
 ## Enterprise Modules
 
+Each module has its own database context. Register its storage with the module's `Add*ForProvider(provider,
+connectionString)` method so `MigrateOlusoDatabaseAsync()` creates its tables (see
+[migrations.md](./migrations.md)).
+
 ### FIDO2/WebAuthn (Oluso.Enterprise.Fido2)
 
 Add FIDO2/Passkey support for passwordless authentication:
 
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddUserJourneys(journeys => journeys.AddBuiltInSteps())
+using Oluso.Enterprise.Fido2;
+
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
     .AddFido2(fido2 => fido2
         .WithRelyingParty("example.com", "Example App")
         .WithOrigins("https://example.com")
         .RequireUserVerification()
         .PreferPlatformAuthenticator());
+
+// Credential storage
+builder.Services.AddFido2ForProvider(provider, connectionString);
 ```
+
+`AddFido2()` without arguments binds `Oluso:Fido2` (`RelyingPartyId`, `RelyingPartyName`, `Origins`, ...).
 
 **Important:** FIDO2 requires session middleware. Add to your pipeline:
 
 ```csharp
 app.UseAuthentication();
+app.UseOluso();
 app.UseAuthorization();
 app.UseSession(); // Required for FIDO2 registration/assertion state
 
@@ -1553,6 +1840,9 @@ The `AddFido2()` method automatically registers session services, but your app m
 |-----------|-------------|
 | `fido2_login` | Passwordless login with passkeys |
 | `fido2_register` | Register new passkeys (post-authentication) |
+| `webauthn` | Combined passkey step |
+
+`local_login` and `composite_login` can also offer a passkey button with `"showPasskey": true`.
 
 **Policy Configuration:**
 ```json
@@ -1562,7 +1852,7 @@ The `AddFido2()` method automatically registers session services, but your app m
       "id": "login",
       "type": "local_login",
       "configuration": {
-        "allowPasskeyLogin": true
+        "showPasskey": true
       }
     },
     {
@@ -1571,16 +1861,17 @@ The `AddFido2()` method automatically registers session services, but your app m
       "optional": true,
       "configuration": {
         "promptNewUsers": true,
-        "requireResidentKey": true
+        "requireResidentKey": true,
+        "allowSkip": true
       }
     }
   ]
 }
 ```
 
-**Views:**
-- `Views/Journey/_Fido2Assertion.cshtml` - Passkey login UI
-- `Views/Journey/_Fido2Registration.cshtml` - Passkey registration UI
+**Views** (in `Views/Shared/Journey/`):
+- `_Fido2Login.cshtml` / `_Fido2Assertion.cshtml` - Passkey login UI
+- `_Fido2RegistrationPrompt.cshtml` / `_Fido2Registration.cshtml` - Passkey registration UI
 
 **API Endpoints:**
 
@@ -1594,14 +1885,15 @@ The FIDO2 module exposes REST endpoints for credential management:
 | `POST /api/fido2/assert/complete` | Complete passkey assertion | Anonymous |
 | `GET /api/fido2/credentials` | List user's passkeys | User |
 | `DELETE /api/fido2/credentials/{id}` | Delete a passkey | User |
+| `GET /api/account/passkeys` | List passkeys (Account API) | User |
 | `GET /api/admin/fido2/users/{userId}/credentials` | List user's passkeys (admin) | AdminApi |
-| `DELETE /api/admin/fido2/users/{userId}/credentials/{id}` | Delete user's passkey (admin) | AdminApi |
+| `DELETE /api/admin/fido2/users/{userId}/credentials/{credentialId}` | Delete user's passkey (admin) | AdminApi |
 
 **Configuration Options:**
 
 ```csharp
 .AddFido2(fido2 => fido2
-    .WithRelyingParty("example.com", "Example App", iconUrl: null)
+    .WithRelyingParty("example.com", "Example App", icon: null)
     .WithOrigins("https://example.com", "https://app.example.com")
     .WithTimeout(60000)                    // Ceremony timeout in ms
     .RequireUserVerification()             // Require biometric/PIN
@@ -1614,36 +1906,58 @@ The FIDO2 module exposes REST endpoints for credential management:
 
 ---
 
-### SAML IdP (Oluso.Enterprise.Saml)
+### SAML (Oluso.Enterprise.Saml)
 
-Add SAML 2.0 Identity Provider support for enterprise SSO:
+Add SAML 2.0 Identity Provider (and Service Provider) support for enterprise SSO:
 
 ```csharp
-builder.Services.AddSaml(builder.Configuration);
+using Oluso.Enterprise.Saml;
 
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
+builder.Services
+    .AddSaml(builder.Configuration)
+    .AddSamlForProvider(provider, connectionString);
+
+// ...
+app.MapSamlEndpoints();
 ```
 
 **Configuration (appsettings.json):**
 ```json
 {
-  "Saml": {
-    "EntityId": "https://auth.example.com/saml",
-    "SigningCertificatePath": "certs/saml-signing.pfx",
-    "SigningCertificatePassword": "your-password"
+  "Oluso": {
+    "Saml": {
+      "IdentityProvider": {
+        "Enabled": true,
+        "EntityId": "https://auth.example.com",
+        "BaseUrl": "https://auth.example.com",
+        "SigningCertificate": {
+          "FilePath": "certs/saml-signing.pfx",
+          "Password": "your-password"
+        }
+      },
+      "ServiceProvider": {
+        "EntityId": "https://auth.example.com",
+        "BaseUrl": "https://auth.example.com"
+      }
+    }
   }
 }
 ```
 
-**API Endpoints:**
+The IdP signing and encryption certificates can also be generated or uploaded through the Admin API
+(`/api/admin/saml/service-providers/idp-certificate/...`).
+
+**Endpoints:**
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /saml/metadata` | SAML metadata document |
-| `POST /saml/sso` | Single Sign-On endpoint |
-| `GET /saml/slo` | Single Logout endpoint |
+| `GET /saml/idp/metadata` | IdP metadata document |
+| `GET/POST /saml/idp/sso` | IdP Single Sign-On endpoint |
+| `GET/POST /saml/idp/slo` | IdP Single Logout endpoint |
+| `GET /saml/metadata` | SP metadata document |
+| `GET /saml/login/{idpName}` | Start sign-in at an upstream SAML IdP |
+| `POST /saml/acs` | SP Assertion Consumer Service |
+| `POST /saml/slo` | SP Single Logout |
 | `GET /api/admin/saml/service-providers` | List configured SPs |
 | `POST /api/admin/saml/service-providers` | Create SP configuration |
 | `PUT /api/admin/saml/service-providers/{id}` | Update SP configuration |
@@ -1656,16 +1970,24 @@ builder.Services.AddOluso(builder.Configuration)
 Add SCIM 2.0 user provisioning for automated user management:
 
 ```csharp
-builder.Services.AddScim();
-builder.Services.AddScimDbContext<ApplicationDbContext>();
+using Oluso.Enterprise.Scim;
 
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
+builder.Services
+    .AddScim(options =>
+    {
+        options.BasePath = "/scim/v2";
+        options.MaxResults = 200;
+        options.SoftDeleteUsers = true;
+        options.LogRetention = TimeSpan.FromDays(90);
+    })
+    .AddScimForProvider(provider, connectionString);
 
-// In middleware pipeline
+// In middleware pipeline, after UseAuthentication
 app.UseScim();
 ```
+
+SCIM clients (and their bearer tokens) are managed through `/api/admin/scim/clients`; outbound provisioning to
+downstream SCIM services through `/api/admin/scim/providers`.
 
 **API Endpoints:**
 
@@ -1679,7 +2001,9 @@ app.UseScim();
 | `DELETE /scim/v2/Users/{id}` | Delete user |
 | `GET /scim/v2/Groups` | List groups |
 | `POST /scim/v2/Groups` | Create group |
+| `POST /scim/v2/Bulk` | Bulk operations |
 | `GET /scim/v2/ServiceProviderConfig` | SCIM service config |
+| `GET /scim/v2/ResourceTypes` | SCIM resource types |
 | `GET /scim/v2/Schemas` | SCIM schemas |
 
 ---
@@ -1689,135 +2013,171 @@ app.UseScim();
 Add LDAP directory authentication:
 
 ```csharp
+using Oluso.Enterprise.Ldap;
+
 builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddUserJourneyEngine()
     .AddLdap(ldap => ldap
         .WithServer("ldap.example.com", 389)
         .WithBaseDn("dc=example,dc=com")
-        .WithBindCredentials("cn=admin,dc=example,dc=com", "password")
-        .WithUserSearchFilter("(uid={0})")
-        .WithGroupSearchFilter("(memberUid={0})"))
-    .AddUserJourneysWithDefaults();
+        .WithServiceAccount("cn=admin,dc=example,dc=com", "password")
+        .WithUserSearch(search => search.AuthenticationFilter = "(&(objectClass=inetOrgPerson)(uid={0}))")
+        .WithGroupSearch(search => search.Filter = "(objectClass=groupOfNames)"));
+
+builder.Services.AddLdapForProvider(provider, connectionString);
 ```
 
-**Or with LDAP Server (act as LDAP IdP):**
+`AddLdap()` without arguments binds `Oluso:Ldap`. The module adds the `ldap` journey step.
+
+**Or with LDAP Server (expose Oluso users over LDAP):**
 
 ```csharp
 builder.Services.AddOluso(builder.Configuration)
+    .AddLdap()
     .AddLdapServer(server => server
         .WithPort(389)
         .WithBaseDn("dc=example,dc=com")
-        .EnableAnonymousBind(false));
+        .WithAdmin("cn=admin,dc=example,dc=com", "password")
+        .AllowAnonymousBind(false));
 ```
+
+`builder.Services.AddLdapServer(builder.Configuration)` binds the same settings from `Oluso:LdapServer`.
 
 ---
 
 ## Complete Example
 
-These examples show complete `Program.cs` configurations for common scenarios. Copy the appropriate example as a starting point for your application.
+These examples show complete `Program.cs` configurations for common scenarios. Copy the appropriate example as a starting point for your application. `samples/Oluso.Sample/Program.cs` is the full reference.
 
 ### Single-Tenant Setup
 
 Best for: Internal apps, single-customer deployments, or apps where all users share the same identity configuration.
 
 ```csharp
+using Oluso;
+using Oluso.Account;
+using Oluso.Admin;
+using Oluso.EntityFramework;
+using Oluso.Messaging;
+using Oluso.UI;
+using Oluso.Webhooks;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add database
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+var connectionString = builder.Configuration.GetConnectionString("OlusoDb")!;
+var provider = builder.Configuration.GetValue<string>("Oluso:Database:Provider", "Sqlite")!;
 
-// Add distributed cache
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = builder.Configuration.GetConnectionString("Redis");
-});
+var olusoBuilder = builder.Services.AddOluso(builder.Configuration)
+    .AddMultiTenancy()
+    .AddUserJourneyEngine()
+    .AddSigningKeys()
+    .AddAdminApi(mvc => mvc.AddOlusoAdmin().AddOlusoAccount())
+    .AddEntityFrameworkStoresForProvider(provider, connectionString);
 
-// Add Oluso with static external providers
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneys(journeys =>
-    {
-        journeys.AddBuiltInSteps();
-        journeys.UseDistributedCache();
-        journeys.UsePolicyStore<EfJourneyPolicyStore>();
-    })
-    // External authentication with static providers
-    .AddExternalAuthentication()
-    .AddGoogle(
-        builder.Configuration["Auth:Google:ClientId"]!,
-        builder.Configuration["Auth:Google:ClientSecret"]!)
-    .AddGitHub(
-        builder.Configuration["Auth:GitHub:ClientId"]!,
-        builder.Configuration["Auth:GitHub:ClientSecret"]!)
-    .AddMicrosoftAccount(
-        builder.Configuration["Auth:Microsoft:ClientId"]!,
-        builder.Configuration["Auth:Microsoft:ClientSecret"]!);
+builder.Services.AddMessaging(builder.Configuration);
+builder.Services.AddOlusoWebhooks();
+builder.Services.AddWebhookRetryProcessing();
 
-// Add MFA service
-builder.Services.AddScoped<IMfaService, TotpMfaService>();
+builder.Services.AddControllers().ApplyOlusoConventions(olusoBuilder);
+builder.Services.AddOlusoUI();
+builder.Services.AddRazorPages();
+builder.Services.AddCors(options => options.AddPolicy("Oluso", _ => { }));
 
 var app = builder.Build();
 
+await app.MigrateOlusoDatabaseAsync();
+
+app.UseStaticFiles();
+app.UseRouting();
+app.UseCors("Oluso");
 app.UseAuthentication();
+app.UseOluso();
+app.UseOlusoUI();
 app.UseAuthorization();
 
-app.MapOlusoEndpoints();
+app.MapRazorPages();
+app.MapControllers();
+app.MapOlusoRealtime();
 
 app.Run();
 ```
 
-### Multi-Tenant Setup with Dynamic Providers
+### Multi-Tenant Setup with Enterprise Modules
 
-Best for: SaaS applications, white-label platforms, or any scenario where different customers need their own OAuth configurations.
+Best for: SaaS applications, white-label platforms, or any scenario where different customers need their own OAuth configurations. Tenants are resolved from the subdomain, each tenant configures its own external providers in the Admin UI, and journey state is kept in Redis.
 
 ```csharp
+using Oluso;
+using Oluso.Account;
+using Oluso.Admin;
+using Oluso.EntityFramework;
+using Oluso.Enterprise.Fido2;
+using Oluso.Enterprise.Saml;
+using Oluso.Enterprise.Scim;
+using Oluso.Messaging;
+using Oluso.UI;
+using Oluso.Webhooks;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add database
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+var connectionString = builder.Configuration.GetConnectionString("OlusoDb")!;
+var provider = builder.Configuration.GetValue<string>("Oluso:Database:Provider", "Sqlite")!;
 
-// Add distributed cache (required for multi-tenant state management)
+// Distributed cache for journey state across instances
 builder.Services.AddStackExchangeRedisCache(options =>
 {
     options.Configuration = builder.Configuration.GetConnectionString("Redis");
 });
 
-// Add Oluso with multi-tenancy and dynamic external providers
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddMultiTenancy(options =>
-    {
-        // Resolve tenant from subdomain (e.g., acme.yourapp.com -> tenant "acme")
-        options.ResolutionStrategy = TenantResolutionStrategy.Host;
-    })
-    .AddUserJourneys(journeys =>
-    {
-        journeys.AddBuiltInSteps();
-        journeys.UseDistributedCache();  // Redis-backed for multi-instance deployments
-        journeys.UsePolicyStore<EfJourneyPolicyStore>();
-    })
-    // Dynamic external providers: each tenant loads OAuth config from database
-    .AddDynamicExternalProviders(options =>
-    {
-        options.CacheDurationMinutes = 5;
-        options.AllowTenantOverrides = true;
-    })
-    .AddExternalProviderStore<EfExternalProviderStore>();
+var olusoBuilder = builder.Services.AddOluso(builder.Configuration)
+    .AddMultiTenancy(options => options.ResolutionStrategy = TenantResolutionStrategy.Subdomain)
+    .AddUserJourneyEngine()
+    .AddSigningKeys()
+    .AddAdminApi(mvc => mvc.AddOlusoAdmin().AddOlusoAccount())
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddUserJourneys(journeys => journeys.UseDistributedCache())
+    .AddFido2();
 
-// Add MFA service
-builder.Services.AddScoped<IMfaService, TotpMfaService>();
+builder.Services.AddFido2ForProvider(provider, connectionString);
+builder.Services
+    .AddSaml(builder.Configuration)
+    .AddSamlForProvider(provider, connectionString)
+    .AddScim()
+    .AddScimForProvider(provider, connectionString);
+
+builder.Services.AddMessaging(builder.Configuration);
+builder.Services.AddOlusoWebhooks();
+builder.Services.AddWebhookRetryProcessing();
+
+builder.Services.AddControllers().ApplyOlusoConventions(olusoBuilder);
+builder.Services.AddOlusoUI();
+builder.Services.AddRazorPages();
+builder.Services.AddCors(options => options.AddPolicy("Oluso", _ => { }));
 
 var app = builder.Build();
 
-app.UseAuthentication();
-app.UseAuthorization();
+await app.MigrateOlusoDatabaseAsync();
 
-app.MapOlusoEndpoints();
+app.UseStaticFiles();
+app.UseRouting();
+app.UseCors("Oluso");
+app.UseAuthentication();
+app.UseOluso();
+app.UseOlusoUI();
+app.UseAuthorization();
+app.UseSession(); // FIDO2
+
+app.MapRazorPages();
+app.MapControllers();
+app.MapOlusoRealtime();
+app.MapSamlEndpoints();
+app.UseScim();
 
 app.Run();
 ```
+
+With more than one instance, also set `ConnectionStrings:RealtimeRedis` (or `ConnectionStrings:Redis`) so the
+realtime hub uses a Redis backplane, and share the Data Protection key ring between instances.
 
 ### Configuration (appsettings.json)
 
@@ -1826,24 +2186,26 @@ Store sensitive credentials in environment variables, Azure Key Vault, or a secr
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Host=localhost;Database=oluso;Username=app;Password=secret",
+    "OlusoDb": "Host=localhost;Database=oluso;Username=app;Password=secret",
     "Redis": "localhost:6379"
   },
   "Oluso": {
-    "IssuerUri": "https://auth.example.com"
-  },
-  "Auth": {
-    "Google": {
-      "ClientId": "your-google-client-id.apps.googleusercontent.com",
-      "ClientSecret": "your-google-client-secret"
+    "IssuerUri": "https://auth.example.com",
+    "Database": { "Provider": "PostgreSQL" },
+    "Cors": {
+      "Origins": [ "https://admin.example.com", "https://account.example.com" ]
     },
-    "GitHub": {
-      "ClientId": "your-github-client-id",
-      "ClientSecret": "your-github-client-secret"
+    "Fido2": {
+      "RelyingPartyId": "example.com",
+      "RelyingPartyName": "Example"
     },
-    "Microsoft": {
-      "ClientId": "your-microsoft-client-id",
-      "ClientSecret": "your-microsoft-client-secret"
+    "Messaging": {
+      "Email": {
+        "Provider": "SendGrid",
+        "FromAddress": "noreply@example.com",
+        "FromName": "Example",
+        "SendGrid": { "ApiKey": "your-sendgrid-api-key" }
+      }
     }
   }
 }
@@ -1873,22 +2235,18 @@ Oluso provides a unified event system for monitoring authentication flows, integ
 
 ### Enable Events
 
-Events are registered on `IServiceCollection`:
+`AddOluso` registers the event service (`AddOlusoEvents()`), so there is nothing to enable. The sinks come from
+the features you add:
 
-```csharp
-// Add the event system
-builder.Services.AddOlusoEvents();
+| Sink | Registered by |
+|------|---------------|
+| `AuditEventSink` | `AddEntityFrameworkStores*` (persists to the `AuditLogs` table) |
+| `WebhookEventSink` | `AddOlusoWebhooks()` |
+| `LoggerEventSink` | `builder.Services.AddLoggerEventSink()` (logs to `ILogger`) |
+| Your sink | `builder.Services.AddEventSink<TSink>()` |
 
-// Add event sinks
-builder.Services.AddLoggerEventSink();           // Logs to ILogger
-builder.Services.AddEventSink<AuditEventSink>(); // Persists to database
-builder.Services.AddWebhookEventSink();          // Dispatches to webhook endpoints
-
-// Then add Oluso
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
-```
+Event options (`OlusoEventOptions`: `ContinueOnSinkError`, `IncludeCategories`, `ExcludeCategories`,
+`CaptureActivityId`) are set with `builder.Services.Configure<OlusoEventOptions>(...)`.
 
 ### Event Categories
 
@@ -1898,6 +2256,8 @@ builder.Services.AddOluso(builder.Configuration)
 | `User` | UserRegistered, UserUpdated, UserDeleted, UserEmailVerified, UserPasswordChanged |
 | `Security` | ConsentGranted, ConsentDenied, UserLockedOut, MfaCompleted |
 | `Token` | TokenIssued, TokenRevoked |
+
+Other categories: `Client`, `Role`, `Resource`, `Settings`, `Admin`, `System`, `Team`, `Conversation`.
 
 ### Core Events
 
@@ -1914,6 +2274,8 @@ UserUpdatedEvent         // Profile updated
 UserDeletedEvent         // Account deleted
 UserPasswordChangedEvent // Password changed
 UserEmailVerifiedEvent   // Email verified
+UserRoleAssignedEvent    // Role assigned in a tenant
+UserRoleRemovedEvent     // Role removed in a tenant
 
 // Security events
 ConsentGrantedEvent      // OAuth consent granted
@@ -1922,6 +2284,7 @@ MfaCompletedEvent        // MFA verification result (success/fail)
 
 // Token events
 TokenIssuedEvent         // Access/ID token issued
+TokenRevokedEvent        // Token revoked
 ```
 
 ### Custom Events
@@ -1972,15 +2335,25 @@ Webhooks allow external systems to receive real-time notifications when events o
 Webhooks are registered on `IServiceCollection`:
 
 ```csharp
-// Add webhook support
-builder.Services.AddOlusoWebhooks();
-builder.Services.AddCoreWebhookEvents();
+using Oluso.Webhooks;
 
-// Then add Oluso
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
+builder.Services.AddOlusoWebhooks(options =>
+{
+    options.TimeoutSeconds = 30;
+    options.MaxRetries = 5;
+    options.RequireHttps = true;
+});
+
+// Retry failed deliveries with the in-process hosted service
+builder.Services.AddWebhookRetryProcessing();
 ```
+
+`AddOlusoWebhooks` also registers the webhook event sink. Endpoints are managed per tenant in the Admin UI.
+Without a retry processor, failed deliveries are recorded but not retried. For several instances, use
+`AddQueueBasedWebhookRetries(...)` from `Syndew.Oluso.Enterprise.AzureWebhooks` instead of
+`AddWebhookRetryProcessing()`.
+The core webhook events are always available; `AddCoreWebhookEvents()` is kept for compatibility and adds
+nothing.
 
 ### Webhook Events
 
@@ -1989,15 +2362,23 @@ builder.Services.AddOluso(builder.Configuration)
 | `user.created` | New user registered | User |
 | `user.updated` | User profile updated | User |
 | `user.deleted` | User account deleted | User |
+| `user.deactivated` | User account deactivated, including SCIM deprovisioning | User |
+| `user.reactivated` | Deactivated user account reactivated | User |
 | `user.email_verified` | Email verified | User |
 | `user.password_changed` | Password changed | User |
 | `user.locked_out` | Account locked | Security |
+| `user.role_assigned` | Role given to a user in a tenant | Role |
+| `user.role_removed` | Role taken from a user in a tenant | Role |
 | `auth.login_success` | Successful login | Authentication |
 | `auth.login_failed` | Failed login attempt | Authentication |
 | `auth.logout` | User logged out | Authentication |
 | `auth.token_issued` | Token issued | Authentication |
+| `auth.token_revoked` | Token revoked | Authentication |
 | `security.consent_granted` | OAuth consent granted | Security |
 | `security.consent_revoked` | OAuth consent denied | Security |
+
+Admin changes (`admin.*`), OIDC protocol events (`oidc.*`), journey submissions (`journey.submission_created`)
+and team events (`team.*`) are also available; the Admin UI lists every registered event type.
 
 ### Webhook Payload
 
@@ -2005,8 +2386,15 @@ builder.Services.AddOluso(builder.Configuration)
 {
   "id": "evt_abc123",
   "event_type": "user.created",
-  "timestamp": "2024-01-15T10:30:00Z",
   "tenant_id": "tenant_xyz",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "api_version": "2026-01-01",
+  "origin": {
+    "kind": "service_client",
+    "id": "pay1",
+    "name": null,
+    "ip_address": "203.0.113.7"
+  },
   "data": {
     "subject_id": "user_123",
     "email": "user@example.com",
@@ -2018,28 +2406,67 @@ builder.Services.AddOluso(builder.Configuration)
 }
 ```
 
+`origin` says what caused the event, whoever it was. User events are the same
+(`user.created`, `user.updated`, `user.deleted`, `user.role_assigned`,
+`user.role_removed`) whether an admin, a Service API client, SCIM or a journey
+made the change; read `origin` to tell them apart. The admin API used to
+raise its own copies (`admin.user_created`, `admin.user_updated`,
+`admin.user_deleted`, `admin.user_role_assigned`, `admin.user_role_removed`,
+`admin.password_reset`); they are gone, and existing webhook subscriptions on
+them were moved to the core events on upgrade.
+
+| `origin.kind` | `origin.id` |
+|---------------|-------------|
+| `admin` | The admin's user id (admin API) |
+| `service_client` | The client_id of a client_credentials token (Service API) |
+| `scim` | The inbound SCIM client id |
+| `journey` | The journey policy id |
+| `user` | The signed-in user's id, acting on their own account |
+| `anonymous` | none: an unauthenticated request |
+| `system` | The job or source, when known: background work and startup |
+
+The same values are stored on audit log rows (`OriginKind`, `OriginId`,
+`OriginName`; filter with `originKind` / `originId`).
+
+#### Not echoing an integration's own changes
+
+An integration that calls the Service API and also receives webhooks would be
+told about its own writes and may write again in response. Link the webhook
+endpoint to the integration's client (**Owning client** on the endpoint) and
+keep **Don't send changes this client made itself** on: events whose origin is
+that `service_client` are then not delivered to the endpoint. Other endpoints,
+and changes made by anyone else, are unaffected.
+
+Outbound SCIM has the same guard: set **Same system as inbound client** on a
+SCIM provider and changes that inbound client provisions are not pushed back
+to that provider.
+
 ### Webhook Security
 
-Payloads are signed with HMAC-SHA256. Verify the signature:
+Each delivery carries `X-Webhook-ID`, `X-Webhook-Event` and `X-Webhook-Timestamp` headers. When the endpoint
+has a signing secret, payloads are signed with HMAC-SHA256 over `{X-Webhook-Timestamp}.{body}` and sent in
+`X-Webhook-Signature` as `v1={hex}`. Verify the signature:
 
 ```csharp
-var signature = request.Headers["X-Webhook-Signature"];
-var timestamp = request.Headers["X-Webhook-Timestamp"];
+var signature = request.Headers["X-Webhook-Signature"].ToString();
+var timestamp = request.Headers["X-Webhook-Timestamp"].ToString(); // ISO 8601, use as sent
 
-var payload = await request.Content.ReadAsStringAsync();
+using var reader = new StreamReader(request.Body);
+var payload = await reader.ReadToEndAsync();
 var signedPayload = $"{timestamp}.{payload}";
 
 using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(endpointSecret));
 var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(signedPayload));
-var expected = $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
+var expected = $"v1={Convert.ToHexString(hash).ToLowerInvariant()}";
 
-if (signature != expected)
+if (!CryptographicOperations.FixedTimeEquals(
+        Encoding.UTF8.GetBytes(signature), Encoding.UTF8.GetBytes(expected)))
     return Unauthorized();
 ```
 
 ### Webhook Retry Policy
 
-Failed deliveries are retried with exponential backoff:
+With a retry processor registered, failed deliveries are retried with exponential backoff, up to `MaxRetries` (default 5):
 
 | Attempt | Delay |
 |---------|-------|
@@ -2090,22 +2517,24 @@ Audit logs provide a compliance-ready record of all security-relevant actions in
 
 ### Enable Audit Logging
 
-```csharp
-// Add event system with audit sink
-builder.Services.AddOlusoEvents();
-builder.Services.AddEventSink<AuditEventSink>();  // Persists events to AuditLogs table
+The EF stores register `AuditEventSink`, so every auditable event is written to the `AuditLogs` table with no
+extra setup:
 
-// Then add Oluso with EF stores
+```csharp
 builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddUserJourneyEngine();
 ```
+
+The Admin API exposes the log at `/api/admin/auditlogs` (query, `/{id}`, `/user/{subjectId}`,
+`/resource/{resourceType}/{resourceId}`, `/export` and `DELETE /purge`).
 
 ### Audit Log Schema
 
 | Column | Description |
 |--------|-------------|
 | `Id` | Unique log entry ID |
+| `TenantId` | Tenant the entry belongs to |
 | `Timestamp` | When the event occurred |
 | `EventType` | Event type (e.g., "UserSignedIn") |
 | `Category` | Event category (Authentication, User, Security) |
@@ -2116,12 +2545,15 @@ builder.Services.AddOluso(builder.Configuration)
 | `SubjectEmail` | User's email |
 | `ResourceType` | Type of resource affected |
 | `ResourceId` | ID of affected resource |
+| `ResourceName` | Name of affected resource |
 | `ClientId` | OAuth client involved |
 | `IpAddress` | Client IP address |
 | `UserAgent` | Client user agent |
 | `Details` | JSON with additional context |
 | `ErrorMessage` | Error details for failures |
+| `Reason` | Reason given for the action |
 | `ActivityId` | Correlation ID for distributed tracing |
+| `OriginKind` / `OriginId` / `OriginName` | What caused the event (see [Webhook Payload](#webhook-payload)) |
 
 ### Querying Audit Logs
 
@@ -2129,6 +2561,13 @@ builder.Services.AddOluso(builder.Configuration)
 public class AuditController : ControllerBase
 {
     private readonly IAuditLogService _auditService;
+    private readonly ITenantContext _tenantContext;
+
+    public AuditController(IAuditLogService auditService, ITenantContext tenantContext)
+    {
+        _auditService = auditService;
+        _tenantContext = tenantContext;
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetLogs([FromQuery] AuditLogQuery query)
@@ -2140,14 +2579,14 @@ public class AuditController : ControllerBase
     [HttpGet("user/{userId}")]
     public async Task<IActionResult> GetUserActivity(string userId)
     {
-        var logs = await _auditService.GetBySubjectAsync(userId, limit: 100);
+        var logs = await _auditService.GetBySubjectAsync(_tenantContext.TenantId, userId, limit: 100);
         return Ok(logs);
     }
 
     [HttpGet("resource/{type}/{id}")]
     public async Task<IActionResult> GetResourceHistory(string type, string id)
     {
-        var logs = await _auditService.GetByResourceAsync(type, id, limit: 50);
+        var logs = await _auditService.GetByResourceAsync(_tenantContext.TenantId, type, id, limit: 50);
         return Ok(logs);
     }
 }
@@ -2158,35 +2597,45 @@ public class AuditController : ControllerBase
 ```csharp
 var query = new AuditLogQuery
 {
+    TenantId = "tenant-123",          // Filter by tenant
     Category = "Authentication",      // Filter by category
     EventType = "UserSignedIn",       // Filter by event type
     SubjectId = "user_123",           // Filter by user
     ClientId = "my-app",              // Filter by client
+    OriginKind = "service_client",    // Filter by origin
     Success = false,                  // Only failures
     StartDate = DateTime.UtcNow.AddDays(-7),
     EndDate = DateTime.UtcNow,
     SearchTerm = "john",              // Search in names/emails
     Page = 1,
     PageSize = 50,
-    SortBy = "timestamp",
+    SortBy = "Timestamp",
     SortDescending = true
 };
 ```
 
 ### Log Retention
 
+Audit logs are not purged automatically. Purge them from the Admin API (`DELETE /api/admin/auditlogs/purge`)
+or on a schedule:
+
 ```csharp
 // Purge logs older than 90 days
 public class AuditLogCleanupService : BackgroundService
 {
-    private readonly IAuditLogService _auditService;
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    public AuditLogCleanupService(IServiceScopeFactory scopeFactory) => _scopeFactory = scopeFactory;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var auditService = scope.ServiceProvider.GetRequiredService<IAuditLogService>();
+
             var cutoff = DateTime.UtcNow.AddDays(-90);
-            await _auditService.PurgeOldLogsAsync(cutoff, stoppingToken);
+            await auditService.PurgeOldLogsAsync(tenantId: null, cutoff, stoppingToken);
             await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
         }
     }
@@ -2197,35 +2646,26 @@ public class AuditLogCleanupService : BackgroundService
 
 ## Licensing
 
-Oluso includes a flexible licensing system for feature gating. The platform license uses offline RSA signature validation, while extensions (like billing) can add online subscription-based features.
-
-### Quick Start
-
-Licensing is registered on `IServiceCollection`:
-
-```csharp
-// With a license key
-builder.Services.AddOlusoLicensing(builder.Configuration["Oluso:LicenseKey"]);
-
-// Or for community/development
-builder.Services.AddOlusoCommunityLicense();
-builder.Services.AddOlusoDevelopmentLicense(); // For development only
-
-// Then add Oluso
-builder.Services.AddOluso(builder.Configuration)
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddUserJourneysWithDefaults();
-```
+Oluso includes a feature gating system. Licensed modules (SAML, LDAP, Azure Key Vault, OpenTelemetry) check
+an `ILicenseValidator` when one is registered; the public build registers none, so they run without a license.
+Extensions (like billing) can add their own feature providers.
 
 ### License Tiers
 
-| Tier | Features |
-|------|----------|
-| Community | Core OIDC, local authentication, basic MFA |
-| Professional | + External providers, webhooks, audit logging |
-| Enterprise | + FIDO2, SAML, SCIM, LDAP, custom journeys |
+`LicenseTier` values: `Community`, `Starter`, `Professional`, `Enterprise`, `Development`. Feature keys are in
+`LicensedFeatures` (for example `fido2`, `saml`, `scim`, `ldap`, `webhooks`, `audit-logging`, `telemetry`,
+`keyvault`).
 
 ### Feature Gating
+
+`AddOluso` registers `IFeatureGate`, with the organization and tenant feature providers. The sample also adds
+per-user module seats:
+
+```csharp
+builder.Services.AddOrganizationFeatureProvider();   // Organization-level entitlements
+builder.Services.AddTenantFeatureProvider();         // Tenant-level, within organization bounds
+builder.Services.AddUserModuleAccessFeatureProvider(); // Per-user module seats (when MaxSeats is set)
+```
 
 The `IFeatureGate` interface provides runtime feature validation:
 
@@ -2234,11 +2674,14 @@ public class MyService
 {
     private readonly IFeatureGate _featureGate;
 
+    public MyService(IFeatureGate featureGate) => _featureGate = featureGate;
+
     public async Task<IActionResult> ConfigureSaml()
     {
-        if (!await _featureGate.IsEnabledAsync(Features.Saml))
+        var result = await _featureGate.CheckFeatureAsync(LicensedFeatures.Saml);
+        if (!result.IsAllowed)
         {
-            return Forbid("SAML requires an Enterprise license");
+            return new ObjectResult(result.Message) { StatusCode = StatusCodes.Status403Forbidden };
         }
 
         // Configure SAML...
@@ -2246,9 +2689,11 @@ public class MyService
 }
 ```
 
+`RequireFeatureAsync(featureKey)` throws instead of returning a result.
+
 ### License Claims
 
-License information is added to tokens via `LicenseClaimsProvider`:
+`builder.Services.AddLicenseClaims()` adds license information to tokens via `LicenseClaimsProvider`:
 
 | Claim | Description |
 |-------|-------------|
@@ -2292,20 +2737,7 @@ public class CustomFeatureProvider : IFeatureAvailabilityProvider
 builder.Services.AddFeatureProvider<CustomFeatureProvider>();
 ```
 
----
-
-## Migration from v1
-
-If upgrading from IdentityServer.Core:
-
-1. Replace `IdentityServer.Core` references with `Oluso.Core`
-2. Replace `IdentityServer.Endpoints` with `Oluso`
-3. Update namespaces from `IdentityServer.*` to `Oluso.*`
-4. Replace `IJourneyStepHandler` with `IStepHandler`
-5. Replace `StepResult` with `StepHandlerResult`
-6. Update step type strings (e.g., `StepType.LocalLogin` to `"local_login"`)
-
-See [Migration Guide](./migration-v1-to-v2.md) for detailed instructions.
+Providers are checked in descending `Priority`; the first that denies a feature wins.
 
 ---
 
@@ -2316,21 +2748,22 @@ Oluso provides comprehensive OpenTelemetry support for observability with metric
 ### Quick Start
 
 ```csharp
-builder.Services.AddOluso(configuration)
-    .AddOlusoOpenTelemetry(options =>
-    {
-        options.ServiceName = "MyAuthServer";
-        options.OtlpEndpoint = "http://localhost:4317"; // Jaeger, Tempo, etc.
-        options.EnableConsoleExporter = true; // For development
-    });
+using Oluso.Telemetry.OpenTelemetry;
+
+builder.Services.AddOlusoOpenTelemetry(options =>
+{
+    options.ServiceName = "MyAuthServer";
+    options.OtlpEndpoint = "http://localhost:4317"; // Any OTLP collector
+    options.EnableConsoleExporter = true; // For development
+});
 ```
 
 ### Package Structure
 
 | Package | Description |
 |---------|-------------|
-| `Oluso.Telemetry.Abstractions` | Vendor-neutral interfaces for telemetry |
-| `Oluso.Telemetry.OpenTelemetry` | OpenTelemetry implementation |
+| `Syndew.Oluso.Telemetry.Abstractions` | Vendor-neutral interfaces for telemetry |
+| `Syndew.Oluso.Telemetry.OpenTelemetry` | OpenTelemetry implementation, telemetry API and database logger |
 
 ### Configuration Options
 
@@ -2344,10 +2777,14 @@ builder.Services.AddOlusoOpenTelemetry(options =>
     // Feature toggles
     options.EnableMetrics = true;
     options.EnableTracing = true;
+    options.EnableLogs = true;
 
     // Export configuration
     options.OtlpEndpoint = "http://collector:4317";
-    options.EnableConsoleExporter = false; // Development only
+    options.LogsOtlpEndpoint = null;        // Defaults to OtlpEndpoint
+    options.TempoEndpoint = null;           // Separate trace endpoint
+    options.LokiEndpoint = null;            // Separate log endpoint
+    options.EnableConsoleExporter = false;  // Development only
 
     // Additional resource attributes
     options.ResourceAttributes = new Dictionary<string, object>
@@ -2366,26 +2803,46 @@ builder.Services.AddOlusoOpenTelemetry(options =>
     {
         builder.AddEntityFrameworkCoreInstrumentation();
     };
+
+    // Development/testing only
+    options.SkipLicenseValidation = false;
+});
+```
+
+The sample enables OpenTelemetry only when `Oluso:Telemetry:OtlpEndpoint` or `Oluso:Telemetry:TempoEndpoint` is
+set, and otherwise registers the no-op implementation.
+
+To keep application logs in the database for the Admin UI log viewer, add the database logger:
+
+```csharp
+builder.Logging.AddDatabaseLogger(options =>
+{
+    options.MinimumLevel = LogLevel.Information;
+    options.ExcludeCategories.Add("Microsoft.EntityFrameworkCore");
 });
 ```
 
 ### Metrics
 
-Oluso tracks the following metrics via `IOlusoMetrics`:
+Oluso tracks the following metrics via `IOlusoMetrics` (meter name `Oluso`):
 
 | Metric | Type | Description |
 |--------|------|-------------|
 | `oluso.tokens.issued` | Counter | Tokens issued by grant type |
 | `oluso.tokens.failed` | Counter | Failed token requests |
+| `oluso.tokens.introspected` / `oluso.tokens.revoked` | Counter | Introspection and revocation |
 | `oluso.authentication.success` | Counter | Successful authentications |
 | `oluso.authentication.failures` | Counter | Failed authentication attempts |
+| `oluso.authentication.external` | Counter | External IdP authentications |
+| `oluso.mfa.challenges` | Counter | MFA challenges |
+| `oluso.consent.granted` / `oluso.consent.denied` | Counter | Consent decisions |
 | `oluso.sessions.active` | Gauge | Current active sessions |
 | `oluso.request.duration` | Histogram | Request duration in ms |
 | `oluso.database.duration` | Histogram | DB operation duration |
 
 ### Tracing
 
-Distributed tracing captures request flows with these span names:
+Distributed tracing uses the `Oluso` activity source and captures request flows with these span names:
 
 | Span | Kind | Description |
 |------|------|-------------|
@@ -2394,7 +2851,7 @@ Distributed tracing captures request flows with these span names:
 | `Oluso.LocalLogin` | Internal | Local authentication |
 | `Oluso.ExternalLogin` | Client | External IdP authentication |
 | `Oluso.Journey` | Internal | User journey execution |
-| `Oluso.Database` | Client | Database operations |
+| `Oluso.JourneyStep` | Internal | One journey step |
 
 ### Custom Telemetry
 
@@ -2430,32 +2887,31 @@ public class MyService
 
 ### No-Op Fallback
 
-When OpenTelemetry is not configured, a no-op implementation is used:
+When OpenTelemetry is not configured, register the no-op implementation so `IOlusoTelemetry` still resolves:
 
 ```csharp
-// Automatically falls back to NullOlusoTelemetry
-builder.Services.AddOluso(configuration)
-    .EnsureTelemetryServices(); // Registers no-op if nothing else configured
+builder.Services.AddOlusoNullTelemetry(); // NullOlusoTelemetry
 ```
 
 ---
 
 ## Telemetry Dashboard (Admin UI)
 
-The `@oluso/telemetry-ui` package provides a React-based dashboard for viewing logs, traces, and metrics.
+The `@oluso/plugin-telemetry` Admin UI plugin (`libs/plugins/telemetry`) provides a dashboard for viewing logs,
+traces, and metrics. It is shown to super admins.
 
 ### Installation
 
+The Admin UI app registers it at start-up:
+
 ```typescript
-import { createTelemetryPlugin } from '@oluso/telemetry-ui';
+import { TELEMETRY_PLUGIN } from '@oluso/plugins/telemetry';
 
-const telemetryPlugin = createTelemetryPlugin({
-  apiClient: axiosInstance,
-});
-
-// Register with admin UI
-adminUI.registerPlugin(telemetryPlugin);
+pluginService.registerAdminPlugin(TELEMETRY_PLUGIN);
 ```
+
+The backend side is the telemetry API in `Oluso.Telemetry.OpenTelemetry`, enabled by
+`AddOlusoOpenTelemetry`.
 
 ### Features
 
@@ -2464,7 +2920,8 @@ adminUI.registerPlugin(telemetryPlugin);
 | Dashboard | `/telemetry` | Overview metrics with charts |
 | Logs | `/telemetry/logs` | Searchable application logs with live tail |
 | Traces | `/telemetry/traces` | Distributed trace viewer |
-| Audit Logs | `/telemetry/audit` | Security audit trail |
+
+Audit logs have their own page in the Admin UI, backed by `/api/admin/auditlogs`.
 
 ### Dashboard Metrics
 
@@ -2486,51 +2943,19 @@ The dashboard displays:
 ### Trace Viewer
 
 - Hierarchical span visualization
-- Duration bar chart showing timing
-- Span tags and events
+- Span durations
 - Error highlighting
-- Operation breakdown
-
-### Audit Log Viewer
-
-- Filter by category (Authentication, User, Security, Token)
-- Date range filtering
-- User activity tracking
-- Export to CSV
-- Detailed event properties
+- Filter by operation
 
 ### API Endpoints
 
-The telemetry UI requires these admin API endpoints:
+The telemetry UI uses these admin API endpoints:
 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/admin/telemetry/metrics/overview` | Dashboard metrics |
-| `GET /api/admin/telemetry/metrics/{name}` | Time series data |
+| `GET /api/admin/telemetry/metrics/{metricName}` | Time series data |
 | `GET /api/admin/telemetry/logs` | Application logs |
+| `GET /api/admin/telemetry/logs/categories` | Log categories |
 | `GET /api/admin/telemetry/traces` | Trace list |
-| `GET /api/admin/telemetry/traces/{id}` | Trace detail |
-| `GET /api/admin/telemetry/audit` | Audit logs |
-
-### Reusable Components
-
-Export components for custom dashboards:
-
-```typescript
-import {
-  MetricCard,
-  SimpleBarChart,
-  SimpleLineChart,
-  LogViewer,
-  TraceViewer,
-  AuditLogViewer,
-} from '@oluso/telemetry-ui';
-
-// Use in custom pages
-<MetricCard
-  title="Active Users"
-  value={1234}
-  icon={UserGroupIcon}
-  color="green"
-/>
-```
+| `GET /api/admin/telemetry/traces/{traceId}` | Trace detail |

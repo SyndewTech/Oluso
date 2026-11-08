@@ -84,6 +84,16 @@ public class OidcDiscoveryTests : IntegrationTestBase
     [Fact]
     public async Task Jwks_ReturnsValidKeys()
     {
+        // Trigger signing key generation by issuing a token
+        await Client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = "cc-client",
+                ["client_secret"] = "test-secret",
+                ["scope"] = "openid"
+            }));
+
         // Act
         var response = await Client.GetAsync("/.well-known/jwks");
 

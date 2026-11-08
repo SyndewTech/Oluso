@@ -1,0 +1,322 @@
+<div>
+  <div class="flex items-center justify-between mb-4">
+    <p class="text-sm text-gray-500">Members of this organization</p>
+    <ui-button (clicked)="openAddMemberModal()">
+      <ui-icon name="plus" class="h-4 w-4 mr-2" />
+      Add Member
+    </ui-button>
+  </div>
+
+  <ui-data-table
+    [loading]="membersLoading()"
+    [empty]="members().length === 0"
+    emptyMessage="No members in this organization"
+    [searchable]="true"
+    searchPlaceholder="Search members..."
+    [paginated]="true"
+    [page]="membersPage()"
+    [pageSize]="membersPageSize"
+    [totalCount]="membersTotalCount()"
+    [totalPages]="membersTotalPages()"
+    (searchChange)="onMembersSearch($event)"
+    (pageChange)="onMembersPageChange($event)"
+  >
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Joined At</th>
+          <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="bg-white divide-y divide-gray-200">
+        @for (member of members(); track member.id) {
+          <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="text-sm font-medium text-gray-900">{{ member.displayName || member.userName || member.userId }}</div>
+              @if (member.email) {
+                <div class="text-sm text-gray-500">{{ member.email }}</div>
+              }
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <ui-badge [variant]="member.role === 'Owner' ? 'info' : 'default'">
+                {{ member.role }}
+              </ui-badge>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              {{ formatDate(member.joinedAt) }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right space-x-1">
+              <button
+                (click)="openMemberTenantsModal(member)"
+                class="p-1 text-gray-400 hover:text-purple-600"
+                title="Manage tenant access"
+              >
+                <ui-icon name="building" class="h-4 w-4" />
+              </button>
+              <button
+                (click)="openEditMemberModal(member)"
+                class="p-1 text-gray-400 hover:text-blue-600"
+                title="Edit member"
+              >
+                <ui-icon name="pencil" class="h-4 w-4" />
+              </button>
+              <button
+                (click)="openRemoveMemberModal(member)"
+                class="p-1 text-gray-400 hover:text-red-600"
+                title="Remove member"
+              >
+                <ui-icon name="trash" class="h-4 w-4" />
+              </button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </ui-data-table>
+
+  <!-- Add Member Modal -->
+  <ui-modal
+    [open]="showAddMemberModal()"
+    title="Add Member"
+    (closed)="closeAddMemberModal()"
+  >
+    <form (ngSubmit)="addMember()" class="space-y-4">
+      <!-- User selection -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">User</label>
+
+        @if (userSearchMode() === 'search') {
+          @if (selectedUserForAdd(); as user) {
+            <!-- Selected user card -->
+            <div class="flex items-center justify-between border border-primary-300 bg-primary-50 rounded-md px-3 py-2">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-gray-900 truncate">{{ user.displayName || user.userName }}</div>
+                <div class="text-xs text-gray-500 truncate">{{ user.email }}</div>
+                @if (user.tenantName) {
+                  <div class="text-xs text-gray-400 truncate">{{ user.tenantName }}</div>
+                }
+                <div class="text-xs text-gray-400 font-mono truncate">{{ user.id }}</div>
+              </div>
+              <button type="button" (click)="clearSelectedUser()" class="ml-2 p-1 text-gray-400 hover:text-gray-600 flex-shrink-0">
+                <ui-icon name="x-mark" class="h-4 w-4" />
+              </button>
+            </div>
+          } @else {
+            <!-- Search input -->
+            <div class="relative">
+              <input
+                type="text"
+                [ngModel]="userSearchTerm"
+                (ngModelChange)="onUserSearch($event)"
+                name="userSearch"
+                placeholder="Search by name or email..."
+                autocomplete="off"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              @if (userSearchResults().length > 0) {
+                <div class="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-auto">
+                  @for (u of userSearchResults(); track u.id) {
+                    <button
+                      type="button"
+                      (click)="selectUserForAdd(u)"
+                      class="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                    >
+                      <div class="text-sm font-medium text-gray-900">{{ u.displayName || u.userName }}</div>
+                      <div class="text-xs text-gray-500">{{ u.email }}</div>
+                      @if (u.tenantName) {
+                        <div class="text-xs text-gray-400">{{ u.tenantName }}</div>
+                      }
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+            <button type="button" (click)="userSearchMode.set('manual')" class="mt-1 text-xs text-primary-600 hover:text-primary-800">
+              Enter user ID manually
+            </button>
+          }
+        } @else {
+          <!-- Manual user ID input -->
+          <input
+            type="text"
+            [(ngModel)]="memberFormData.userId"
+            name="userId"
+            required
+            placeholder="Enter user ID"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          />
+          <button type="button" (click)="userSearchMode.set('search')" class="mt-1 text-xs text-primary-600 hover:text-primary-800">
+            Search for user instead
+          </button>
+        }
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+        <select
+          [(ngModel)]="memberFormData.role"
+          name="role"
+          class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+        >
+          <option value="Member">Member</option>
+          <option value="Admin">Admin</option>
+          <option value="Owner">Owner</option>
+        </select>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-4">
+        <ui-button type="button" variant="secondary" (clicked)="closeAddMemberModal()">
+          Cancel
+        </ui-button>
+        <ui-button type="submit" [disabled]="saving() || !memberFormData.userId">
+          {{ saving() ? 'Adding...' : 'Add Member' }}
+        </ui-button>
+      </div>
+    </form>
+  </ui-modal>
+
+  <!-- Edit Member Modal -->
+  <ui-modal
+    [open]="showEditMemberModal()"
+    title="Edit Member"
+    (closed)="closeEditMemberModal()"
+  >
+    @if (selectedMember(); as member) {
+      <form (ngSubmit)="updateMember()" class="space-y-4">
+        <!-- Read-only member info -->
+        <div class="p-3 bg-gray-50 rounded-md">
+          <div class="text-sm font-medium text-gray-900">{{ member.displayName || member.userName || member.userId }}</div>
+          @if (member.email) {
+            <div class="text-xs text-gray-500">{{ member.email }}</div>
+          }
+          <div class="text-xs text-gray-400 font-mono mt-0.5">{{ member.userId }}</div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+          <select
+            [(ngModel)]="editMemberFormData.role"
+            name="editRole"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          >
+            <option value="Member">Member</option>
+            <option value="Admin">Admin</option>
+            <option value="Owner">Owner</option>
+          </select>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-4">
+          <ui-button type="button" variant="secondary" (clicked)="closeEditMemberModal()">
+            Cancel
+          </ui-button>
+          <ui-button type="submit" [disabled]="saving()">
+            {{ saving() ? 'Saving...' : 'Save Changes' }}
+          </ui-button>
+        </div>
+      </form>
+    }
+  </ui-modal>
+
+  <!-- Remove Member Confirmation Modal -->
+  <ui-modal
+    [open]="showRemoveMemberModal()"
+    title="Remove Member"
+    (closed)="closeRemoveMemberModal()"
+  >
+    @if (selectedMember(); as member) {
+      <p class="text-sm text-gray-500">
+        Are you sure you want to remove <span class="font-medium text-gray-700">{{ member.displayName || member.userName || member.userId }}</span> from the organization?
+      </p>
+    }
+    <div class="mt-4 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeRemoveMemberModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmRemoveMember()">
+        Remove
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Member Tenant Access Modal -->
+  <ui-modal
+    [open]="showMemberTenantsModal()"
+    title="Manage Tenant Access"
+    (closed)="closeMemberTenantsModal()"
+  >
+    @if (selectedMember(); as member) {
+      <div class="space-y-4">
+        <!-- Member info -->
+        <div class="p-3 bg-gray-50 rounded-md">
+          <div class="text-sm font-medium text-gray-900">{{ member.displayName || member.userName || member.userId }}</div>
+          @if (member.email) {
+            <div class="text-xs text-gray-500">{{ member.email }}</div>
+          }
+        </div>
+
+        <p class="text-sm text-gray-500">
+          Select which tenants this member can access. Removing access also removes their roles in that tenant.
+        </p>
+
+        @if (memberTenantsLoading()) {
+          <div class="flex items-center justify-center h-24">
+            <div class="text-gray-500 text-sm">Loading tenants...</div>
+          </div>
+        } @else {
+          <div class="space-y-2 max-h-80 overflow-y-auto">
+            @for (item of memberTenantAccess(); track item.tenantId) {
+              <div class="flex items-center justify-between p-3 border border-gray-200 rounded-md">
+                <div class="flex items-center gap-3 min-w-0">
+                  <input
+                    type="checkbox"
+                    [checked]="memberTenantToggles[item.tenantId]"
+                    [disabled]="item.isHomeTenant"
+                    (change)="onMemberTenantToggle(item.tenantId, $any($event.target).checked)"
+                    class="h-4 w-4 text-primary-600 rounded disabled:opacity-50"
+                  />
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-gray-900 truncate">
+                      {{ item.tenantName }}
+                      @if (item.isHomeTenant) {
+                        <span class="ml-1 text-xs font-normal text-gray-500">(home tenant)</span>
+                      }
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      <code class="bg-gray-100 px-1 rounded">{{ item.tenantIdentifier }}</code>
+                      <span class="ml-2">{{ item.environment }}</span>
+                    </div>
+                    @if (item.roles.length > 0 && item.hasAccess) {
+                      <div class="text-xs text-gray-400 mt-0.5">
+                        Roles: {{ item.roles.join(', ') }}
+                      </div>
+                    }
+                  </div>
+                </div>
+                @if (item.hasAccess && item.joinedAt) {
+                  <div class="text-xs text-gray-400 flex-shrink-0 ml-2">
+                    {{ formatDate(item.joinedAt) }}
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          @if (memberTenantAccess().length === 0) {
+            <p class="text-sm text-gray-400 text-center py-4">No tenants in this organization</p>
+          }
+        }
+
+        <div class="flex justify-end gap-3 pt-4">
+          <ui-button type="button" variant="secondary" (clicked)="closeMemberTenantsModal()">
+            Cancel
+          </ui-button>
+          <ui-button (clicked)="saveMemberTenants()" [disabled]="memberTenantsSaving() || memberTenantsLoading()">
+            {{ memberTenantsSaving() ? 'Saving...' : 'Save Access' }}
+          </ui-button>
+        </div>
+      </div>
+    }
+  </ui-modal>
+</div>

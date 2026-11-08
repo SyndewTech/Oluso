@@ -2,8 +2,8 @@
 @model MfaTotpSetupViewModel
 
 <div class="mfa-card">
-    <h1 class="title">Set Up Authenticator</h1>
-    <p class="subtitle">Scan the QR code with your authenticator app</p>
+    <h1 class="title">@Localizer["mfa_totp_setup_title"]</h1>
+    <p class="subtitle">@Localizer["mfa_totp_setup_subtitle"]</p>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
     {
@@ -11,44 +11,31 @@
     }
 
     <div class="qr-section">
-        <div class="qr-code" id="qrcode"></div>
+        @if (!string.IsNullOrEmpty(Model?.QrCodeImage))
+        {
+            <div class="qr-code">
+                <img src="@Model.QrCodeImage" alt="@Localizer["mfa_totp_setup_qr_instructions"]" width="200" height="200" />
+            </div>
+        }
         <p class="qr-instructions">
-            Scan this QR code with Google Authenticator, Authy, 1Password, or any TOTP-compatible app.
+            @Localizer["mfa_totp_setup_qr_instructions"]
         </p>
     </div>
 
     <div class="manual-entry">
-        <p class="manual-label">Can't scan? Enter this code manually:</p>
+        <p class="manual-label">@Localizer["mfa_totp_setup_manual_label"]</p>
         <code class="secret-key">@Model?.SharedKey</code>
     </div>
 
     <form method="post" id="verifyForm">
         <div class="form-group">
-            <label for="setup_totp_code">Enter the 6-digit code from your app</label>
-            <input type="text"
-                   id="setup_totp_code"
-                   name="setup_totp_code"
-                   class="form-control code-input"
-                   pattern="[0-9]{6}"
-                   maxlength="6"
-                   inputmode="numeric"
-                   autocomplete="off"
-                   required />
+            <label>@Localizer["mfa_totp_setup_code_label"]</label>
+            <partial name="Journey/_OtpCodeInput" model='new Oluso.UI.ViewModels.OtpCodeInputViewModel(6, "setup_totp_code")' />
         </div>
 
-        <button type="submit" class="btn btn-primary btn-block">Verify and Enable</button>
+        <button type="submit" class="btn btn-primary btn-block">@Localizer["mfa_totp_setup_button"]</button>
     </form>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
-<script>
-(function() {
-    var qr = qrcode(0, 'M');
-    qr.addData('@Html.Raw(Model?.AuthenticatorUri ?? "")');
-    qr.make();
-    document.getElementById('qrcode').innerHTML = qr.createSvgTag(5, 0);
-})();
-</script>
 
 <style>
 .mfa-card {
@@ -79,7 +66,7 @@
     border-radius: 0.5rem;
 }
 
-.qr-code svg {
+.qr-code img {
     display: block;
 }
 

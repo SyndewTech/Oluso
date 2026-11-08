@@ -13,7 +13,7 @@ public class AuthenticationRequirement
     public JourneyType SuggestedPolicyType { get; init; } = JourneyType.SignIn;
 
     /// <summary>
-    /// Explicit policy ID if requested
+    /// The policy the client asked for, by slug (<c>?policy=</c>)
     /// </summary>
     public string? ExplicitPolicyId { get; init; }
 
@@ -112,14 +112,19 @@ public class AuthenticationResult
         string userId,
         string? sessionId = null,
         IReadOnlyList<string>? scopes = null,
-        IDictionary<string, object>? claims = null) => new()
+        IDictionary<string, object>? claims = null,
+        IReadOnlyList<string>? amr = null,
+        DateTime? authTime = null,
+        string? acr = null) => new()
     {
         Succeeded = true,
         UserId = userId,
         SessionId = sessionId,
         Scopes = scopes ?? Array.Empty<string>(),
         Claims = claims ?? new Dictionary<string, object>(),
-        AuthTime = DateTime.UtcNow
+        AuthTime = authTime ?? DateTime.UtcNow,
+        Amr = amr ?? Array.Empty<string>(),
+        Acr = acr
     };
 
     public static AuthenticationResult Failed(string error, string? description = null) => new()

@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Oluso.Core;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Services;
 
 namespace Oluso.EntityFramework.Events;
 
@@ -12,14 +14,19 @@ namespace Oluso.EntityFramework.Events;
 public class AuditEventSink : IOlusoEventSink
 {
     private readonly IAuditLogStore _store;
+    private readonly IOlusoUserService? _userService;
     private readonly ILogger<AuditEventSink> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
 
     public string Name => "Audit";
 
-    public AuditEventSink(IAuditLogStore store, ILogger<AuditEventSink> logger)
+    public AuditEventSink(
+        IAuditLogStore store,
+        ILogger<AuditEventSink> logger,
+        IOlusoUserService? userService = null)
     {
         _store = store;
+        _userService = userService;
         _logger = logger;
         _jsonOptions = new JsonSerializerOptions
         {
@@ -30,9 +37,31 @@ public class AuditEventSink : IOlusoEventSink
 
     public async Task HandleAsync(OlusoEvent evt, CancellationToken cancellationToken = default)
     {
+        if (!evt.IsAuditable)
+        {
+            return;
+        }
+
         try
         {
             var auditLog = MapToAuditLog(evt);
+            auditLog.IpAddress ??= evt.Origin?.IpAddress;
+
+            // OIDC protocol endpoints (token, end-session, etc.) run on the
+            // platform IdP host so the raise site's _tenantContext.TenantId
+            // is "_platform" — which would tag the audit row with _platform
+            // and make it invisible to the user's tenant Activity Logs page.
+            // Resolve the user's home tenant via SubjectId in those cases so
+            // the row attributes correctly to the tenant that owns the user.
+            if (NeedsTenantResolution(auditLog) && _userService != null && !string.IsNullOrEmpty(auditLog.SubjectId))
+            {
+                var user = await _userService.GetByIdAsync(auditLog.SubjectId, cancellationToken);
+                if (user != null && !string.IsNullOrEmpty(user.TenantId))
+                {
+                    auditLog.TenantId = user.TenantId;
+                }
+            }
+
             await _store.WriteAsync(auditLog, cancellationToken);
         }
         catch (Exception ex)
@@ -42,15 +71,37 @@ public class AuditEventSink : IOlusoEventSink
         }
     }
 
+    /// <summary>
+    /// Whether the user the event is about caused it themselves: a self-service
+    /// sign-up or profile edit, as opposed to an admin, a service client or SCIM
+    /// acting on their account.
+    /// </summary>
+    private static bool ActsOnOwnAccount(OlusoEvent evt) =>
+        evt.Origin?.Kind is null or EventOriginKinds.User or EventOriginKinds.Anonymous or EventOriginKinds.Journey;
+
+    private static bool NeedsTenantResolution(AuditLog log)
+    {
+        return string.IsNullOrEmpty(log.TenantId)
+            || string.Equals(log.TenantId, PlatformConstants.TenantId, StringComparison.Ordinal);
+    }
+
     private AuditLog MapToAuditLog(OlusoEvent evt)
     {
         var auditLog = new AuditLog
         {
+            // Tag with the event's tenant so cross-tenant flows (e.g. login
+            // via the platform URL while signing into tenant-X) attribute
+            // the row to the user's tenant rather than landing as _platform
+            // and being invisible to that tenant's Activity Logs view.
+            TenantId = evt.TenantId,
             Timestamp = evt.Timestamp,
             EventType = evt.EventType,
             Category = evt.Category,
             Success = !evt.IsFailure,
-            ActivityId = evt.ActivityId
+            ActivityId = evt.ActivityId,
+            OriginKind = evt.Origin?.Kind,
+            OriginId = Truncate(evt.Origin?.Id, 200),
+            OriginName = Truncate(evt.Origin?.Name, 200)
         };
 
         // Map event-specific properties
@@ -84,15 +135,17 @@ public class AuditEventSink : IOlusoEventSink
                 break;
 
             case UserRegisteredEvent e:
-                auditLog.Action = "Register";
+                auditLog.Action = ActsOnOwnAccount(e) ? "Register" : "CreateUser";
                 auditLog.SubjectId = e.SubjectId;
                 auditLog.SubjectEmail = e.Email;
                 auditLog.SubjectName = e.Username;
                 auditLog.ClientId = e.ClientId;
+                auditLog.ResourceType = "User";
+                auditLog.ResourceId = e.SubjectId;
                 break;
 
             case UserUpdatedEvent e:
-                auditLog.Action = "UpdateProfile";
+                auditLog.Action = ActsOnOwnAccount(e) ? "UpdateProfile" : "UpdateUser";
                 auditLog.SubjectId = e.SubjectId;
                 auditLog.SubjectEmail = e.Email;
                 auditLog.ResourceType = "User";
@@ -111,6 +164,22 @@ public class AuditEventSink : IOlusoEventSink
                 auditLog.Reason = e.DeletedByAdmin ? "Admin" : "Self";
                 break;
 
+            case UserDeactivatedEvent e:
+                auditLog.Action = "DeactivateUser";
+                auditLog.SubjectId = e.SubjectId;
+                auditLog.SubjectEmail = e.Email;
+                auditLog.ResourceType = "User";
+                auditLog.ResourceId = e.SubjectId;
+                break;
+
+            case UserReactivatedEvent e:
+                auditLog.Action = "ReactivateUser";
+                auditLog.SubjectId = e.SubjectId;
+                auditLog.SubjectEmail = e.Email;
+                auditLog.ResourceType = "User";
+                auditLog.ResourceId = e.SubjectId;
+                break;
+
             case UserEmailVerifiedEvent e:
                 auditLog.Action = "VerifyEmail";
                 auditLog.SubjectId = e.SubjectId;
@@ -118,9 +187,27 @@ public class AuditEventSink : IOlusoEventSink
                 break;
 
             case UserPasswordChangedEvent e:
-                auditLog.Action = "ChangePassword";
+                auditLog.Action = e.ChangedByAdmin ? "ResetPassword" : "ChangePassword";
                 auditLog.SubjectId = e.SubjectId;
+                auditLog.ResourceType = "User";
+                auditLog.ResourceId = e.SubjectId;
                 auditLog.Reason = e.ChangedByAdmin ? "Admin" : "Self";
+                break;
+
+            case UserRoleAssignedEvent e:
+                auditLog.Action = "AssignRole";
+                auditLog.SubjectId = e.SubjectId;
+                auditLog.ResourceType = "UserRole";
+                auditLog.ResourceId = e.RoleId;
+                auditLog.ResourceName = e.RoleName;
+                break;
+
+            case UserRoleRemovedEvent e:
+                auditLog.Action = "RemoveRole";
+                auditLog.SubjectId = e.SubjectId;
+                auditLog.ResourceType = "UserRole";
+                auditLog.ResourceId = e.RoleId;
+                auditLog.ResourceName = e.RoleName;
                 break;
 
             case UserLockedOutEvent e:
@@ -180,99 +267,6 @@ public class AuditEventSink : IOlusoEventSink
                 auditLog.Details = GetAdminEventDetails(adminEvent);
                 break;
 
-            // SAML events
-            case SamlSsoRequestReceivedEvent e:
-                auditLog.Action = "SamlSsoRequest";
-                auditLog.ResourceType = "ServiceProvider";
-                auditLog.ResourceId = e.SpEntityId;
-                auditLog.Details = JsonSerializer.Serialize(new
-                {
-                    e.RequestId,
-                    e.AcsUrl,
-                    e.ForceAuthn
-                }, _jsonOptions);
-                break;
-
-            case SamlAssertionIssuedEvent e:
-                auditLog.Action = "SamlAssertionIssued";
-                auditLog.SubjectId = e.SubjectId;
-                auditLog.ResourceType = "ServiceProvider";
-                auditLog.ResourceId = e.SpEntityId;
-                auditLog.Details = JsonSerializer.Serialize(new
-                {
-                    e.NameId,
-                    e.SessionIndex
-                }, _jsonOptions);
-                break;
-
-            case SamlSsoFailedEvent e:
-                auditLog.Action = "SamlSsoFailed";
-                auditLog.ResourceType = "ServiceProvider";
-                auditLog.ResourceId = e.SpEntityId;
-                auditLog.ErrorMessage = e.Error;
-                auditLog.Details = e.ErrorDescription;
-                break;
-
-            case SamlLogoutRequestReceivedEvent e:
-                auditLog.Action = "SamlLogoutRequest";
-                auditLog.ResourceType = "ServiceProvider";
-                auditLog.ResourceId = e.SpEntityId;
-                auditLog.Details = JsonSerializer.Serialize(new
-                {
-                    e.NameId,
-                    e.SessionIndex
-                }, _jsonOptions);
-                break;
-
-            case SamlLogoutCompletedEvent e:
-                auditLog.Action = "SamlLogoutCompleted";
-                auditLog.SubjectId = e.SubjectId;
-                auditLog.ResourceType = "ServiceProvider";
-                auditLog.ResourceId = e.SpEntityId;
-                auditLog.Details = e.Success ? "Success" : "Failed";
-                break;
-
-            case SamlSpLoginEvent e:
-                auditLog.Action = "SamlSpLogin";
-                auditLog.SubjectId = e.SubjectId;
-                auditLog.ResourceType = "IdentityProvider";
-                auditLog.ResourceId = e.IdpEntityId;
-                auditLog.Details = JsonSerializer.Serialize(new
-                {
-                    e.NameId,
-                    e.SessionIndex
-                }, _jsonOptions);
-                break;
-
-            // LDAP events
-            case LdapAuthenticationSuccessEvent e:
-                auditLog.Action = "LdapLogin";
-                auditLog.SubjectId = e.SubjectId;
-                auditLog.SubjectName = e.Username;
-                auditLog.IpAddress = e.IpAddress;
-                auditLog.Details = JsonSerializer.Serialize(new
-                {
-                    e.DistinguishedName,
-                    Groups = e.Groups?.ToList(),
-                    Roles = e.MappedRoles?.ToList()
-                }, _jsonOptions);
-                break;
-
-            case LdapAuthenticationFailedEvent e:
-                auditLog.Action = "LdapLoginFailed";
-                auditLog.SubjectName = e.Username;
-                auditLog.IpAddress = e.IpAddress;
-                auditLog.ErrorMessage = e.FailureReason;
-                break;
-
-            case LdapUserProvisionedEvent e:
-                auditLog.Action = "LdapUserProvisioned";
-                auditLog.SubjectId = e.SubjectId;
-                auditLog.SubjectName = e.Username;
-                auditLog.SubjectEmail = e.Email;
-                auditLog.Details = e.DistinguishedName;
-                break;
-
             // OIDC protocol events
             case AuthorizationRequestReceivedEvent e:
                 auditLog.Action = "AuthorizationRequest";
@@ -314,6 +308,18 @@ public class AuditEventSink : IOlusoEventSink
                 }, _jsonOptions);
                 break;
 
+            case ScopesDroppedEvent e:
+                auditLog.Action = "ScopesDropped";
+                auditLog.ClientId = e.ClientId;
+                auditLog.Details = JsonSerializer.Serialize(new
+                {
+                    e.Endpoint,
+                    RequestedScopes = e.RequestedScopes.ToList(),
+                    GrantedScopes = e.GrantedScopes.ToList(),
+                    e.DroppedScopes
+                }, _jsonOptions);
+                break;
+
             case TokenRequestFailedEvent e:
                 auditLog.Action = "TokenRequestFailed";
                 auditLog.ClientId = e.ClientId;
@@ -342,32 +348,98 @@ public class AuditEventSink : IOlusoEventSink
                 }, _jsonOptions);
                 break;
 
+            // The answers stay with the submission: the audit trail records that one arrived, never what it said.
+            case JourneySubmissionCreatedEvent e:
+                auditLog.Action = e.WebhookEventType!;
+                auditLog.ResourceType = "JourneySubmission";
+                auditLog.ResourceId = e.SubmissionId;
+                auditLog.ResourceName = e.PolicyName;
+                auditLog.Details = JsonSerializer.Serialize(new
+                {
+                    e.PolicyId,
+                    e.JourneyId,
+                    e.FieldNames,
+                    e.FieldCount
+                }, _jsonOptions);
+                break;
+
             default:
-                // Generic mapping for unknown events
-                auditLog.Action = evt.EventType;
-                auditLog.Details = JsonSerializer.Serialize(evt, evt.GetType(), _jsonOptions);
+                MapGeneric(evt, auditLog);
                 break;
         }
 
         return auditLog;
     }
 
+    // Base-class and hook plumbing that says nothing about what happened.
+    private static readonly HashSet<string> NonDetailProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(OlusoEvent.Id), nameof(OlusoEvent.Timestamp), nameof(OlusoEvent.TenantId), nameof(OlusoEvent.ActivityId),
+        nameof(OlusoEvent.Category), nameof(OlusoEvent.Scope), nameof(OlusoEvent.EventType), nameof(OlusoEvent.IsFailure),
+        nameof(OlusoEvent.WebhookEventType), nameof(OlusoEvent.IsAuditable), nameof(OlusoEvent.Origin), "Cancel", "CancelReason",
+        // lifted into columns below
+        "SubjectId", "UserId", "SubjectName", "Username", "UserName", "ClientId", "IpAddress", "UserAgent",
+        "ResourceType", "ResourceId", "ResourceName", "ErrorMessage", "Error"
+    };
+
+    /// <summary>
+    /// Events without a dedicated mapping: the webhook name is the action when
+    /// there is one (readable and stable), well-known properties become the
+    /// user/client/resource/IP columns, and only the event's own remaining
+    /// properties go into Details.
+    /// </summary>
+    private void MapGeneric(OlusoEvent evt, AuditLog auditLog)
+    {
+        auditLog.Action = string.IsNullOrEmpty(evt.WebhookEventType) ? evt.EventType : evt.WebhookEventType;
+
+        var props = evt.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+            .ToList();
+        string? Text(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var prop = props.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+                var value = prop?.GetValue(evt);
+                if (value is string str && !string.IsNullOrWhiteSpace(str)) return str;
+            }
+            return null;
+        }
+
+        auditLog.SubjectId = Text("SubjectId", "UserId");
+        auditLog.SubjectName = Text("SubjectName", "Username", "UserName");
+        auditLog.ClientId = Text("ClientId");
+        auditLog.IpAddress = Text("IpAddress");
+        auditLog.UserAgent = Text("UserAgent");
+        auditLog.ResourceType = Text("ResourceType");
+        auditLog.ResourceId = Text("ResourceId");
+        auditLog.ResourceName = Text("ResourceName");
+        auditLog.ErrorMessage = Text("ErrorMessage", "Error");
+
+        var details = new Dictionary<string, object?>();
+        foreach (var prop in props.Where(p => !NonDetailProperties.Contains(p.Name)))
+        {
+            var value = prop.GetValue(evt);
+            if (value == null) continue;
+            if (value is string str && str.Length == 0) continue;
+            details[JsonNamingPolicy.CamelCase.ConvertName(prop.Name)] = value;
+        }
+        auditLog.Details = details.Count == 0 ? null : JsonSerializer.Serialize(details, _jsonOptions);
+    }
+
+    private static string? Truncate(string? value, int max) =>
+        value == null || value.Length <= max ? value : value[..max];
+
     private static string GetAdminAction(AdminActionEvent evt)
     {
         return evt switch
         {
-            AdminUserCreatedEvent => "Admin.CreateUser",
-            AdminUserUpdatedEvent => "Admin.UpdateUser",
-            AdminUserDeletedEvent => "Admin.DeleteUser",
-            AdminPasswordResetEvent => "Admin.ResetPassword",
             AdminClientCreatedEvent => "Admin.CreateClient",
             AdminClientUpdatedEvent => "Admin.UpdateClient",
             AdminClientDeletedEvent => "Admin.DeleteClient",
             AdminRoleCreatedEvent => "Admin.CreateRole",
             AdminRoleUpdatedEvent => "Admin.UpdateRole",
             AdminRoleDeletedEvent => "Admin.DeleteRole",
-            AdminUserRoleAssignedEvent => "Admin.AssignRole",
-            AdminUserRoleRemovedEvent => "Admin.RemoveRole",
             AdminIdpCreatedEvent => "Admin.CreateIdp",
             AdminIdpUpdatedEvent => "Admin.UpdateIdp",
             AdminIdpDeletedEvent => "Admin.DeleteIdp",
@@ -387,10 +459,7 @@ public class AuditEventSink : IOlusoEventSink
             AdminApiScopeCreatedEvent => "Admin.CreateApiScope",
             AdminApiScopeUpdatedEvent => "Admin.UpdateApiScope",
             AdminApiScopeDeletedEvent => "Admin.DeleteApiScope",
-            AdminSamlSpCreatedEvent => "Admin.CreateSamlSp",
-            AdminSamlSpUpdatedEvent => "Admin.UpdateSamlSp",
-            AdminSamlSpDeletedEvent => "Admin.DeleteSamlSp",
-            _ => $"Admin.{evt.EventType}"
+            _ => $"Admin.{evt.ResourceType}.{evt.WebhookEventType ?? evt.EventType}"
         };
     }
 
@@ -398,16 +467,12 @@ public class AuditEventSink : IOlusoEventSink
     {
         return evt switch
         {
-            AdminUserCreatedEvent e => JsonSerializer.Serialize(new { e.Email, e.Username }, _jsonOptions),
-            AdminUserUpdatedEvent e when e.ChangedFields != null => JsonSerializer.Serialize(new { ChangedFields = e.ChangedFields.Keys }, _jsonOptions),
             AdminClientCreatedEvent e => JsonSerializer.Serialize(new { e.ClientId }, _jsonOptions),
             AdminClientUpdatedEvent e => JsonSerializer.Serialize(new { e.ClientId, e.ChangedFields }, _jsonOptions),
             AdminClientDeletedEvent e => JsonSerializer.Serialize(new { e.ClientId }, _jsonOptions),
             AdminRoleCreatedEvent e => JsonSerializer.Serialize(new { e.RoleName }, _jsonOptions),
             AdminRoleUpdatedEvent e => JsonSerializer.Serialize(new { e.RoleName }, _jsonOptions),
             AdminRoleDeletedEvent e => JsonSerializer.Serialize(new { e.RoleName }, _jsonOptions),
-            AdminUserRoleAssignedEvent e => JsonSerializer.Serialize(new { UserId = e.ResourceId, e.RoleName }, _jsonOptions),
-            AdminUserRoleRemovedEvent e => JsonSerializer.Serialize(new { UserId = e.ResourceId, e.RoleName }, _jsonOptions),
             AdminIdpCreatedEvent e => JsonSerializer.Serialize(new { e.Scheme, e.ProviderType }, _jsonOptions),
             AdminIdpUpdatedEvent e => JsonSerializer.Serialize(new { e.Scheme }, _jsonOptions),
             AdminIdpDeletedEvent e => JsonSerializer.Serialize(new { e.Scheme }, _jsonOptions),
@@ -425,10 +490,7 @@ public class AuditEventSink : IOlusoEventSink
             AdminApiScopeCreatedEvent e => JsonSerializer.Serialize(new { e.ApiScopeName }, _jsonOptions),
             AdminApiScopeUpdatedEvent e => JsonSerializer.Serialize(new { e.ApiScopeName }, _jsonOptions),
             AdminApiScopeDeletedEvent e => JsonSerializer.Serialize(new { e.ApiScopeName }, _jsonOptions),
-            AdminSamlSpCreatedEvent e => JsonSerializer.Serialize(new { e.EntityId }, _jsonOptions),
-            AdminSamlSpUpdatedEvent e => JsonSerializer.Serialize(new { e.EntityId }, _jsonOptions),
-            AdminSamlSpDeletedEvent e => JsonSerializer.Serialize(new { e.EntityId }, _jsonOptions),
-            _ => null
+            _ => JsonSerializer.Serialize(evt, evt.GetType(), _jsonOptions)
         };
     }
 }

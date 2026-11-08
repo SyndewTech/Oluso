@@ -1,23 +1,23 @@
 @using Oluso.UserJourneys.Steps
 @model MfaVerifyViewModel
 
-<h1 class="title">Two-Factor Authentication</h1>
+<h1 class="title">@Localizer["mfa_verify_title"]</h1>
 <p class="subtitle">
     @if (Model?.Provider?.ToLower() == "totp" || Model?.Provider?.ToLower() == "authenticator")
     {
-        <text>Enter the 6-digit code from your authenticator app</text>
+        @Localizer["mfa_verify_totp_subtitle"]
     }
     else if (Model?.Provider?.ToLower() == "email")
     {
-        <text>Enter the code we sent to your email</text>
+        @Localizer["mfa_verify_email_subtitle"]
     }
     else if (Model?.Provider?.ToLower() == "sms" || Model?.Provider?.ToLower() == "phone")
     {
-        <text>Enter the code we sent to your phone</text>
+        @Localizer["mfa_verify_sms_subtitle"]
     }
     else
     {
-        <text>Enter your verification code</text>
+        @Localizer["mfa_verify_generic_subtitle"]
     }
 </p>
 
@@ -35,23 +35,24 @@
     <input type="hidden" name="provider" value="@Model?.Provider" />
 
     <div class="form-group">
-        <label for="code">Verification Code</label>
-        <input type="text"
-               id="code"
-               name="code"
-               class="form-control code-input"
-               pattern="[0-9]{6}"
-               maxlength="6"
-               placeholder="000000"
-               autocomplete="one-time-code"
-               inputmode="numeric"
-               autofocus
-               required />
+        <label>@Localizer["mfa_verify_code_label"]</label>
+        <partial name="Journey/_OtpCodeInput" model='new Oluso.UI.ViewModels.OtpCodeInputViewModel(6, "code", Model?.CanRememberDevice != true)' />
     </div>
 
-    <button type="submit" class="btn btn-primary btn-block">Verify Code</button>
+    @if (Model?.CanRememberDevice == true)
+    {
+        <div class="form-group form-check">
+            <input type="checkbox" id="remember_device" name="remember_device" value="true" class="form-check-input" />
+            <label class="form-check-label" for="remember_device">@Localizer["mfa_verify_remember_device"]</label>
+        </div>
+    }
+
+    <button type="submit" class="btn btn-primary btn-block">@Localizer["mfa_verify_button"]</button>
 </form>
 
 <div class="journey-footer">
-    <p>Having trouble? <a href="?use_recovery=true">Use a recovery code</a></p>
+    <form method="post" style="display: inline;">
+        <input type="hidden" name="use_recovery" value="true" />
+        <p>@Localizer["mfa_verify_recovery_prompt"] <button type="submit" class="btn-link">@Localizer["mfa_verify_recovery_link"]</button></p>
+    </form>
 </div>

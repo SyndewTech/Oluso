@@ -1,6 +1,6 @@
 namespace Oluso.Core.Domain.Entities;
 
-public class ClientRedirectUri
+public class ClientRedirectUri : TenantEntity
 {
     public int Id { get; set; }
     public int ClientId { get; set; }

@@ -1,7 +1,12 @@
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Protocols.Models;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using System.Text;
@@ -15,6 +20,21 @@ namespace Oluso.UserJourneys.Steps;
 public class MfaStepHandler : IStepHandler
 {
     public string StepType => "mfa";
+
+    // Cookie carries a data-protected payload of "{userId}|{tenantId}|{expiryUnix}".
+    // Validated against the current user/tenant — copying the cookie to a
+    // different user or tenant won't replay.
+    private const string TrustedDeviceCookieName = "oluso_mfa_td";
+    private const string TrustedDeviceProtectorPurpose = "Oluso.Mfa.TrustedDevice.v1";
+
+    /// <summary>Methods offered when the step doesn't list its own.</summary>
+    public static readonly IReadOnlyList<string> DefaultMethods = ["totp", "email"];
+
+    private static List<string> AllowedMethods(StepExecutionContext context) =>
+        context.GetConfig<List<string>>("methods", null) is { Count: > 0 } configured ? configured : DefaultMethods.ToList();
+
+    /// <summary>Set when this journey's user has just verified a new MFA method.</summary>
+    public const string SetupVerifiedDataKey = "mfa_setup_verified_user";
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
@@ -40,10 +60,23 @@ public class MfaStepHandler : IStepHandler
 
         // Check configuration
         var requireMfa = context.GetConfig("required", false);
-        var allowedMethods = context.GetConfig<List<string>>("methods.cshtml", new List<string> { "totp", "email" });
+        var allowedMethods = AllowedMethods(context);
+        var allowSetup = context.GetConfig("allowSetup", true);
+        var rememberDevice = context.GetConfig("rememberDevice", true);
 
         // Check if user has MFA enabled
         var hasMfa = user.TwoFactorEnabled;
+
+        // A journey run for a signed-in user can accept the MFA that session already passed,
+        // within the configured window. 0 (the default) always asks again.
+        var reuseSessionMfaSeconds = context.GetConfig("reuseSessionMfaSeconds", 0);
+        if (await IsSessionMfaFreshAsync(context, user.Id, reuseSessionMfaSeconds))
+        {
+            logger.LogInformation("MFA met for user {UserId} by the current session", user.Id);
+            context.SetData("amr", "mfa");
+            context.SetData("mfa_provider", "session");
+            return StepHandlerResult.SkipOrBranch(context, "mfa_session");
+        }
 
         // ===== SETUP FLOW =====
 
@@ -51,7 +84,7 @@ public class MfaStepHandler : IStepHandler
         var setupMethod = context.GetInput("setup_method");
         if (!string.IsNullOrEmpty(setupMethod))
         {
-            return await HandleSetupMethodSelectionAsync(context, user, mfaService, logger, setupMethod, allowedMethods, cancellationToken);
+            return await HandleSetupMethodSelectionAsync(context, user, mfaService, logger, setupMethod, allowedMethods!, cancellationToken);
         }
 
         // Handle TOTP setup verification
@@ -61,16 +94,39 @@ public class MfaStepHandler : IStepHandler
             return await HandleTotpSetupVerificationAsync(context, user, mfaService, logger, setupTotpCode, cancellationToken);
         }
 
-        // Handle recovery codes confirmation
-        if (!string.IsNullOrEmpty(context.GetInput("recovery_codes_confirmed")))
+        // Handle recovery codes confirmation. Only completes MFA right after this user
+        // verified a new method in this journey; on its own the field proves nothing.
+        if (!string.IsNullOrEmpty(context.GetInput("recovery_codes_confirmed"))
+            && string.Equals(context.GetData<string>(SetupVerifiedDataKey), user.Id, StringComparison.Ordinal))
         {
+            context.JourneyData.Remove(SetupVerifiedDataKey);
             context.SetData("amr", "mfa");
             logger.LogInformation("MFA setup completed for user {UserId}, recovery codes confirmed", user.Id);
 
-            return StepHandlerResult.Success(new Dictionary<string, object>
+            var outputData = new Dictionary<string, object>
             {
                 ["mfa_setup"] = "complete"
-            });
+            };
+            return StepHandlerResult.SuccessOrBranch(context, outputData, "mfa_setup_complete");
+        }
+
+        // Handle email setup: code submission or resend
+        if (context.GetData<bool>("mfa_setup_email_pending"))
+        {
+            if (string.Equals(context.GetInput("setup_email"), "resend", StringComparison.OrdinalIgnoreCase))
+            {
+                if (mfaService != null)
+                {
+                    await mfaService.SendVerificationCodeAsync(user.Id, "email", cancellationToken);
+                }
+                return StepHandlerResult.ShowUi("Journey/_MfaEmailSetup", new MfaEmailSetupViewModel { Email = MaskEmail(user.Email ?? "") });
+            }
+
+            var setupEmailCode = context.GetInput("setup_email_code");
+            if (!string.IsNullOrEmpty(setupEmailCode))
+            {
+                return await HandleEmailSetupVerificationAsync(context, user, mfaService, logger, setupEmailCode, cancellationToken);
+            }
         }
 
         // Handle SMS setup: phone number submission
@@ -94,15 +150,30 @@ public class MfaStepHandler : IStepHandler
         // Handle back to method selection
         if (!string.IsNullOrEmpty(context.GetInput("setup_method_back")))
         {
-            var allowedMethodsForBack = context.GetConfig<List<string>>("methods.cshtml", new List<string> { "totp", "email", "sms" });
+            var allowedMethodsForBack = AllowedMethods(context);
             return StepHandlerResult.ShowUi("Journey/_MfaSetup", new MfaSetupViewModel
             {
                 UserId = user.Id,
-                AvailableMethods = allowedMethodsForBack
+                AvailableMethods = allowedMethodsForBack!
             });
         }
 
         // ===== VERIFICATION FLOW =====
+
+        // Handle recovery code flow
+        var useRecovery = context.GetInput("use_recovery");
+        if (!string.IsNullOrEmpty(useRecovery) && useRecovery.Equals("true", StringComparison.OrdinalIgnoreCase))
+        {
+            return StepHandlerResult.ShowUi("Journey/_MfaRecoveryVerify", new MfaRecoveryVerifyViewModel());
+        }
+
+        // Handle recovery code submission
+        var useRecoveryCode = context.GetInput("use_recovery_code");
+        var recoveryCode = context.GetInput("recovery_code");
+        if (!string.IsNullOrEmpty(useRecoveryCode) && !string.IsNullOrEmpty(recoveryCode))
+        {
+            return await HandleRecoveryCodeVerificationAsync(context, user, mfaService, eventService, tenantContext, logger, recoveryCode, cancellationToken);
+        }
 
         // Handle provider selection
         var provider = context.GetInput("provider");
@@ -136,28 +207,49 @@ public class MfaStepHandler : IStepHandler
         // No MFA configured and not required - skip
         if (!hasMfa && !requireMfa)
         {
-            return StepHandlerResult.Skip();
+            return StepHandlerResult.SkipOrBranch(context, "mfa_not_required");
         }
 
-        // MFA required but user hasn't set it up - redirect to setup
+        // MFA required but user hasn't set it up.
+        // allowSetup gates whether we offer to enrol them inline. When false
+        // and the user has no MFA, we have to bounce — only an admin can
+        // provision MFA for them.
         if (!hasMfa)
         {
             if (requireMfa)
             {
+                if (!allowSetup)
+                {
+                    logger.LogWarning("MFA required but user {UserId} has no MFA and inline setup is disabled", user.Id);
+                    return StepHandlerResult.Fail("mfa_setup_required",
+                        "Multi-factor authentication is required for this account. Please contact your administrator to enable it.");
+                }
+
                 return StepHandlerResult.ShowUi("Journey/_MfaSetup", new MfaSetupViewModel
                 {
                     UserId = userId,
-                    AvailableMethods = allowedMethods
+                    AvailableMethods = allowedMethods!
                 });
             }
-            return StepHandlerResult.Skip();
+            return StepHandlerResult.SkipOrBranch(context, "mfa_not_required");
+        }
+
+        // User has MFA configured. Honour trusted-device cookie if enabled —
+        // skip verification when the cookie validates for this user/tenant.
+        if (rememberDevice && IsTrustedDeviceValid(context, user.Id, tenantContext.TenantId, logger))
+        {
+            logger.LogInformation("MFA bypassed for user {UserId} via trusted device cookie", user.Id);
+            context.SetData("amr", "mfa");
+            context.SetData("mfa_provider", "trusted_device");
+            return StepHandlerResult.SkipOrBranch(context, "mfa_trusted_device");
         }
 
         // User has MFA configured - show verification UI
         // Default to TOTP/authenticator
         return StepHandlerResult.ShowUi("Journey/_MfaVerify", new MfaVerifyViewModel
         {
-            Provider = "totp"
+            Provider = "totp",
+            CanRememberDevice = rememberDevice
         });
     }
 
@@ -187,7 +279,7 @@ public class MfaStepHandler : IStepHandler
                     return StepHandlerResult.Fail("mfa_setup_error", "Failed to generate authenticator key");
                 }
 
-                context.SetData("mfa_setup_key", setupResult.SharedKey);
+                context.SetData("mfa_setup_key", setupResult.SharedKey ?? "");
 
                 return StepHandlerResult.ShowUi("Journey/_MfaTotpSetup", new MfaTotpSetupViewModel
                 {
@@ -264,7 +356,7 @@ public class MfaStepHandler : IStepHandler
 
             var setupResult = await mfaService.GenerateTotpSetupAsync(user.Id, cancellationToken);
 
-            return StepHandlerResult.ShowUi("Journey/_MfaTotpSetup", new MfaTotpSetupViewModel
+            return StepHandlerResult.FailedAttemptUi("Journey/_MfaTotpSetup", new MfaTotpSetupViewModel
             {
                 SharedKey = FormatKey(storedKey),
                 AuthenticatorUri = setupResult.AuthenticatorUri ?? "",
@@ -284,6 +376,7 @@ public class MfaStepHandler : IStepHandler
 
         // Clear setup state
         context.JourneyData.Remove("mfa_setup_key");
+        context.SetData(SetupVerifiedDataKey, user.Id);
 
         // Show recovery codes
         return StepHandlerResult.ShowUi("Journey/_MfaRecoveryCodes", new MfaRecoveryCodesViewModel
@@ -303,6 +396,11 @@ public class MfaStepHandler : IStepHandler
         string provider,
         CancellationToken cancellationToken)
     {
+        if (IsLockedOut(user))
+        {
+            return StepHandlerResult.Fail("account_locked", "This account is temporarily locked. Please try again later.");
+        }
+
         bool isValid;
 
         if (mfaService != null)
@@ -339,7 +437,10 @@ public class MfaStepHandler : IStepHandler
                 }, cancellationToken);
             }
 
-            return StepHandlerResult.ShowUi("Journey/_MfaVerify", new MfaVerifyViewModel
+            // A wrong code costs a failed sign-in attempt, so guessing across journeys locks the account.
+            await userService.RecordFailedLoginAsync(user.Id, cancellationToken);
+
+            return StepHandlerResult.FailedAttemptUi("Journey/_MfaVerify", new MfaVerifyViewModel
             {
                 Provider = provider,
                 ErrorMessage = "Invalid verification code"
@@ -349,6 +450,19 @@ public class MfaStepHandler : IStepHandler
         // MFA successful
         context.SetData("amr", "mfa");
         context.SetData("mfa_provider", provider.ToLower());
+
+        // Issue trusted-device cookie if the user opted in and the step
+        // allows it. Read flags freshly here — caller already validated
+        // them, but verification path may be reached without the initial
+        // routing pass (e.g. provider switch).
+        var rememberDevice = context.GetConfig("rememberDevice", true);
+        var rememberDeviceDays = context.GetConfig("rememberDeviceDays", 30);
+        var rememberInput = context.GetInput("remember_device");
+        if (rememberDevice && !string.IsNullOrEmpty(rememberInput) &&
+            (rememberInput.Equals("true", StringComparison.OrdinalIgnoreCase) || rememberInput == "1" || rememberInput.Equals("on", StringComparison.OrdinalIgnoreCase)))
+        {
+            IssueTrustedDeviceCookie(context, user.Id, tenantContext.TenantId, rememberDeviceDays, logger);
+        }
 
         // Raise MFA success event
         if (eventService != null)
@@ -364,10 +478,83 @@ public class MfaStepHandler : IStepHandler
 
         logger.LogInformation("MFA verification successful for user {UserId} via {Provider}", user.Id, provider);
 
-        return StepHandlerResult.Success(new Dictionary<string, object>
+        var outputData = new Dictionary<string, object>
         {
             ["amr"] = provider.ToLower()
-        });
+        };
+        return StepHandlerResult.SuccessOrBranch(context, outputData, "mfa_verified");
+    }
+
+    private async Task<StepHandlerResult> HandleRecoveryCodeVerificationAsync(
+        StepExecutionContext context,
+        OlusoUserInfo user,
+        IMfaService? mfaService,
+        IOlusoEventService? eventService,
+        ITenantContext tenantContext,
+        ILogger logger,
+        string recoveryCode,
+        CancellationToken cancellationToken)
+    {
+        if (mfaService == null)
+        {
+            return StepHandlerResult.Fail("mfa_service_unavailable", "MFA service not configured");
+        }
+
+        if (IsLockedOut(user))
+        {
+            return StepHandlerResult.Fail("account_locked", "This account is temporarily locked. Please try again later.");
+        }
+
+        var isValid = await mfaService.VerifyRecoveryCodeAsync(user.Id, recoveryCode, cancellationToken);
+
+        if (!isValid)
+        {
+            logger.LogWarning("Recovery code verification failed for user {UserId}", user.Id);
+
+            // Raise MFA failed event
+            if (eventService != null)
+            {
+                await eventService.RaiseAsync(new MfaCompletedEvent
+                {
+                    TenantId = tenantContext.TenantId,
+                    SubjectId = user.Id,
+                    MfaMethod = "recovery_code",
+                    Success = false
+                }, cancellationToken);
+            }
+
+            await context.ServiceProvider.GetRequiredService<IOlusoUserService>()
+                .RecordFailedLoginAsync(user.Id, cancellationToken);
+
+            return StepHandlerResult.FailedAttemptUi("Journey/_MfaRecoveryVerify", new MfaRecoveryVerifyViewModel
+            {
+                ErrorMessage = "Invalid recovery code. Please try again."
+            });
+        }
+
+        // Recovery code valid
+        context.SetData("amr", "mfa");
+        context.SetData("mfa_provider", "recovery_code");
+
+        // Raise MFA success event
+        if (eventService != null)
+        {
+            await eventService.RaiseAsync(new MfaCompletedEvent
+            {
+                TenantId = tenantContext.TenantId,
+                SubjectId = user.Id,
+                MfaMethod = "recovery_code",
+                Success = true
+            }, cancellationToken);
+        }
+
+        logger.LogInformation("Recovery code verification successful for user {UserId}", user.Id);
+
+        var outputData = new Dictionary<string, object>
+        {
+            ["amr"] = "recovery_code"
+        };
+        return StepHandlerResult.SuccessOrBranch(context, outputData, "mfa_recovery_used");
     }
 
     private async Task<StepHandlerResult> HandleSmsPhoneSubmissionAsync(
@@ -419,6 +606,47 @@ public class MfaStepHandler : IStepHandler
         });
     }
 
+    private async Task<StepHandlerResult> HandleEmailSetupVerificationAsync(
+        StepExecutionContext context,
+        OlusoUserInfo user,
+        IMfaService? mfaService,
+        ILogger logger,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        if (mfaService == null)
+        {
+            return StepHandlerResult.Fail("mfa_service_unavailable", "MFA service not configured");
+        }
+
+        if (!await mfaService.VerifyEmailCodeAsync(user.Id, code.Trim(), cancellationToken))
+        {
+            logger.LogWarning("Email MFA setup verification failed for user {UserId}", user.Id);
+            return StepHandlerResult.FailedAttemptUi("Journey/_MfaEmailSetup", new MfaEmailSetupViewModel
+            {
+                Email = MaskEmail(user.Email ?? ""),
+                ErrorMessage = "Invalid verification code. Please try again."
+            });
+        }
+
+        var enableResult = await mfaService.EnableMfaAsync(user.Id, "email", cancellationToken);
+        if (!enableResult.Succeeded)
+        {
+            return StepHandlerResult.Fail("mfa_enable_failed", "Failed to enable email MFA");
+        }
+
+        logger.LogInformation("Email MFA setup completed for user {UserId}", user.Id);
+
+        context.JourneyData.Remove("mfa_setup_email_pending");
+        context.SetData(SetupVerifiedDataKey, user.Id);
+
+        return StepHandlerResult.ShowUi("Journey/_MfaRecoveryCodes", new MfaRecoveryCodesViewModel
+        {
+            RecoveryCodes = enableResult.RecoveryCodes?.ToList() ?? new List<string>(),
+            Provider = "Email"
+        });
+    }
+
     private async Task<StepHandlerResult> HandleSmsSetupVerificationAsync(
         StepExecutionContext context,
         OlusoUserInfo user,
@@ -450,7 +678,7 @@ public class MfaStepHandler : IStepHandler
         if (!isValid)
         {
             logger.LogWarning("SMS setup verification failed for user {UserId}", user.Id);
-            return StepHandlerResult.ShowUi("Journey/_MfaSmsSetup", new MfaSmsSetupViewModel
+            return StepHandlerResult.FailedAttemptUi("Journey/_MfaSmsSetup", new MfaSmsSetupViewModel
             {
                 MaskedPhone = MaskPhone(storedPhone ?? ""),
                 CodeSent = true,
@@ -469,6 +697,7 @@ public class MfaStepHandler : IStepHandler
 
         // Clear setup state
         context.JourneyData.Remove("mfa_setup_phone");
+        context.SetData(SetupVerifiedDataKey, user.Id);
 
         // Show recovery codes
         return StepHandlerResult.ShowUi("Journey/_MfaRecoveryCodes", new MfaRecoveryCodesViewModel
@@ -518,6 +747,91 @@ public class MfaStepHandler : IStepHandler
         });
     }
 
+    private static bool IsLockedOut(OlusoUserInfo user) =>
+        user.LockoutEnabled && user.LockoutEnd > DateTimeOffset.UtcNow;
+
+    private static async Task<bool> IsSessionMfaFreshAsync(StepExecutionContext context, string userId, int maxAgeSeconds)
+    {
+        if (maxAgeSeconds <= 0) return false;
+
+        // Only a journey started from this user's session may lean on that session.
+        if (context.GetDataString(JourneyStartContext.SessionUserIdDataKey) != userId) return false;
+
+        var httpContext = context.ServiceProvider.GetService<IHttpContextAccessor>()?.HttpContext;
+        if (httpContext == null) return false;
+
+        var session = await httpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        var principal = session.Principal;
+        if (!session.Succeeded || principal == null) return false;
+
+        var sessionUserId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? principal.FindFirst("sub")?.Value;
+        if (sessionUserId != userId) return false;
+
+        if (!principal.FindAll(OidcConstants.StandardClaims.Amr).Any(c => c.Value == "mfa")) return false;
+
+        if (!long.TryParse(principal.FindFirst(OidcConstants.StandardClaims.AuthTime)?.Value, out var authTimeUnix)) return false;
+        var age = DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(authTimeUnix);
+        return age >= TimeSpan.Zero && age <= TimeSpan.FromSeconds(maxAgeSeconds);
+    }
+
+    private static bool IsTrustedDeviceValid(StepExecutionContext context, string userId, string? tenantId, ILogger logger)
+    {
+        var httpContext = context.ServiceProvider.GetService<IHttpContextAccessor>()?.HttpContext;
+        if (httpContext == null) return false;
+        if (!httpContext.Request.Cookies.TryGetValue(TrustedDeviceCookieName, out var raw) || string.IsNullOrEmpty(raw))
+            return false;
+
+        var protector = context.ServiceProvider.GetService<IDataProtectionProvider>()?.CreateProtector(TrustedDeviceProtectorPurpose);
+        if (protector == null) return false;
+
+        try
+        {
+            var payload = protector.Unprotect(raw);
+            var parts = payload.Split('|');
+            if (parts.Length != 3) return false;
+            if (!string.Equals(parts[0], userId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(parts[1], tenantId ?? string.Empty, StringComparison.Ordinal)) return false;
+            if (!long.TryParse(parts[2], out var expiryUnix)) return false;
+            return DateTimeOffset.FromUnixTimeSeconds(expiryUnix) > DateTimeOffset.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Trusted-device cookie failed validation for user {UserId}", userId);
+            return false;
+        }
+    }
+
+    private static void IssueTrustedDeviceCookie(StepExecutionContext context, string userId, string? tenantId, int days, ILogger logger)
+    {
+        var httpContext = context.ServiceProvider.GetService<IHttpContextAccessor>()?.HttpContext;
+        if (httpContext == null) return;
+
+        var protector = context.ServiceProvider.GetService<IDataProtectionProvider>()?.CreateProtector(TrustedDeviceProtectorPurpose);
+        if (protector == null) return;
+
+        if (days < 1) days = 1;
+        var expiry = DateTimeOffset.UtcNow.AddDays(days);
+        var payload = $"{userId}|{tenantId ?? string.Empty}|{expiry.ToUnixTimeSeconds()}";
+
+        try
+        {
+            var protectedValue = protector.Protect(payload);
+            httpContext.Response.Cookies.Append(TrustedDeviceCookieName, protectedValue, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = httpContext.Request.IsHttps,
+                SameSite = SameSiteMode.Lax,
+                Expires = expiry,
+                IsEssential = true
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to issue trusted-device cookie for user {UserId}", userId);
+        }
+    }
+
     private static string MaskPhone(string phoneNumber)
     {
         if (string.IsNullOrEmpty(phoneNumber)) return "";
@@ -564,6 +878,7 @@ public class MfaVerifyViewModel
     public string Provider { get; set; } = null!;
     public string? Hint { get; set; }
     public string? ErrorMessage { get; set; }
+    public bool CanRememberDevice { get; set; }
 }
 
 public class MfaSetupViewModel
@@ -577,6 +892,9 @@ public class MfaTotpSetupViewModel
 {
     public string SharedKey { get; set; } = null!;
     public string AuthenticatorUri { get; set; } = null!;
+
+    /// <summary>The QR code for <see cref="AuthenticatorUri"/>, rendered on the server as a PNG data URI.</summary>
+    public string QrCodeImage => Oluso.Core.Security.QrCodeImages.ToPngDataUri(AuthenticatorUri);
     public string UserEmail { get; set; } = null!;
     public string? ErrorMessage { get; set; }
 }
@@ -598,6 +916,11 @@ public class MfaSmsSetupViewModel
     public string? PhoneNumber { get; set; }
     public string? MaskedPhone { get; set; }
     public bool CodeSent { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
+public class MfaRecoveryVerifyViewModel
+{
     public string? ErrorMessage { get; set; }
 }
 

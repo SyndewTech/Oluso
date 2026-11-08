@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Oluso.Account.Dto.Security;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Account.Events;
 using Oluso.Core.Events;
 using Oluso.Core.Services;
 
@@ -45,12 +47,13 @@ public class SecurityController : AccountBaseController
 
         return Ok(new SecurityOverviewDto
         {
-            HasPassword = true, // Assume true if they can log in
+            HasPassword = await _userService.HasPasswordAsync(UserId, cancellationToken),
+            IsExternalAccount = !string.IsNullOrEmpty(User.FindFirst("idp")?.Value),
             TwoFactorEnabled = user.TwoFactorEnabled,
             MfaEnabled = hasMfa,
             EmailVerified = user.EmailVerified,
             PhoneNumberVerified = user.PhoneNumberVerified,
-            LastPasswordChange = null, // Would need to track this
+            LastPasswordChange = user.PasswordChangedAt,
             PasskeyCount = 0 // Would come from FIDO2 store
         });
     }
@@ -67,7 +70,7 @@ public class SecurityController : AccountBaseController
         var validationResult = await _userService.ValidateCredentialsAsync(
             UserEmail ?? UserId, request.CurrentPassword, TenantId, cancellationToken);
 
-        if (!validationResult.Succeeded)
+        if (!validationResult.CredentialsVerified)
         {
             return BadRequest(new { error = "Current password is incorrect" });
         }
@@ -77,7 +80,7 @@ public class SecurityController : AccountBaseController
 
         if (!result.Succeeded)
         {
-            return BadRequest(new { errors = result.Errors ?? new[] { result.Error ?? "Password change failed" } });
+            return BadRequest(new { errors = result.MessagesOr("Password change failed") });
         }
 
         _logger.LogInformation("User {UserId} changed their password", UserId);
@@ -97,7 +100,7 @@ public class SecurityController : AccountBaseController
     /// Get MFA status and available methods
     /// </summary>
     [HttpGet("mfa")]
-    public async Task<ActionResult<MfaStatusDto>> GetMfaStatus(CancellationToken cancellationToken)
+    public async Task<ActionResult<AccountMfaStatusDto>> GetMfaStatus(CancellationToken cancellationToken)
     {
         var user = await _userService.FindByIdAsync(UserId, cancellationToken);
         if (user == null)
@@ -115,7 +118,7 @@ public class SecurityController : AccountBaseController
         if (!string.IsNullOrEmpty(user.PhoneNumber) && user.PhoneNumberVerified)
             availableMethods.Add("sms");
 
-        return Ok(new MfaStatusDto
+        return Ok(new AccountMfaStatusDto
         {
             Enabled = hasMfa,
             TwoFactorEnabled = user.TwoFactorEnabled,
@@ -145,7 +148,8 @@ public class SecurityController : AccountBaseController
         return Ok(new TotpSetupDto
         {
             Secret = result.SharedKey!,
-            QrCodeUri = result.AuthenticatorUri!
+            QrCodeUri = result.AuthenticatorUri!,
+            QrCodeImage = Oluso.Core.Security.QrCodeImages.ToPngDataUri(result.AuthenticatorUri)
         });
     }
 
@@ -199,7 +203,7 @@ public class SecurityController : AccountBaseController
         var validationResult = await _userService.ValidateCredentialsAsync(
             UserEmail ?? UserId, request.Password, TenantId, cancellationToken);
 
-        if (!validationResult.Succeeded)
+        if (!validationResult.CredentialsVerified)
             return BadRequest(new { error = "Invalid password" });
 
         if (_mfaService != null)
@@ -301,7 +305,7 @@ public class SecurityController : AccountBaseController
         var validationResult = await _userService.ValidateCredentialsAsync(
             UserEmail ?? UserId, request.Password, TenantId, cancellationToken);
 
-        if (!validationResult.Succeeded)
+        if (!validationResult.CredentialsVerified)
             return BadRequest(new { error = "Invalid password" });
 
         // Note: This disables all MFA - you may want method-specific disable
@@ -401,7 +405,7 @@ public class SecurityController : AccountBaseController
         var validationResult = await _userService.ValidateCredentialsAsync(
             UserEmail ?? UserId, request.Password, TenantId, cancellationToken);
 
-        if (!validationResult.Succeeded)
+        if (!validationResult.CredentialsVerified)
             return BadRequest(new { error = "Invalid password" });
 
         if (_mfaService != null)
@@ -433,7 +437,7 @@ public class SecurityController : AccountBaseController
         var validationResult = await _userService.ValidateCredentialsAsync(
             UserEmail ?? UserId, request.Password, TenantId, cancellationToken);
 
-        if (!validationResult.Succeeded)
+        if (!validationResult.CredentialsVerified)
             return BadRequest(new { error = "Invalid password" });
 
         if (_mfaService == null)
@@ -507,14 +511,6 @@ public class SecurityController : AccountBaseController
         await _userService.SetEmailVerifiedAsync(UserId, true, cancellationToken);
 
         _logger.LogInformation("User {UserId} verified their email", UserId);
-
-        await _eventService.RaiseAsync(new EmailVerifiedEvent
-        {
-            SubjectId = UserId,
-            TenantId = TenantId,
-            Email = user.Email,
-            IpAddress = ClientIp
-        }, cancellationToken);
 
         return Ok(new { message = "Email verified successfully" });
     }
@@ -667,11 +663,11 @@ public class SecurityController : AccountBaseController
     /// Get all external logins linked to the current user's account
     /// </summary>
     [HttpGet("external-logins")]
-    public async Task<ActionResult<IEnumerable<ExternalLoginDto>>> GetExternalLogins(CancellationToken cancellationToken)
+    public async Task<ActionResult<IEnumerable<AccountExternalLoginDto>>> GetExternalLogins(CancellationToken cancellationToken)
     {
         var externalLogins = await _userService.GetExternalLoginsAsync(UserId, cancellationToken);
 
-        return Ok(externalLogins.Select(el => new ExternalLoginDto
+        return Ok(externalLogins.Select(el => new AccountExternalLoginDto
         {
             Provider = el.Provider,
             ProviderKey = el.ProviderKey,
@@ -702,7 +698,7 @@ public class SecurityController : AccountBaseController
 
         if (!result.Succeeded)
         {
-            return BadRequest(new { error = result.Error ?? "Failed to remove external login" });
+            return BadRequest(new { error = result.MessageOr("Failed to remove external login") });
         }
 
         _logger.LogInformation("User {UserId} removed external login {Provider}", UserId, provider);
@@ -740,188 +736,3 @@ public class SecurityController : AccountBaseController
         return localPart[0] + "***" + localPart[^1] + domain;
     }
 }
-
-#region DTOs
-
-public class SecurityOverviewDto
-{
-    public bool HasPassword { get; set; }
-    public bool TwoFactorEnabled { get; set; }
-    public bool MfaEnabled { get; set; }
-    public bool EmailVerified { get; set; }
-    public bool PhoneNumberVerified { get; set; }
-    public DateTime? LastPasswordChange { get; set; }
-    public int PasskeyCount { get; set; }
-}
-
-public class ChangePasswordRequest
-{
-    public string CurrentPassword { get; set; } = null!;
-    public string NewPassword { get; set; } = null!;
-}
-
-public class MfaStatusDto
-{
-    public bool Enabled { get; set; }
-    public bool TwoFactorEnabled { get; set; }
-    public List<string> AvailableMethods { get; set; } = new();
-    public List<string> EnabledMethods { get; set; } = new();
-    public bool HasTotp { get; set; }
-    public bool HasSms { get; set; }
-    public bool HasEmail { get; set; }
-    public string? PhoneNumber { get; set; }
-    public string? Email { get; set; }
-}
-
-public class TotpSetupDto
-{
-    public string Secret { get; set; } = null!;
-    public string QrCodeUri { get; set; } = null!;
-}
-
-public class VerifyTotpRequest
-{
-    public string Code { get; set; } = null!;
-}
-
-public class SmsSetupRequest
-{
-    public string? PhoneNumber { get; set; }
-}
-
-public class SmsSetupDto
-{
-    public string MaskedPhone { get; set; } = null!;
-    public bool CodeSent { get; set; }
-}
-
-public class VerifySmsRequest
-{
-    public string Code { get; set; } = null!;
-}
-
-public class EmailSetupDto
-{
-    public string MaskedEmail { get; set; } = null!;
-    public bool CodeSent { get; set; }
-}
-
-public class VerifyEmailRequest
-{
-    public string Code { get; set; } = null!;
-}
-
-public class MfaEnableResultDto
-{
-    public bool Success { get; set; }
-    public List<string>? RecoveryCodes { get; set; }
-}
-
-public class RecoveryCodesDto
-{
-    public List<string> Codes { get; set; } = new();
-}
-
-public class DisableMfaRequest
-{
-    public string Password { get; set; } = null!;
-}
-
-public class VerifyCodeRequest
-{
-    public string Code { get; set; } = null!;
-}
-
-public class UpdateEmailRequest
-{
-    public string Email { get; set; } = null!;
-}
-
-public class UpdatePhoneRequest
-{
-    public string PhoneNumber { get; set; } = null!;
-}
-
-public class EmailVerificationSentDto
-{
-    public string MaskedEmail { get; set; } = null!;
-    public bool CodeSent { get; set; }
-}
-
-public class PhoneVerificationSentDto
-{
-    public string MaskedPhone { get; set; } = null!;
-    public bool CodeSent { get; set; }
-}
-
-public class ExternalLoginDto
-{
-    public string Provider { get; set; } = null!;
-    public string ProviderKey { get; set; } = null!;
-    public string DisplayName { get; set; } = null!;
-}
-
-#endregion
-
-#region Events
-
-// Note: We use Account-specific events here to include additional context
-// like IpAddress and UserAgent. The core UserPasswordChangedEvent is simpler.
-
-public class AccountPasswordChangedEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "AccountPasswordChanged";
-    public string? SubjectId { get; set; }
-    public string? IpAddress { get; set; }
-    public string? UserAgent { get; set; }
-}
-
-public class UserMfaEnabledEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "UserMfaEnabled";
-    public string? SubjectId { get; set; }
-    public string? Method { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-public class UserMfaDisabledEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "UserMfaDisabled";
-    public string? SubjectId { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-public class EmailVerifiedEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "EmailVerified";
-    public string? SubjectId { get; set; }
-    public string? TenantId { get; set; }
-    public string? Email { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-public class PhoneVerifiedEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "PhoneVerified";
-    public string? SubjectId { get; set; }
-    public string? TenantId { get; set; }
-    public string? PhoneNumber { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-public class ExternalLoginRemovedEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "ExternalLoginRemoved";
-    public string? SubjectId { get; set; }
-    public string? TenantId { get; set; }
-    public string? Provider { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-#endregion

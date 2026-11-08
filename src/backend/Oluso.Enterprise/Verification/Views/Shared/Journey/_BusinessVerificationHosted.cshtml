@@ -1,0 +1,45 @@
+@model BusinessVerificationHostedViewModel
+
+<div class="business-verification-hosted">
+    <h2>@Localizer["business_verification_hosted_title"]</h2>
+    <p class="description">@Localizer["business_verification_hosted_description", Model.BusinessName]</p>
+
+    <div id="kyb-hosted-container" class="mb-3"></div>
+
+    <div class="d-grid gap-2">
+        <button type="button" class="btn btn-primary" id="kyb-hosted-open">@Localizer["business_verification_hosted_open"]</button>
+        <form method="post">
+            <input type="hidden" name="action" value="refresh" />
+            <button type="submit" class="btn btn-outline-secondary w-100">@Localizer["business_verification_hosted_done"]</button>
+        </form>
+    </div>
+</div>
+
+@* The provider's widget runs the verification; its success callback only means the
+   applicant finished, so it hands back to the journey's callback, where the step asks the
+   provider for the outcome. *@
+<script src="@Model.ScriptUrl"></script>
+<script>
+    (function () {
+        var options = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.Options));
+        var callbackUrl = "/journey/" + encodeURIComponent(@Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.JourneyId))) + "/callback";
+        options.onSuccess = function () {
+            window.location.href = callbackUrl + "?reference_id=" + encodeURIComponent(options.reference_id || "");
+        };
+        options.onError = function () { window.location.href = callbackUrl; };
+        options.onClose = function () { };
+
+        var connect = null;
+        function open() {
+            if (typeof window.Connect !== "function") return;
+            if (connect === null) {
+                connect = new window.Connect(options);
+                connect.setup();
+            }
+            connect.open();
+        }
+
+        document.getElementById("kyb-hosted-open").addEventListener("click", open);
+        open();
+    })();
+</script>

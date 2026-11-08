@@ -2,9 +2,12 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Licensing;
+using Oluso.Admin.Dto.Webhooks;
 
 namespace Oluso.Admin.Controllers;
 
@@ -19,6 +22,10 @@ public class WebhooksController : AdminBaseController
     private readonly IWebhookDispatcher _dispatcher;
     private readonly ITenantContext _tenantContext;
     private readonly IOlusoEventService _eventService;
+    private readonly IFeatureGate _featureGate;
+    private readonly IWebhookEventRegistry _eventRegistry;
+    private readonly IClientStore _clients;
+    private readonly IAuthorizationService _authorization;
     private readonly ILogger<WebhooksController> _logger;
 
     public WebhooksController(
@@ -26,63 +33,186 @@ public class WebhooksController : AdminBaseController
         IWebhookDispatcher dispatcher,
         ITenantContext tenantContext,
         IOlusoEventService eventService,
+        IFeatureGate featureGate,
+        IWebhookEventRegistry eventRegistry,
+        IClientStore clients,
+        IAuthorizationService authorization,
         ILogger<WebhooksController> logger) : base(tenantContext)
     {
         _store = store;
         _dispatcher = dispatcher;
         _tenantContext = tenantContext;
         _eventService = eventService;
+        _featureGate = featureGate;
+        _eventRegistry = eventRegistry;
+        _clients = clients;
+        _authorization = authorization;
         _logger = logger;
     }
 
     #region Available Events
 
     /// <summary>
-    /// Get all available webhook event types that can be subscribed to
+    /// Get all available webhook event types that can be subscribed to.
+    /// Filters by feature gate — events from modules the tenant doesn't have are excluded.
     /// </summary>
     [HttpGet("events")]
     [RequirePermission(AdminPermissions.WebhooksRead)]
-    public ActionResult<WebhookEventsResponse> GetAvailableEvents()
+    public async Task<ActionResult<WebhookEventsResponse>> GetAvailableEvents(CancellationToken cancellationToken)
     {
-        var events = _dispatcher.GetAvailableEventTypes();
+        var filtered = await FilterEventsByFeatureGateAsync(cancellationToken);
 
         return Ok(new WebhookEventsResponse
         {
-            Events = events.Select(e => new WebhookEventInfo
+            Events = filtered,
+            Categories = filtered.Select(e => e.Category).Distinct().OrderBy(c => c).ToList()
+        });
+    }
+
+    /// <summary>
+    /// Get events grouped by webhook provider for
+    /// display in UI. Grouping by provider keeps each module's events together,
+    /// rather than mixing every module's admin actions into a single Admin
+    /// bucket the way Category-based grouping does. Filters by feature gate.
+    /// </summary>
+    [HttpGet("events/grouped")]
+    [RequirePermission(AdminPermissions.WebhooksRead)]
+    public async Task<ActionResult<Dictionary<string, List<WebhookEventInfo>>>> GetEventsGrouped(CancellationToken cancellationToken)
+    {
+        var filtered = await FilterEventsByFeatureGateAsync(cancellationToken);
+
+        var grouped = filtered
+            .GroupBy(e => string.IsNullOrEmpty(e.ProviderDisplayName) ? "Other" : e.ProviderDisplayName)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderBy(e => e.DisplayName, StringComparer.OrdinalIgnoreCase).ToList());
+
+        return Ok(grouped);
+    }
+
+    private async Task<List<WebhookEventInfo>> FilterEventsByFeatureGateAsync(CancellationToken cancellationToken)
+    {
+        var events = _dispatcher.GetAvailableEventTypes();
+        var providers = _eventRegistry.GetProviders()
+            .ToDictionary(p => p.ProviderId, p => p.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+        var filtered = new List<WebhookEventInfo>();
+        var isSuperAdmin = IsSuperAdmin;
+
+        foreach (var e in events)
+        {
+            // Skip events with no event type or display name — they render
+            // as blank rows in the picker. Defensive against event classes that
+            // override WebhookEventType but lack a [WebhookEvent(...)] attribute.
+            if (string.IsNullOrWhiteSpace(e.EventType)
+                || string.IsNullOrWhiteSpace(e.DisplayName))
+            {
+                continue;
+            }
+
+            // Hide Platform-only events from tenant admins. They can't
+            // physically receive these (the dispatcher only routes Platform
+            // events to platform endpoints) — exposing them in the picker
+            // would just be a UX lie.
+            if (e.Scope == EventScope.Platform && !isSuperAdmin)
+            {
+                continue;
+            }
+
+            var feature = ModuleFeatures.GetFeatureKeyForProvider(e.ProviderId);
+            if (feature != null)
+            {
+                var gate = await _featureGate.CheckFeatureAsync(feature, cancellationToken: cancellationToken);
+                if (!gate.IsAllowed) continue;
+            }
+
+            string? providerDisplayName = null;
+            if (!string.IsNullOrEmpty(e.ProviderId)
+                && providers.TryGetValue(e.ProviderId, out var pdn))
+            {
+                providerDisplayName = pdn;
+            }
+
+            var definition = _eventRegistry.GetEventDefinition(e.EventType);
+            filtered.Add(new WebhookEventInfo
             {
                 EventType = e.EventType,
                 Category = e.Category,
                 DisplayName = e.DisplayName,
                 Description = e.Description,
-                EnabledByDefault = e.EnabledByDefault
-            }).ToList(),
-            Categories = events.Select(e => e.Category).Distinct().OrderBy(c => c).ToList()
-        });
+                EnabledByDefault = e.EnabledByDefault,
+                ProviderId = e.ProviderId,
+                ProviderDisplayName = providerDisplayName,
+                Scope = e.Scope.ToString(),
+                Restricted = definition.IsRestricted(),
+                RequiredPermission = definition?.RequiredPermission,
+                ClassificationPurpose = definition?.ClassificationPurpose,
+                SensitiveProperties = definition.SensitivePropertyNames().OrderBy(n => n, StringComparer.Ordinal).ToList(),
+                CanSubscribe = await MayHandleAsync(definition)
+            });
+        }
+
+        return filtered;
     }
 
     /// <summary>
-    /// Get events grouped by category for display in UI
+    /// Reject Platform-scoped event types for non-SuperAdmin callers.
+    /// Returns null if all event types are allowed; otherwise returns the
+    /// list of disallowed event types so the controller can return 403.
     /// </summary>
-    [HttpGet("events/grouped")]
-    [RequirePermission(AdminPermissions.WebhooksRead)]
-    public ActionResult<Dictionary<string, List<WebhookEventInfo>>> GetEventsGrouped()
+    private List<string>? FindDisallowedPlatformEvents(IEnumerable<string> requestedEventTypes)
     {
-        var events = _dispatcher.GetAvailableEventTypes();
+        if (IsSuperAdmin) return null;
+        var disallowed = requestedEventTypes
+            .Where(et => _dispatcher.GetAvailableEventTypes()
+                .Any(d => string.Equals(d.EventType, et, StringComparison.Ordinal) && d.Scope == EventScope.Platform))
+            .ToList();
+        return disallowed.Count == 0 ? null : disallowed;
+    }
 
-        var grouped = events
-            .GroupBy(e => e.Category)
-            .ToDictionary(
-                g => g.Key,
-                g => g.Select(e => new WebhookEventInfo
-                {
-                    EventType = e.EventType,
-                    Category = e.Category,
-                    DisplayName = e.DisplayName,
-                    Description = e.Description,
-                    EnabledByDefault = e.EnabledByDefault
-                }).ToList());
+    /// <summary>
+    /// Whether the current administrator holds what a restricted event demands. A restricted event that
+    /// names no permission can't be handled by anyone.
+    /// </summary>
+    private async Task<bool> MayHandleAsync(WebhookEventDefinition? definition)
+    {
+        if (!definition.IsRestricted()) return true;
+        if (string.IsNullOrEmpty(definition!.RequiredPermission)) return false;
+        var result = await _authorization.AuthorizeAsync(User, null, PermissionPolicyConstants.PolicyPrefix + definition.RequiredPermission);
+        return result.Succeeded;
+    }
 
-        return Ok(grouped);
+    /// <summary>The restricted event types among <paramref name="eventTypes"/> the current administrator may not handle.</summary>
+    private async Task<List<string>> FindForbiddenRestrictedEventsAsync(IEnumerable<string> eventTypes)
+    {
+        var forbidden = new List<string>();
+        foreach (var eventType in eventTypes.Distinct(StringComparer.Ordinal))
+        {
+            if (!await MayHandleAsync(_eventRegistry.GetEventDefinition(eventType)))
+                forbidden.Add(eventType);
+        }
+        return forbidden;
+    }
+
+    private List<string> RestrictedEventTypes(IEnumerable<string> eventTypes) =>
+        eventTypes.Where(et => _eventRegistry.GetEventDefinition(et).IsRestricted()).Distinct(StringComparer.Ordinal).ToList();
+
+    private static ObjectResult RestrictedRefusal(string action, IEnumerable<string> eventTypes) => new(new
+    {
+        error = $"{action} needs the permission each restricted event declares, which you don't hold for: {string.Join(", ", eventTypes)}"
+    })
+    { StatusCode = 403 };
+
+    /// <summary>
+    /// A linked client must be one of this tenant's clients.
+    /// </summary>
+    private async Task<string?> ValidateClientAsync(string? clientId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) return null;
+
+        var client = await _clients.FindClientByIdAsync(clientId.Trim(), cancellationToken);
+        return client == null || client.TenantId != GetTenantId()
+            ? $"Unknown client for this tenant: {clientId}"
+            : null;
     }
 
     #endregion
@@ -150,6 +280,24 @@ public class WebhooksController : AdminBaseController
             return BadRequest(new { error = $"Invalid event types: {string.Join(", ", invalidEvents)}" });
         }
 
+        var disallowed = FindDisallowedPlatformEvents(request.EventTypes);
+        if (disallowed != null)
+        {
+            return StatusCode(403, new { error = $"Platform-only event types cannot be subscribed by tenant admins: {string.Join(", ", disallowed)}" });
+        }
+
+        var forbidden = await FindForbiddenRestrictedEventsAsync(request.EventTypes);
+        if (forbidden.Count > 0)
+        {
+            return RestrictedRefusal("Subscribing to restricted events", forbidden);
+        }
+
+        var clientError = await ValidateClientAsync(request.ClientId, cancellationToken);
+        if (clientError != null)
+        {
+            return BadRequest(new { error = clientError });
+        }
+
         var endpoint = await _store.CreateEndpointAsync(tenantId, new Oluso.Core.Domain.Interfaces.CreateWebhookEndpoint
         {
             Name = request.Name,
@@ -158,12 +306,24 @@ public class WebhooksController : AdminBaseController
             Enabled = request.Enabled,
             EventTypes = request.EventTypes,
             Headers = request.Headers,
-            ApiVersion = request.ApiVersion ?? "2024-01-01"
+            AuthType = request.AuthType,
+            AuthCredential = request.AuthCredential,
+            ApiVersion = request.ApiVersion ?? "2024-01-01",
+            ClientId = request.ClientId,
+            SkipOwnClientEvents = request.SkipOwnClientEvents,
+            AuthorizeSensitiveData = request.AuthorizeSensitiveData,
+            SensitiveDataAuthorizedBy = request.AuthorizeSensitiveData ? AdminUserId : null,
+            SensitiveDataAuthorizedByName = request.AuthorizeSensitiveData ? AdminUserName : null
         }, cancellationToken);
 
         _logger.LogInformation(
             "Created webhook endpoint {EndpointId} for tenant {TenantId}",
             endpoint.Id, tenantId);
+
+        if (request.AuthorizeSensitiveData)
+        {
+            await RaiseSensitiveDataChangedAsync(endpoint, authorized: true, cancellationToken);
+        }
 
         // Raise audit event
         await _eventService.RaiseAsync(new AdminWebhookCreatedEvent
@@ -210,6 +370,55 @@ public class WebhooksController : AdminBaseController
             {
                 return BadRequest(new { error = $"Invalid event types: {string.Join(", ", invalidEvents)}" });
             }
+
+            var disallowed = FindDisallowedPlatformEvents(request.EventTypes);
+            if (disallowed != null)
+            {
+                return StatusCode(403, new { error = $"Platform-only event types cannot be subscribed by tenant admins: {string.Join(", ", disallowed)}" });
+            }
+        }
+
+        var finalEventTypes = request.EventTypes ?? existing.EventTypes;
+        if (request.EventTypes != null)
+        {
+            var added = request.EventTypes.Except(existing.EventTypes, StringComparer.Ordinal);
+            var forbidden = await FindForbiddenRestrictedEventsAsync(added);
+            if (forbidden.Count > 0)
+            {
+                return RestrictedRefusal("Subscribing to restricted events", forbidden);
+            }
+        }
+
+        var wasAuthorized = existing.SensitiveDataAuthorizedAt != null;
+        bool? authorizationChange = request.AuthorizeSensitiveData switch
+        {
+            true when !wasAuthorized => true,
+            false when wasAuthorized => false,
+            _ => null
+        };
+        var staysAuthorized = authorizationChange ?? wasAuthorized;
+        var urlChanges = request.Url != null && !string.Equals(request.Url, existing.Url, StringComparison.Ordinal);
+
+        if (authorizationChange == true || (staysAuthorized && urlChanges))
+        {
+            var forbidden = await FindForbiddenRestrictedEventsAsync(finalEventTypes);
+            if (forbidden.Count > 0)
+            {
+                return RestrictedRefusal(
+                    authorizationChange == true
+                        ? "Authorising an endpoint for sensitive data"
+                        : "Changing the URL of an endpoint authorised for sensitive data",
+                    forbidden);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ClientId))
+        {
+            var clientError = await ValidateClientAsync(request.ClientId, cancellationToken);
+            if (clientError != null)
+            {
+                return BadRequest(new { error = clientError });
+            }
         }
 
         var endpoint = await _store.UpdateEndpointAsync(endpointId, new Oluso.Core.Domain.Interfaces.UpdateWebhookEndpoint
@@ -220,8 +429,20 @@ public class WebhooksController : AdminBaseController
             Enabled = request.Enabled,
             EventTypes = request.EventTypes,
             Headers = request.Headers,
-            ApiVersion = request.ApiVersion
+            AuthType = request.AuthType,
+            AuthCredential = request.AuthCredential,
+            ApiVersion = request.ApiVersion,
+            ClientId = request.ClientId,
+            SkipOwnClientEvents = request.SkipOwnClientEvents,
+            AuthorizeSensitiveData = authorizationChange,
+            SensitiveDataAuthorizedBy = authorizationChange == true ? AdminUserId : null,
+            SensitiveDataAuthorizedByName = authorizationChange == true ? AdminUserName : null
         }, cancellationToken);
+
+        if (authorizationChange != null)
+        {
+            await RaiseSensitiveDataChangedAsync(endpoint, authorizationChange.Value, cancellationToken);
+        }
 
         // Raise audit event
         await _eventService.RaiseAsync(new AdminWebhookUpdatedEvent
@@ -407,6 +628,23 @@ public class WebhooksController : AdminBaseController
 
     #endregion
 
+    private Task RaiseSensitiveDataChangedAsync(
+        Oluso.Core.Domain.Interfaces.WebhookEndpoint endpoint,
+        bool authorized,
+        CancellationToken cancellationToken) =>
+        _eventService.RaiseAsync(new AdminWebhookSensitiveDataChangedEvent
+        {
+            TenantId = endpoint.TenantId,
+            AdminUserId = AdminUserId!,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = endpoint.Id,
+            ResourceName = endpoint.Name,
+            EndpointUrl = endpoint.Url,
+            Authorized = authorized,
+            RestrictedEventTypes = RestrictedEventTypes(endpoint.EventTypes)
+        }, cancellationToken);
+
     private string GetTenantId()
     {
         return _tenantContext.TenantId
@@ -414,112 +652,3 @@ public class WebhooksController : AdminBaseController
             ?? throw new InvalidOperationException("Tenant ID not available");
     }
 }
-
-#region DTOs
-
-public class WebhookEventsResponse
-{
-    public List<WebhookEventInfo> Events { get; set; } = new();
-    public List<string> Categories { get; set; } = new();
-}
-
-public class WebhookEventInfo
-{
-    public string EventType { get; set; } = default!;
-    public string Category { get; set; } = default!;
-    public string DisplayName { get; set; } = default!;
-    public string? Description { get; set; }
-    public bool EnabledByDefault { get; set; }
-}
-
-public class WebhookEndpointDto
-{
-    public string Id { get; set; } = default!;
-    public string TenantId { get; set; } = default!;
-    public string Name { get; set; } = default!;
-    public string? Description { get; set; }
-    public string Url { get; set; } = default!;
-    public bool Enabled { get; set; }
-    public List<string> EventTypes { get; set; } = new();
-    public Dictionary<string, string>? Headers { get; set; }
-    public string? ApiVersion { get; set; }
-    public string? Secret { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
-}
-
-public class CreateWebhookEndpointDto
-{
-    public string Name { get; set; } = default!;
-    public string? Description { get; set; }
-    public string Url { get; set; } = default!;
-    public bool Enabled { get; set; } = true;
-    public List<string> EventTypes { get; set; } = new();
-    public Dictionary<string, string>? Headers { get; set; }
-    public string? ApiVersion { get; set; }
-}
-
-public class UpdateWebhookEndpointDto
-{
-    public string? Name { get; set; }
-    public string? Description { get; set; }
-    public string? Url { get; set; }
-    public bool? Enabled { get; set; }
-    public List<string>? EventTypes { get; set; }
-    public Dictionary<string, string>? Headers { get; set; }
-    public string? ApiVersion { get; set; }
-}
-
-public class CreateWebhookEndpointRequest
-{
-    public string Name { get; set; } = default!;
-    public string? Description { get; set; }
-    public string Url { get; set; } = default!;
-    public bool Enabled { get; set; } = true;
-    public List<string> EventTypes { get; set; } = new();
-    public Dictionary<string, string>? Headers { get; set; }
-    public string? ApiVersion { get; set; }
-}
-
-public class UpdateWebhookEndpointRequest
-{
-    public string? Name { get; set; }
-    public string? Description { get; set; }
-    public string? Url { get; set; }
-    public bool? Enabled { get; set; }
-    public List<string>? EventTypes { get; set; }
-    public Dictionary<string, string>? Headers { get; set; }
-    public string? ApiVersion { get; set; }
-}
-
-public class RotateSecretResponse
-{
-    public string Secret { get; set; } = default!;
-}
-
-public class TestWebhookResponse
-{
-    public bool Success { get; set; }
-    public string? DeliveryId { get; set; }
-    public string? Error { get; set; }
-}
-
-public class RetryDeliveryResponse
-{
-    public bool Success { get; set; }
-}
-
-public class WebhookDeliveryDto
-{
-    public string Id { get; set; } = default!;
-    public string EndpointId { get; set; } = default!;
-    public string EventType { get; set; } = default!;
-    public Oluso.Core.Domain.Interfaces.WebhookDeliveryStatus Status { get; set; }
-    public int HttpStatusCode { get; set; }
-    public string? Error { get; set; }
-    public int AttemptCount { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? DeliveredAt { get; set; }
-}
-
-#endregion

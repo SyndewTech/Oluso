@@ -10,10 +10,13 @@ on:
       - 'src/backend/**'
 
 env:
-  DOTNET_VERSION: '8.0.x'
+  DOTNET_VERSION: '10.0.x'
 
 jobs:
   build-and-deploy:
+    # Off until the demo host is set up: set the repository variable DEMO_DEPLOY_ENABLED to true,
+    # along with the FTP_* and database secrets below. Until then the job is skipped, not failed.
+    if: vars.DEMO_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
 
     steps:

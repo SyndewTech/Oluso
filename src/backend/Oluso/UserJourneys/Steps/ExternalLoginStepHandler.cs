@@ -12,12 +12,41 @@ namespace Oluso.UserJourneys.Steps;
 /// Shows available external login providers and handles the OAuth flow.
 /// Supports proxy mode for federation broker scenarios.
 /// </summary>
-public class ExternalLoginStepHandler : IStepHandler
+public class ExternalLoginStepHandler : IPrimaryAuthenticationStep, IStepConfigurationTester
 {
+    public Task<StepConfigurationTestResult> TestConfigurationAsync(StepExecutionContext context, CancellationToken cancellationToken = default) =>
+        StepTestSupport.TestExternalProvidersAsync(context, "providers", cancellationToken);
+
     public string StepType => "external_login";
+
+    public Task<StepConfigurationValidationResult> ValidateConfigurationAsync(IDictionary<string, object>? configuration)
+    {
+        var warnings = new List<string>();
+
+        // No specific providers configured isn't an error — at runtime the
+        // step falls back to all enabled IdPs for the tenant. Worth a
+        // warning so the admin knows that's what will happen. Only fire
+        // when the key was explicitly set to an empty list; an absent key
+        // is the more common "I haven't picked any yet" state and the
+        // page already nudges the admin via empty-state UI.
+        if (configuration != null
+            && configuration.TryGetValue("providers", out var providers)
+            && providers != null
+            && !StepConfigurationHelpers.IsNonEmptyList(providers))
+        {
+            warnings.Add("No specific providers configured — the step will offer all enabled identity providers for this tenant.");
+        }
+
+        return Task.FromResult(StepConfigurationValidationResult.Valid(warnings.ToArray()));
+    }
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
+        if (await OrganizationSignInStep.TryCompleteAsync(context, cancellationToken) is { } organizationResult)
+        {
+            return organizationResult;
+        }
+
         var externalAuthService = context.ServiceProvider.GetService<IExternalAuthService>();
         var tenantContext = context.ServiceProvider.GetRequiredService<ITenantContext>();
         var logger = context.ServiceProvider.GetRequiredService<ILogger<ExternalLoginStepHandler>>();
@@ -26,6 +55,18 @@ public class ExternalLoginStepHandler : IStepHandler
         {
             logger.LogWarning("External authentication service not configured");
             return StepHandlerResult.Skip();
+        }
+
+        // A sign-in waiting for the person to confirm the account its email belongs to. Once linked, the external
+        // sign-in (still held) finds the account by its login below.
+        if (ExistingAccountLink.PendingProvider(context) is { } pendingProvider
+            && !pendingProvider.StartsWith("saml:", StringComparison.OrdinalIgnoreCase))
+        {
+            var outcome = await ExistingAccountLink.ContinueAsync(context, cancellationToken);
+            if (outcome.Result != null)
+            {
+                return outcome.Result;
+            }
         }
 
         // Check if this is a callback from external provider
@@ -56,6 +97,17 @@ public class ExternalLoginStepHandler : IStepHandler
 
         if (!providers.Any())
         {
+            // On the platform host the step still offers "Sign in with your
+            // organisation", which reaches the tenant's own providers.
+            if (await IsOrganizationSignInOfferedAsync(context, cancellationToken))
+            {
+                return StepHandlerResult.ShowUi("Journey/_ExternalLogin", new ExternalLoginViewModel
+                {
+                    Providers = new List<ExternalProviderViewModel>(),
+                    TenantName = tenantContext.Tenant?.Name
+                });
+            }
+
             logger.LogDebug("No external providers available");
             return StepHandlerResult.Skip();
         }
@@ -96,10 +148,19 @@ public class ExternalLoginStepHandler : IStepHandler
             {
                 Scheme = p.Scheme,
                 DisplayName = p.DisplayName ?? p.Scheme,
-                IconUrl = p.IconUrl
+                IconUrl = p.IconUrl,
+                ProviderType = p.ProviderType
             }).ToList(),
             TenantName = tenantContext.Tenant?.Name
         });
+    }
+
+    private static async Task<bool> IsOrganizationSignInOfferedAsync(StepExecutionContext context, CancellationToken cancellationToken)
+    {
+        var http = context.ServiceProvider.GetService<Microsoft.AspNetCore.Http.IHttpContextAccessor>()?.HttpContext;
+        var organizationSignIn = context.ServiceProvider.GetService<Authentication.OrganizationSignIn.IOrganizationSignInService>();
+        return http != null && organizationSignIn != null
+            && await organizationSignIn.GetJourneyEntryUrlAsync(http, context.JourneyId, cancellationToken) != null;
     }
 
     private async Task<StepHandlerResult> InitiateExternalLoginAsync(
@@ -128,7 +189,8 @@ public class ExternalLoginStepHandler : IStepHandler
         // Build callback URL with journey ID
         var callbackUrl = $"/journey/{context.JourneyId}/callback";
 
-        var challengeResult = await authService.ChallengeAsync(provider, callbackUrl, cancellationToken);
+        var extraParams = BuildExternalProviderParams(context);
+        var challengeResult = await authService.ChallengeAsync(provider, callbackUrl, extraParams, cancellationToken);
 
         if (!challengeResult.Succeeded)
         {
@@ -137,6 +199,25 @@ public class ExternalLoginStepHandler : IStepHandler
 
         // Return redirect to external provider
         return StepHandlerResult.Redirect(challengeResult.RedirectUrl ?? callbackUrl);
+    }
+
+    internal static Dictionary<string, string>? BuildExternalProviderParams(StepExecutionContext context)
+    {
+        Dictionary<string, string>? p = null;
+
+        void Add(string key, string? value)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            p ??= new Dictionary<string, string>();
+            p[key] = value;
+        }
+
+        Add("ui_locales", context.ResolvedLocale);
+
+        Add("domain_hint", context.GetDataString("domain_hint"));
+        Add("login_hint", context.GetDataString("login_hint"));
+
+        return p;
     }
 
     private async Task<StepHandlerResult> HandleExternalCallbackAsync(
@@ -174,6 +255,25 @@ public class ExternalLoginStepHandler : IStepHandler
             }
         }
 
+        // Access-control gate (admin-configured per-IdP). Evaluated before
+        // proxy mode and provisioning so federation-broker logins are gated
+        // too. Mirrors the standalone ExternalCallback's gate logic.
+        if (config?.AccessControl != null)
+        {
+            var principal = new ClaimsPrincipal(new ClaimsIdentity(
+                (result.Claims ?? new Dictionary<string, string>())
+                    .Select(kv => new Claim(kv.Key, kv.Value))));
+            var decision = ExternalAccessControlEvaluator.Evaluate(principal, config.AccessControl);
+            if (decision != ExternalAccessControlEvaluator.Decision.Allow)
+            {
+                logger.LogWarning(
+                    "External login denied by IdP access control: provider={Provider} decision={Decision}",
+                    provider, decision);
+                await authService.SignOutExternalAsync(cancellationToken);
+                return StepHandlerResult.Fail("access_denied", "Access denied for this account.");
+            }
+        }
+
         // Check for proxy mode
         var isProxyMode = config?.ProxyMode ?? context.GetConfig("proxyMode", false);
         var storeUserLocally = config?.StoreUserLocally ?? !isProxyMode;
@@ -185,29 +285,132 @@ public class ExternalLoginStepHandler : IStepHandler
             return await HandleProxyModeAsync(context, authService, result, config, logger, cancellationToken);
         }
 
-        // Standard mode - find or create local user
-        var user = await FindUserByExternalLoginAsync(authService, userService, provider, providerKey, result.Email, cancellationToken);
+        // Standard mode - find or create local user. The account this login is linked to; else the account with its
+        // email, joined only when the provider can vouch for the address and the account's own was proven.
+        var emailTrusted = await ExternalEmailTrust.IsTrustedAsync(
+            provider,
+            type => result.Claims?.FirstOrDefault(c => string.Equals(c.Key, type, StringComparison.Ordinal)).Value,
+            result.Email,
+            tenantContext.TenantId,
+            context.ServiceProvider.GetService<IExternalProviderConfigStore>(),
+            context.ServiceProvider.GetRequiredService<ITenantEmailDomainStore>(),
+            cancellationToken);
+
+        var linkedUserId = await authService.FindUserByLoginAsync(provider, providerKey, cancellationToken);
+        var user = linkedUserId != null ? await userService.FindByIdAsync(linkedUserId, cancellationToken) : null;
+        if (user == null && !string.IsNullOrEmpty(result.Email))
+        {
+            var owner = await userService.FindByEmailAsync(result.Email, cancellationToken);
+            if (owner != null)
+            {
+                if (!emailTrusted || !owner.EmailVerified)
+                {
+                    logger.LogInformation(
+                        "External login from {Provider} matches account {UserId} by email; asking them to confirm it (trusted={Trusted}, accountVerified={Verified})",
+                        provider, owner.Id, emailTrusted, owner.EmailVerified);
+                    return await ExistingAccountLink.BeginAsync(context, owner.Id, provider, providerKey, cancellationToken);
+                }
+
+                var linked = await authService.LinkLoginAsync(owner.Id, provider, providerKey, provider, cancellationToken);
+                if (!linked.Succeeded)
+                {
+                    logger.LogWarning("Failed to link {Provider} to user {UserId}: {Error}", provider, owner.Id, linked.Error);
+                    await authService.SignOutExternalAsync(cancellationToken);
+                    return StepHandlerResult.Fail("link_failed", "Failed to link external account");
+                }
+                user = owner;
+            }
+        }
 
         // Auto-provision if configured and user doesn't exist
         var autoProvision = config?.AutoProvisionUsers ?? context.GetConfig("autoProvision", true);
         if (user == null && autoProvision && !string.IsNullOrEmpty(result.Email))
         {
+            // Mirror the tenant-policy gates the standalone callback
+            // applies. AllowSelfRegistration is the tenant-level kill
+            // switch — IdP-driven auto-provision still respects it because
+            // creating an account is creating an account, regardless of
+            // who initiated the redirect. AllowedEmailDomains is a
+            // tenant allowlist; enterprise SSO doesn't override it.
+            var tenant = tenantContext.Tenant;
+            if (tenant?.AllowSelfRegistration == false)
+            {
+                logger.LogWarning(
+                    "Auto-provision blocked for {Provider} — self-registration disabled on tenant {TenantId}",
+                    provider, tenantContext.TenantId);
+                await authService.SignOutExternalAsync(cancellationToken);
+                return StepHandlerResult.Fail("registration_disabled",
+                    "Registration is not available for this tenant.");
+            }
+
+            if (!IsEmailDomainAllowed(result.Email, tenant?.AllowedEmailDomains))
+            {
+                logger.LogWarning(
+                    "Auto-provision blocked for {Provider} — email domain not in tenant allowlist",
+                    provider);
+                await authService.SignOutExternalAsync(cancellationToken);
+                return StepHandlerResult.Fail("email_domain_not_allowed",
+                    "Registrations from this email domain are not allowed.");
+            }
+
             var createResult = await userService.CreateUserAsync(new CreateUserRequest
             {
                 Email = result.Email,
-                Password = Guid.NewGuid().ToString(), // Random password since they'll use external login
+                // No password — external-login users authenticate via their IdP. Omitting
+                // it makes CreateUserAsync create without one (HasPassword=false → truly
+                // federated), matching the standalone external callback and disabling
+                // password change/reset. (Was a Guid.NewGuid() junk password.)
                 FirstName = result.FirstName,
                 LastName = result.LastName,
                 TenantId = tenantContext.TenantId,
-                RequireEmailVerification = false // Trust external provider's email
+                // Verified below only when the provider can vouch for the address (ExternalEmailTrust).
+                ClientId = context.ClientId
             }, cancellationToken);
 
             if (createResult.Succeeded)
             {
                 // Link external login
                 await authService.LinkLoginAsync(createResult.UserId!, provider, providerKey, provider, cancellationToken);
-                user = createResult.User;
+                if (emailTrusted)
+                {
+                    await userService.SetEmailVerifiedAsync(createResult.UserId!, true, cancellationToken);
+                }
+                user = await userService.FindByIdAsync(createResult.UserId!, cancellationToken);
                 logger.LogInformation("Created new user {UserId} from external provider {Provider}", user?.Id, provider);
+
+                // Apply IdP DefaultRoles on first provision only. Additive —
+                // never removed on later logins, so editing the IdP's
+                // defaultRoles list won't strip access from existing users.
+                if (config?.DefaultRoles != null && config.DefaultRoles.Count > 0)
+                {
+                    var roleStore = context.ServiceProvider.GetService<IRoleStore>();
+                    var appliedRoleNames = new List<string>();
+                    if (roleStore != null)
+                    {
+                        foreach (var roleId in config.DefaultRoles)
+                        {
+                            var role = await roleStore.GetByIdAsync(roleId, cancellationToken);
+                            if (role == null
+                                || string.IsNullOrEmpty(role.Name)
+                                || (role.TenantId != null && role.TenantId != tenantContext.TenantId))
+                            {
+                                logger.LogWarning(
+                                    "Default role {RoleId} skipped on user {UserId}: not found or not in tenant {TenantId}",
+                                    roleId, createResult.UserId, tenantContext.TenantId);
+                                continue;
+                            }
+                            await context.ServiceProvider.GetRequiredService<IRoleGrantService>()
+                                .GrantAsync(role.Id, createResult.UserId!, null, RoleGrantActor.System($"External login ({provider})"), cancellationToken);
+                            appliedRoleNames.Add(role.Name);
+                        }
+                    }
+                    if (appliedRoleNames.Count > 0)
+                    {
+                        logger.LogInformation(
+                            "Applied IdP default roles {Roles} to new user {UserId} (provider={Provider})",
+                            string.Join(",", appliedRoleNames), createResult.UserId, provider);
+                    }
+                }
             }
             else
             {
@@ -276,6 +479,23 @@ public class ExternalLoginStepHandler : IStepHandler
         if (!string.IsNullOrEmpty(user.LastName))
             outputClaims["family_name"] = user.LastName;
 
+        // The step's claim mappings carry chosen claims from the provider (external claim
+        // type -> claim name), as they do in proxy mode. The local account's identity
+        // claims above stay authoritative.
+        var claimMappings = context.GetConfig<Dictionary<string, string>>("claimMappings", null);
+        if (claimMappings is { Count: > 0 } && result.Claims != null)
+        {
+            foreach (var (externalType, claimName) in claimMappings)
+            {
+                if (string.IsNullOrWhiteSpace(claimName) || outputClaims.ContainsKey(claimName)) continue;
+                var external = result.Claims.FirstOrDefault(c => string.Equals(c.Key, externalType, StringComparison.OrdinalIgnoreCase));
+                if (external.Value is { } mappedValue)
+                {
+                    outputClaims[claimName] = mappedValue;
+                }
+            }
+        }
+
         // Include external tokens if configured
         if (config?.IncludeExternalAccessToken == true && !string.IsNullOrEmpty(result.AccessToken))
         {
@@ -286,7 +506,7 @@ public class ExternalLoginStepHandler : IStepHandler
             outputClaims["external_id_token"] = result.IdToken;
         }
 
-        return StepHandlerResult.Success(outputClaims);
+        return StepHandlerResult.SuccessOrBranch(context, outputClaims, $"auth_{provider.ToLowerInvariant()}", "auth_external");
     }
 
     private async Task<StepHandlerResult> HandleProxyModeAsync(
@@ -299,11 +519,8 @@ public class ExternalLoginStepHandler : IStepHandler
     {
         var provider = result.Provider;
         var providerKey = result.ProviderKey;
+        var proxySubject = ExternalProxyClaimsBuilder.ProxySubjectFor(provider, providerKey);
 
-        // Generate proxy subject ID
-        var proxySubject = $"proxy:{provider}:{providerKey}";
-
-        // Cache external tokens if configured
         if (config?.CacheExternalTokens == true && !string.IsNullOrEmpty(result.AccessToken))
         {
             var tokenData = new ExternalTokenData
@@ -318,17 +535,15 @@ public class ExternalLoginStepHandler : IStepHandler
             await authService.CacheExternalTokensAsync(
                 proxySubject,
                 tokenData,
-                TimeSpan.FromSeconds(config?.TokenCacheDurationSeconds ?? 3600),
+                TimeSpan.FromSeconds(config.TokenCacheDurationSeconds),
                 cancellationToken);
         }
 
-        // Sign out of external scheme
         await authService.SignOutExternalAsync(cancellationToken);
 
-        // Update journey state
         context.UserId = proxySubject;
         context.SetData("authenticated_at", DateTime.UtcNow);
-        context.SetData("auth_method", provider.ToLower());
+        context.SetData("auth_method", provider.ToLowerInvariant());
         context.SetData("idp", provider);
         context.SetData("proxy_mode", true);
         context.SetData("external_subject", providerKey);
@@ -336,96 +551,21 @@ public class ExternalLoginStepHandler : IStepHandler
         logger.LogInformation("Proxy mode authentication completed for provider {Provider}, external subject {Subject}",
             provider, providerKey);
 
-        // Build output claims
-        var outputClaims = new Dictionary<string, object>
-        {
-            ["sub"] = proxySubject,
-            ["idp"] = provider,
-            ["external_sub"] = providerKey,
-            ["proxy_mode"] = true,
-            ["amr"] = new[] { "external", provider.ToLower(), "proxy" }
-        };
+        var claimMappings = context.GetConfig<Dictionary<string, string>>("claimMappings", null);
+        var outputClaims = ExternalProxyClaimsBuilder.Build(
+            provider,
+            providerKey,
+            result.Claims,
+            config,
+            claimMappings,
+            result.Email,
+            result.Name,
+            result.FirstName,
+            result.LastName,
+            result.AccessToken,
+            result.IdToken);
 
-        // Pass through external claims with filtering
-        if (result.Claims != null)
-        {
-            var includeClaims = config?.ProxyIncludeClaims ?? Array.Empty<string>();
-            var excludeClaims = config?.ProxyExcludeClaims ?? Array.Empty<string>();
-
-            foreach (var claim in result.Claims)
-            {
-                // Skip if in exclude list
-                if (excludeClaims.Contains(claim.Key))
-                    continue;
-
-                // If include list is specified, only include those claims
-                if (includeClaims.Count > 0 && !includeClaims.Contains(claim.Key))
-                    continue;
-
-                // Map common claim types
-                var claimKey = claim.Key switch
-                {
-                    ClaimTypes.Email => "email",
-                    ClaimTypes.Name => "name",
-                    ClaimTypes.GivenName => "given_name",
-                    ClaimTypes.Surname => "family_name",
-                    ClaimTypes.NameIdentifier => "sub_original",
-                    _ => claim.Key
-                };
-
-                // Don't overwrite already set claims
-                if (!outputClaims.ContainsKey(claimKey))
-                {
-                    outputClaims[claimKey] = claim.Value;
-                }
-            }
-        }
-
-        // Add standard claims from result
-        if (!outputClaims.ContainsKey("email") && !string.IsNullOrEmpty(result.Email))
-            outputClaims["email"] = result.Email;
-        if (!outputClaims.ContainsKey("name") && !string.IsNullOrEmpty(result.Name))
-            outputClaims["name"] = result.Name;
-        if (!outputClaims.ContainsKey("given_name") && !string.IsNullOrEmpty(result.FirstName))
-            outputClaims["given_name"] = result.FirstName;
-        if (!outputClaims.ContainsKey("family_name") && !string.IsNullOrEmpty(result.LastName))
-            outputClaims["family_name"] = result.LastName;
-
-        // Include external tokens if configured
-        if (config?.IncludeExternalAccessToken == true && !string.IsNullOrEmpty(result.AccessToken))
-        {
-            outputClaims["external_access_token"] = result.AccessToken;
-        }
-        if (config?.IncludeExternalIdToken == true && !string.IsNullOrEmpty(result.IdToken))
-        {
-            outputClaims["external_id_token"] = result.IdToken;
-        }
-
-        return StepHandlerResult.Success(outputClaims);
-    }
-
-    private async Task<OlusoUserInfo?> FindUserByExternalLoginAsync(
-        IExternalAuthService authService,
-        IOlusoUserService userService,
-        string provider,
-        string providerKey,
-        string? email,
-        CancellationToken cancellationToken)
-    {
-        // Try to find by external login first
-        var userId = await authService.FindUserByLoginAsync(provider, providerKey, cancellationToken);
-        if (userId != null)
-        {
-            return await userService.FindByIdAsync(userId, cancellationToken);
-        }
-
-        // Fall back to finding by email
-        if (!string.IsNullOrEmpty(email))
-        {
-            return await userService.FindByEmailAsync(email, cancellationToken);
-        }
-
-        return null;
+        return StepHandlerResult.SuccessOrBranch(context, outputClaims, "auth_proxy", $"auth_{provider.ToLowerInvariant()}", "auth_external");
     }
 
     /// <summary>
@@ -510,6 +650,26 @@ public class ExternalLoginStepHandler : IStepHandler
 
         return fuzzyMatch?.Scheme;
     }
+
+    /// <summary>
+    /// Mirrors the AllowedEmailDomains check in the standalone Register and
+    /// ExternalRegister pages. SSO-via-journey honours the same allowlist —
+    /// the IdP doesn't override the tenant's "only listed domains" rule.
+    /// </summary>
+    private static bool IsEmailDomainAllowed(string email, string? allowedDomainsCsv)
+    {
+        if (string.IsNullOrWhiteSpace(allowedDomainsCsv)) return true;
+
+        var atIndex = email.IndexOf('@');
+        if (atIndex < 0 || atIndex == email.Length - 1) return false;
+        var domain = email[(atIndex + 1)..].ToLowerInvariant();
+
+        var domains = allowedDomainsCsv
+            .Split(new[] { ',', ' ', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(d => d.ToLowerInvariant());
+
+        return domains.Contains(domain);
+    }
 }
 
 #region ViewModels
@@ -526,6 +686,7 @@ public class ExternalProviderViewModel
     public string Scheme { get; set; } = null!;
     public string DisplayName { get; set; } = null!;
     public string? IconUrl { get; set; }
+    public string? ProviderType { get; set; }
 }
 
 #endregion

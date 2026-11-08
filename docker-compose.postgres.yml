@@ -1,0 +1,33 @@
+# Runs the quick-start on PostgreSQL instead of SQLite:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+#
+# The database is only reachable from the other containers. The password is a
+# local development default; set POSTGRES_PASSWORD to use your own (it is only
+# applied when the postgres_data volume is first created).
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: oluso
+      POSTGRES_USER: oluso
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oluso-dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oluso -d oluso"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  oluso:
+    environment:
+      - Oluso__Database__Provider=PostgreSQL
+      - ConnectionStrings__OlusoDb=Host=postgres;Database=oluso;Username=oluso;Password=${POSTGRES_PASSWORD:-oluso-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -3,9 +3,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Admin.Dto.AuditLogs;
 
 namespace Oluso.Admin.Controllers;
 
@@ -31,6 +33,7 @@ public class AuditLogsController : AdminBaseController
     /// Check if audit logging is enabled
     /// </summary>
     [HttpGet("status")]
+    [RequirePermission(AdminPermissions.AuditLogsRead)]
     public ActionResult<AuditLogStatusResponse> GetStatus()
     {
         var isEnabled = _auditLogService.IsEnabled;
@@ -54,6 +57,8 @@ public class AuditLogsController : AdminBaseController
         [FromQuery] string? resourceType,
         [FromQuery] string? resourceId,
         [FromQuery] string? clientId,
+        [FromQuery] string? originKind,
+        [FromQuery] string? originId,
         [FromQuery] bool? success,
         [FromQuery] string? search,
         [FromQuery] DateTime? from,
@@ -83,6 +88,8 @@ public class AuditLogsController : AdminBaseController
             ResourceType = resourceType,
             ResourceId = resourceId,
             ClientId = clientId,
+            OriginKind = originKind,
+            OriginId = originId,
             Success = success,
             SearchTerm = search,
             StartDate = from,
@@ -188,6 +195,8 @@ public class AuditLogsController : AdminBaseController
         [FromQuery] string? eventType,
         [FromQuery] string? subjectId,
         [FromQuery] string? clientId,
+        [FromQuery] string? originKind,
+        [FromQuery] string? originId,
         [FromQuery] DateTime? from,
         [FromQuery] DateTime? to,
         [FromQuery] string format = "json",
@@ -211,6 +220,8 @@ public class AuditLogsController : AdminBaseController
             EventType = eventType,
             SubjectId = subjectId,
             ClientId = clientId,
+            OriginKind = originKind,
+            OriginId = originId,
             StartDate = from,
             EndDate = to,
             Page = 1,
@@ -237,6 +248,7 @@ public class AuditLogsController : AdminBaseController
     /// Purge old audit logs (admin only)
     /// </summary>
     [HttpDelete("purge")]
+    [RequirePermission(AdminPermissions.AuditLogsPurge)]
     public async Task<ActionResult<PurgeResult>> PurgeOldLogs(
         [FromQuery] int olderThanDays = 90,
         CancellationToken cancellationToken = default)
@@ -285,18 +297,21 @@ public class AuditLogsController : AdminBaseController
             ErrorMessage = log.ErrorMessage,
             Details = log.Details,
             Reason = log.Reason,
-            ActivityId = log.ActivityId
+            ActivityId = log.ActivityId,
+            OriginKind = log.OriginKind,
+            OriginId = log.OriginId,
+            OriginName = log.OriginName
         };
     }
 
     private static string GenerateCsv(List<AuditLogDto> items)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Id,Timestamp,EventType,Category,Action,SubjectId,SubjectName,ResourceType,ResourceId,ClientId,IpAddress,Success,ErrorMessage");
+        sb.AppendLine("Id,Timestamp,EventType,Category,Action,SubjectId,SubjectName,ResourceType,ResourceId,ClientId,OriginKind,OriginId,OriginName,IpAddress,Success,ErrorMessage");
 
         foreach (var item in items)
         {
-            sb.AppendLine($"{item.Id},{item.Timestamp:O},{Escape(item.EventType)},{Escape(item.Category)},{Escape(item.Action)},{Escape(item.SubjectId)},{Escape(item.SubjectName)},{Escape(item.ResourceType)},{Escape(item.ResourceId)},{Escape(item.ClientId)},{Escape(item.IpAddress)},{item.Success},{Escape(item.ErrorMessage)}");
+            sb.AppendLine($"{item.Id},{item.Timestamp:O},{Escape(item.EventType)},{Escape(item.Category)},{Escape(item.Action)},{Escape(item.SubjectId)},{Escape(item.SubjectName)},{Escape(item.ResourceType)},{Escape(item.ResourceId)},{Escape(item.ClientId)},{Escape(item.OriginKind)},{Escape(item.OriginId)},{Escape(item.OriginName)},{Escape(item.IpAddress)},{item.Success},{Escape(item.ErrorMessage)}");
         }
 
         return sb.ToString();
@@ -312,51 +327,3 @@ public class AuditLogsController : AdminBaseController
         return value;
     }
 }
-
-#region DTOs
-
-public class AuditLogStatusResponse
-{
-    public bool Enabled { get; set; }
-    public string? Message { get; set; }
-}
-
-public class AuditLogPaginatedResult
-{
-    public List<AuditLogDto> Items { get; set; } = new();
-    public int TotalCount { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
-    public int TotalPages { get; set; }
-}
-
-public class AuditLogDto
-{
-    public long Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; } = null!;
-    public string Category { get; set; } = null!;
-    public string? Action { get; set; }
-    public string? SubjectId { get; set; }
-    public string? SubjectName { get; set; }
-    public string? SubjectEmail { get; set; }
-    public string? ResourceType { get; set; }
-    public string? ResourceId { get; set; }
-    public string? ResourceName { get; set; }
-    public string? ClientId { get; set; }
-    public string? IpAddress { get; set; }
-    public string? UserAgent { get; set; }
-    public bool Success { get; set; }
-    public string? ErrorMessage { get; set; }
-    public string? Details { get; set; }
-    public string? Reason { get; set; }
-    public string? ActivityId { get; set; }
-}
-
-public class PurgeResult
-{
-    public int DeletedCount { get; set; }
-    public DateTime CutoffDate { get; set; }
-}
-
-#endregion

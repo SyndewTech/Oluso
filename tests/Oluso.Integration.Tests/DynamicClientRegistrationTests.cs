@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -25,6 +26,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
     public DynamicClientRegistrationTests(OlusoWebApplicationFactory factory)
         : base(factory)
     {
+        Client.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
     }
 
     public override async Task InitializeAsync()
@@ -239,6 +241,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         // Now retrieve it
         var getClient = Factory.CreateClient();
+        getClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         getClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", registered!.RegistrationAccessToken);
 
@@ -265,6 +268,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
     public async Task GetClient_WithInvalidToken_ReturnsUnauthorized()
     {
         var getClient = Factory.CreateClient();
+        getClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         getClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", "invalid-token");
 
@@ -291,6 +295,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         // Try to get client1 with client2's token
         var getClient = Factory.CreateClient();
+        getClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         getClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", client2!.RegistrationAccessToken);
 
@@ -318,6 +323,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         // Update it
         var updateClient = Factory.CreateClient();
+        updateClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         updateClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", registered!.RegistrationAccessToken);
 
@@ -349,6 +355,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         // Try to update with empty redirect URIs
         var updateClient = Factory.CreateClient();
+        updateClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         updateClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", registered!.RegistrationAccessToken);
 
@@ -379,6 +386,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         // Delete it
         var deleteClient = Factory.CreateClient();
+        deleteClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         deleteClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", registered!.RegistrationAccessToken);
 
@@ -402,6 +410,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
         var registered = await registerResponse.Content.ReadFromJsonAsync<DcrResponse>(JsonOptions);
 
         var managementClient = Factory.CreateClient();
+        managementClient.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
         managementClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", registered!.RegistrationAccessToken);
 
@@ -478,7 +487,7 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
         // Verify the client exists in the database and can be found
         await WithDbContextAsync(async db =>
         {
-            var client = await db.Clients.FindAsync(registered!.ClientId);
+            var client = await db.Clients.FirstOrDefaultAsync(c => c.ClientId == registered!.ClientId);
             client.Should().NotBeNull();
             client!.IsDynamicallyRegistered.Should().BeTrue();
             client.RequirePkce.Should().BeTrue(); // Should enforce PKCE by default

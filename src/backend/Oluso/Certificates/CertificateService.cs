@@ -175,7 +175,7 @@ public class CertificateService : ICertificateService
         var keyStorageFlags = OperatingSystem.IsMacOS()
             ? X509KeyStorageFlags.Exportable
             : X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable;
-        var cert = new X509Certificate2(pfxBytes, request.Password, keyStorageFlags);
+        var cert = X509CertificateLoader.LoadPkcs12(pfxBytes, request.Password, keyStorageFlags);
 
         if (!cert.HasPrivateKey)
         {

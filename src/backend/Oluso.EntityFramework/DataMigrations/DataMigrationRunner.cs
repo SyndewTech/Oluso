@@ -55,7 +55,7 @@ public class DataMigrationRunner
         // 2. Either AfterSchemaMigration is null (run after all), or the schema migration has been applied
         var pendingMigrations = allMigrations
             .Where(m => !appliedDataMigrations.Contains(m.MigrationId))
-            .Where(m => m.AfterSchemaMigration == null || appliedSchema.Contains(m.AfterSchemaMigration))
+            .Where(m => m.AfterSchemaMigration == null || MatchesAppliedSchema(m.AfterSchemaMigration, appliedSchema))
             .OrderBy(m => GetSchemaMigrationIndex(m.AfterSchemaMigration, appliedSchema))
             .ThenBy(m => m.Order)
             .ToList();
@@ -84,32 +84,29 @@ public class DataMigrationRunner
         if (schemaMigration == null)
             return int.MaxValue; // null = run after all schema migrations
 
-        // Find the index by sorting and finding position
+        // Find the index by sorting and finding position (supports suffix match)
         var sortedMigrations = appliedSchema.OrderBy(m => m).ToList();
-        var index = sortedMigrations.IndexOf(schemaMigration);
+        var index = sortedMigrations.FindIndex(m => MatchesSchemaMigration(schemaMigration, m));
         return index >= 0 ? index : int.MaxValue;
     }
 
     /// <summary>
-    /// Runs data migrations for all IMigratableDbContext instances.
+    /// Checks if any applied schema migration matches the given name.
+    /// Supports both exact match ("20260315133514_AddFoo") and suffix match ("AddFoo").
     /// </summary>
-    public async Task RunAllAsync(CancellationToken cancellationToken = default)
+    private static bool MatchesAppliedSchema(string afterSchemaMigration, HashSet<string> appliedSchema)
     {
-        // Get all migratable contexts
-        var migratableContexts = _services.GetServices<IMigratableDbContext>().ToList();
+        return appliedSchema.Any(m => MatchesSchemaMigration(afterSchemaMigration, m));
+    }
 
-        foreach (var migratable in migratableContexts)
-        {
-            if (migratable is DbContext context)
-            {
-                var contextType = context.GetType();
-                var method = typeof(DataMigrationRunner)
-                    .GetMethod(nameof(RunAsync))!
-                    .MakeGenericMethod(contextType);
-
-                await (Task)method.Invoke(this, new object?[] { context, null, cancellationToken })!;
-            }
-        }
+    /// <summary>
+    /// Matches a data migration's AfterSchemaMigration value against a full schema migration name.
+    /// Allows either exact match or suffix match after the timestamp prefix.
+    /// </summary>
+    private static bool MatchesSchemaMigration(string afterSchemaMigration, string fullSchemaMigrationName)
+    {
+        return afterSchemaMigration == fullSchemaMigrationName ||
+               fullSchemaMigrationName.EndsWith("_" + afterSchemaMigration, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -174,8 +171,12 @@ public class DataMigrationRunner
     /// </summary>
     private static bool ShouldRunAfterSchema(IDataMigration migration, string schemaMigrationName, string? schemaTimestamp)
     {
-        // Case 1: Exact AfterSchemaMigration match
-        if (migration.AfterSchemaMigration == schemaMigrationName)
+        // Case 1: AfterSchemaMigration match (exact or suffix after timestamp prefix)
+        // Schema migration names are "20260315133514_AddTenantConfigurationSections" — the timestamp
+        // varies by provider, so allow matching on just the description part (e.g., "AddTenantConfigurationSections").
+        if (migration.AfterSchemaMigration != null &&
+            (migration.AfterSchemaMigration == schemaMigrationName ||
+             schemaMigrationName.EndsWith("_" + migration.AfterSchemaMigration, StringComparison.Ordinal)))
         {
             return true;
         }
@@ -305,6 +306,22 @@ public class DataMigrationRunner
             assemblies.Add(entryAssembly);
         }
 
+        // Modules ship data migrations for contexts they don't own (a module's built-in roles live in the core
+        // context), so any loaded assembly that references the context's assembly is scanned too.
+        var contextAssemblyName = contextType.Assembly.GetName().Name;
+        foreach (var loaded in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            if (loaded.IsDynamic) continue;
+            try
+            {
+                if (loaded.GetReferencedAssemblies().Any(r => r.Name == contextAssemblyName)) assemblies.Add(loaded);
+            }
+            catch (Exception)
+            {
+                // An assembly whose references can't be read has no migrations of ours.
+            }
+        }
+
         foreach (var assembly in assemblies)
         {
             try
@@ -314,7 +331,7 @@ public class DataMigrationRunner
                     .Where(t =>
                     {
                         var attr = t.GetCustomAttribute<DataMigrationAttribute>();
-                        return attr == null || attr.ContextType == contextType || attr.ContextType.IsAssignableFrom(contextType);
+                        return attr != null && (attr.ContextType == contextType || attr.ContextType.IsAssignableFrom(contextType));
                     });
 
                 foreach (var type in migrationTypes)
@@ -392,7 +409,7 @@ public class DataMigrationRunner
         await context.Database.ExecuteSqlRawAsync(createSql, cancellationToken);
     }
 
-    private static async Task<HashSet<string>> GetAppliedMigrationsAsync<TContext>(
+    private async Task<HashSet<string>> GetAppliedMigrationsAsync<TContext>(
         TContext context,
         string contextTypeName,
         CancellationToken cancellationToken)
@@ -400,14 +417,24 @@ public class DataMigrationRunner
     {
         var tableName = GetHistoryTableName(context);
         var applied = new HashSet<string>();
+        var connection = context.Database.GetDbConnection();
+        var openedHere = false;
 
         try
         {
-            var connection = context.Database.GetDbConnection();
-            await connection.OpenAsync(cancellationToken);
+            if (connection.State != System.Data.ConnectionState.Open)
+            {
+                await connection.OpenAsync(cancellationToken);
+                openedHere = true;
+            }
 
             using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT MigrationId FROM \"{tableName}\" WHERE ContextType = @contextType";
+            // Quote column names — Postgres folds unquoted identifiers to
+            // lowercase and the history table stores them as "MigrationId" /
+            // "ContextType". Without quoting the SELECT fails silently and
+            // every data migration is treated as unapplied → re-run on every
+            // startup → eventual PK INSERT collision.
+            command.CommandText = $"SELECT \"MigrationId\" FROM \"{tableName}\" WHERE \"ContextType\" = @contextType";
 
             var param = command.CreateParameter();
             param.ParameterName = "@contextType";
@@ -420,12 +447,49 @@ public class DataMigrationRunner
                 applied.Add(reader.GetString(0));
             }
         }
-        catch
+        catch (Exception ex) when (IsMissingHistoryTable(ex))
         {
-            // Table might not exist yet, return empty set
+            // First-run case: history table not yet created. Return empty set
+            // so EnsureHistoryTableAsync (above) creates it and migrations run.
+            _logger?.LogDebug("Data migration history table '{Table}' does not exist yet; treating all migrations as pending.", tableName);
+        }
+        catch (Exception ex)
+        {
+            // Anything else (transient connection blip, permissions, schema
+            // drift) is rethrown — silently returning an empty set here
+            // causes the runner to re-run every migration and then collide
+            // on the PK INSERT, surfacing as a duplicate-key error several
+            // steps removed from the actual cause.
+            _logger?.LogError(ex, "Failed to read data migration history from '{Table}'", tableName);
+            throw;
+        }
+        finally
+        {
+            if (openedHere && connection.State == System.Data.ConnectionState.Open)
+            {
+                try { await connection.CloseAsync(); } catch { /* best-effort */ }
+            }
         }
 
         return applied;
+    }
+
+    /// <summary>
+    /// Detects "history table does not exist" errors across providers so the
+    /// catch above can be precise — Postgres 42P01, SQL Server 208,
+    /// SQLite "no such table". Anything else gets rethrown.
+    /// </summary>
+    private static bool IsMissingHistoryTable(Exception ex)
+    {
+        var message = ex.Message ?? string.Empty;
+        // Postgres: SqlState property on NpgsqlException; the string check is
+        // a fallback so we don't need a hard reference to Npgsql here.
+        if (message.Contains("42P01", StringComparison.Ordinal)) return true;
+        // SQL Server error 208 = invalid object name
+        if (message.Contains("Invalid object name", StringComparison.OrdinalIgnoreCase)) return true;
+        // SQLite
+        if (message.Contains("no such table", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     private static async Task RecordMigrationAsync<TContext>(
@@ -438,45 +502,78 @@ public class DataMigrationRunner
         var tableName = GetHistoryTableName(context);
         var providerName = context.Database.ProviderName ?? "";
 
+        // Idempotent INSERT — if the row already exists (e.g. a previous
+        // boot recorded it but the history-lookup briefly failed and we
+        // re-ran the migration's idempotent UpAsync), do nothing instead
+        // of throwing a duplicate-key error that masks the real story.
         string insertSql;
         if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
         {
             insertSql = $@"
+                IF NOT EXISTS (
+                    SELECT 1 FROM [{tableName}]
+                    WHERE [MigrationId] = @migrationId AND [ContextType] = @contextType)
                 INSERT INTO [{tableName}] ([MigrationId], [ContextType], [AppliedAt], [Description])
+                VALUES (@migrationId, @contextType, @appliedAt, @description)";
+        }
+        else if (providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            insertSql = $@"
+                INSERT OR IGNORE INTO ""{tableName}"" (""MigrationId"", ""ContextType"", ""AppliedAt"", ""Description"")
                 VALUES (@migrationId, @contextType, @appliedAt, @description)";
         }
         else
         {
+            // Postgres (Npgsql) and any provider that supports the standard
+            // ON CONFLICT clause.
             insertSql = $@"
                 INSERT INTO ""{tableName}"" (""MigrationId"", ""ContextType"", ""AppliedAt"", ""Description"")
-                VALUES (@migrationId, @contextType, @appliedAt, @description)";
+                VALUES (@migrationId, @contextType, @appliedAt, @description)
+                ON CONFLICT (""MigrationId"", ""ContextType"") DO NOTHING";
         }
 
         var connection = context.Database.GetDbConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = insertSql;
+        var openedHere = false;
+        try
+        {
+            if (connection.State != System.Data.ConnectionState.Open)
+            {
+                await connection.OpenAsync(cancellationToken);
+                openedHere = true;
+            }
 
-        var p1 = command.CreateParameter();
-        p1.ParameterName = "@migrationId";
-        p1.Value = migration.MigrationId;
-        command.Parameters.Add(p1);
+            using var command = connection.CreateCommand();
+            command.CommandText = insertSql;
 
-        var p2 = command.CreateParameter();
-        p2.ParameterName = "@contextType";
-        p2.Value = contextTypeName;
-        command.Parameters.Add(p2);
+            var p1 = command.CreateParameter();
+            p1.ParameterName = "@migrationId";
+            p1.Value = migration.MigrationId;
+            command.Parameters.Add(p1);
 
-        var p3 = command.CreateParameter();
-        p3.ParameterName = "@appliedAt";
-        p3.Value = DateTime.UtcNow;
-        command.Parameters.Add(p3);
+            var p2 = command.CreateParameter();
+            p2.ParameterName = "@contextType";
+            p2.Value = contextTypeName;
+            command.Parameters.Add(p2);
 
-        var p4 = command.CreateParameter();
-        p4.ParameterName = "@description";
-        p4.Value = migration.Description;
-        command.Parameters.Add(p4);
+            var p3 = command.CreateParameter();
+            p3.ParameterName = "@appliedAt";
+            p3.Value = DateTime.UtcNow;
+            command.Parameters.Add(p3);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+            var p4 = command.CreateParameter();
+            p4.ParameterName = "@description";
+            p4.Value = migration.Description;
+            command.Parameters.Add(p4);
+
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            if (openedHere && connection.State == System.Data.ConnectionState.Open)
+            {
+                try { await connection.CloseAsync(); } catch { /* best-effort */ }
+            }
+        }
     }
 
     private static string GetHistoryTableName<TContext>(TContext context) where TContext : DbContext

@@ -51,57 +51,132 @@ public static class ExternalAuthenticationExtensions
         var options = new DynamicExternalProviderOptions();
         configure?.Invoke(options);
 
+        // Expose the options to downstream consumers (DynamicAuthenticationSchemeProvider,
+        // DynamicOAuthPostConfigureOptions) so they can read AllowTenantOverrides at runtime.
+        if (configure != null)
+        {
+            builder.Services.Configure(configure);
+        }
+        else
+        {
+            builder.Services.AddOptions<DynamicExternalProviderOptions>();
+        }
+
         // IHttpContextAccessor is needed for DynamicOAuthPostConfigureOptions to resolve scoped services
         builder.Services.AddHttpContextAccessor();
 
-        // Register caches as singletons
-        builder.Services.TryAddSingleton<DynamicSchemeCache>();
-        builder.Services.TryAddSingleton<DynamicOptionsCache>();
+        // Caches use CacheDurationMinutes for entry expiry. Captured by value
+        // here so configure-time changes drive the singleton lifetime.
+        var cacheExpiry = TimeSpan.FromMinutes(options.CacheDurationMinutes);
+        builder.Services.TryAddSingleton(_ => new DynamicSchemeCache(cacheExpiry));
+        builder.Services.TryAddSingleton(_ => new DynamicOptionsCache(cacheExpiry));
+        builder.Services.TryAddSingleton<ExternalSchemeCacheInvalidator>();
+        builder.Services.TryAddSingleton<Oluso.Core.Services.IExternalSchemeCacheInvalidator>(sp =>
+            sp.GetRequiredService<ExternalSchemeCacheInvalidator>());
 
         // Replace the default authentication scheme provider with our dynamic one
         // Must be singleton because ASP.NET Core resolves it during startup from root provider
         builder.Services.AddSingleton<IAuthenticationSchemeProvider, DynamicAuthenticationSchemeProvider>();
 
-        // Register post-configure options for all supported provider types
-        builder.Services.TryAddSingleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.Google.GoogleOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.MicrosoftAccount.MicrosoftAccountOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.Facebook.FacebookOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.Twitter.TwitterOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<AspNet.Security.OAuth.GitHub.GitHubAuthenticationOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<AspNet.Security.OAuth.LinkedIn.LinkedInAuthenticationOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<AspNet.Security.OAuth.Apple.AppleAuthenticationOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<OpenIdConnectOptions>, DynamicOAuthPostConfigureOptions>();
-        builder.Services.TryAddSingleton<IPostConfigureOptions<OAuthOptions>, DynamicOAuthPostConfigureOptions>();
+        // Apple package's AddApple registers its ApplePostConfigureOptions via
+        // TryAddSingleton<IPostConfigureOptions<AppleAuthenticationOptions>, ...>,
+        // which becomes a no-op once any IPostConfigureOptions<AppleAuthenticationOptions>
+        // is already in DI — and our DynamicOAuthPostConfigureOptions registration
+        // below would shadow it. Without ApplePostConfigureOptions running,
+        // ConfigurationManager is never built from MetadataEndpoint, the
+        // ClientSecretGenerator / TokenValidator / TokenValidationParameters stay
+        // null, and AppleAuthenticationOptions.Validate() throws the misleading
+        // "MetadataEndpoint, or ConfigurationManager option must be provided"
+        // (the v10 check is actually ConfigurationManager == null only).
+        // Register Apple's PostConfigure ourselves via TryAddEnumerable so both
+        // coexist; Apple's runs first (builds ConfigurationManager), ours layers
+        // tenant-specific values on top.
+        builder.Services.AddMemoryCache();
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<AspNet.Security.OAuth.Apple.AppleAuthenticationOptions>, AspNet.Security.OAuth.Apple.ApplePostConfigureOptions>());
+
+        // Our PostConfigure handlers — load tenant-specific config from
+        // the database for each scheme. Use TryAddEnumerable so the
+        // framework's PostConfigure (registered by the AddXxx placeholder
+        // calls below) coexists with ours in the same
+        // IEnumerable<IPostConfigureOptions<T>> the runtime resolves.
+        // Both run per scheme: framework's fills in StringDataFormat /
+        // StateDataFormat / ProtocolValidator / etc.; ours layers
+        // tenant-specific ClientId / ClientSecret / endpoint overrides
+        // on top.
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.Google.GoogleOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.MicrosoftAccount.MicrosoftAccountOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.Facebook.FacebookOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<Microsoft.AspNetCore.Authentication.Twitter.TwitterOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<AspNet.Security.OAuth.GitHub.GitHubAuthenticationOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<AspNet.Security.OAuth.LinkedIn.LinkedInAuthenticationOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<AspNet.Security.OAuth.Apple.AppleAuthenticationOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<OpenIdConnectOptions>, DynamicOAuthPostConfigureOptions>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<OAuthOptions>, DynamicOAuthPostConfigureOptions>());
 
         // Register IExternalAuthService if not already registered
         builder.Services.TryAddScoped<IExternalAuthService, IdentityExternalAuthService>();
 
-        // Register placeholder handlers for dynamic schemes
-        // These are registered with placeholder credentials to pass startup validation.
-        // Real credentials are loaded from database via PostConfigure at runtime.
+        // Register placeholder handlers for dynamic schemes.
+        // These are registered with placeholder credentials to pass startup
+        // validation. Real credentials are loaded from database per-tenant
+        // via DynamicOAuthPostConfigureOptions at runtime.
+        //
+        // The CRITICAL side-effect of these AddXxx calls is that each one
+        // registers the framework's typed PostConfigureOptions (e.g.
+        // OAuthPostConfigureOptions<GoogleOptions, GoogleHandler>,
+        // OpenIdConnectPostConfigureOptions). Those handlers run for ALL
+        // options of that type — including dynamic per-tenant schemes —
+        // and fill in StringDataFormat / StateDataFormat / ProtocolValidator
+        // / ConfigurationManager. Without them, dynamic schemes hit a
+        // NullReferenceException in the auth handler (e.g. in
+        // OpenIdConnectHandler.WriteNonceCookie when StringDataFormat is
+        // null). Adding/removing entries here directly affects which
+        // dynamic provider types work end-to-end.
         if (options.RegisterPlaceholderSchemes)
         {
-            const string placeholder = "__dynamic_placeholder__";
+            const string placeholder = ExternalAuthPlaceholders.Credential;
             builder.Services.AddAuthentication()
                 .AddGoogle("Google", opt => { opt.ClientId = placeholder; opt.ClientSecret = placeholder; })
                 .AddMicrosoftAccount("Microsoft", opt => { opt.ClientId = placeholder; opt.ClientSecret = placeholder; })
                 .AddFacebook("Facebook", opt => { opt.AppId = placeholder; opt.AppSecret = placeholder; })
                 .AddTwitter("Twitter", opt => { opt.ConsumerKey = placeholder; opt.ConsumerSecret = placeholder; })
                 .AddGitHub("GitHub", opt => { opt.ClientId = placeholder; opt.ClientSecret = placeholder; })
-                .AddLinkedIn("LinkedIn", opt => { opt.ClientId = placeholder; opt.ClientSecret = placeholder; });
-                // .AddApple("Apple", opt =>
-                // {
-                //     opt.ClientId = placeholder;
-                //     opt.ClientSecret = placeholder;
-                //     opt.TeamId = placeholder;
-                //     opt.KeyId = placeholder;
-                //     // Apple requires a valid URL for MetadataEndpoint - use the real Apple endpoint
-                //     // since it's public metadata that doesn't require credentials
-                //     opt.MetadataEndpoint = "https://appleid.apple.com/.well-known/openid-configuration";
-                //     // Provide a dummy private key loader that will be replaced by PostConfigure
-                //     opt.PrivateKey = (keyId, ct) => Task.FromResult(ReadOnlyMemory<char>.Empty);
-                //     opt.GenerateClientSecret = false; // Disable until real config is loaded
-                // });
+                .AddLinkedIn("LinkedIn", opt => { opt.ClientId = placeholder; opt.ClientSecret = placeholder; })
+                .AddOpenIdConnect("Oidc", opt =>
+                {
+                    // Authority is required by OIDC even at startup — using
+                    // a non-resolving placeholder URL keeps the handler from
+                    // hitting a real metadata endpoint until our PostConfigure
+                    // overrides Authority/MetadataAddress per-tenant at runtime.
+                    opt.Authority = ExternalAuthPlaceholders.OidcAuthority;
+                    opt.ClientId = placeholder;
+                    opt.ClientSecret = placeholder;
+                    opt.RequireHttpsMetadata = false;
+                })
+                .AddApple("Apple", opt =>
+                {
+                    // Apple uses a JWT-based client_secret generated from a
+                    // .p8 PrivateKey. The actual JWT is created at challenge
+                    // time and replaces ClientSecret; the placeholder string
+                    // here exists solely to satisfy the OAuthOptions.Validate
+                    // call in AppleAuthenticationOptions.Validate, which
+                    // (in the package version we depend on) calls base
+                    // unconditionally regardless of GenerateClientSecret.
+                    // ConfigureAppleOptionsAsync overrides everything per
+                    // tenant at runtime.
+                    opt.ClientId = placeholder;
+                    opt.ClientSecret = placeholder;
+                    opt.TeamId = placeholder;
+                    opt.KeyId = placeholder;
+                    opt.GenerateClientSecret = true;
+                    opt.PrivateKey = (keyId, ct) => Task.FromResult(ReadOnlyMemory<char>.Empty);
+                    // Apple's discovery is public (no credentials needed)
+                    // so pointing at the real metadata endpoint is safe
+                    // even for the placeholder scheme. Required to satisfy
+                    // AppleAuthenticationOptions.Validate which insists
+                    // either MetadataEndpoint or ConfigurationManager is set.
+                    opt.MetadataEndpoint = "https://appleid.apple.com/.well-known/openid-configuration";
+                });
         }
 
         return builder;

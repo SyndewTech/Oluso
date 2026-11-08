@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Core.Common;
@@ -20,21 +21,21 @@ public class BearerTokenValidator : IBearerTokenValidator
 {
     private readonly ISigningCredentialStore _signingCredentialStore;
     private readonly IPersistedGrantStore _grantStore;
-    private readonly IIssuerResolver _issuerResolver;
     private readonly IDPoPProofValidator _dpopValidator;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<BearerTokenValidator> _logger;
 
     public BearerTokenValidator(
         ISigningCredentialStore signingCredentialStore,
         IPersistedGrantStore grantStore,
-        IIssuerResolver issuerResolver,
         IDPoPProofValidator dpopValidator,
+        IConfiguration configuration,
         ILogger<BearerTokenValidator> logger)
     {
         _signingCredentialStore = signingCredentialStore;
         _grantStore = grantStore;
-        _issuerResolver = issuerResolver;
         _dpopValidator = dpopValidator;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -169,7 +170,10 @@ public class BearerTokenValidator : IBearerTokenValidator
                 "Invalid token format");
         }
 
-        // Get validation keys
+        // Signing key lookup: BearerTokenTenantResolverMiddleware has set
+        // ITenantContext from the token's tenant_id claim before this is
+        // reached, so the credential store returns the right tenant's keys
+        // via the plain GetValidationKeysAsync.
         var validationKeys = await _signingCredentialStore.GetValidationKeysAsync(cancellationToken);
         if (validationKeys == null || !validationKeys.Any())
         {
@@ -179,18 +183,28 @@ public class BearerTokenValidator : IBearerTokenValidator
                 "Token validation unavailable");
         }
 
-        var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
+        // Accept any iss that's ours: the configured base URL, or any
+        // subdomain of it (per-tenant auto-issuer). Signature still
+        // gates the request — this only ensures the issuer claim was
+        // minted by something we recognise as part of this deployment.
+        var configuredBase = _configuration["Oluso:IssuerUri"];
 
         var validationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
             IssuerSigningKeys = validationKeys.Select(k => k.Key),
             ValidateIssuer = true,
-            ValidIssuer = issuer,
+            IssuerValidator = (issuer, _, _) =>
+            {
+                if (IsKnownIssuer(issuer, configuredBase)) return issuer;
+                throw new SecurityTokenInvalidIssuerException(
+                    $"Issuer '{issuer}' is not recognised");
+            },
             ValidateAudience = !string.IsNullOrEmpty(context.ExpectedAudience),
             ValidAudience = context.ExpectedAudience,
             ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromMinutes(1)
+            ClockSkew = TimeSpan.FromMinutes(1),
+            TypeValidator = Oluso.Protocols.Validation.AccessTokenTypes.Validate
         };
 
         try
@@ -360,6 +374,23 @@ public class BearerTokenValidator : IBearerTokenValidator
         }
 
         return new ValidationResult();
+    }
+
+    private static bool IsKnownIssuer(string? tokenIssuer, string? configuredBase)
+    {
+        if (string.IsNullOrEmpty(tokenIssuer) || string.IsNullOrEmpty(configuredBase))
+            return false;
+
+        var trimmedBase = configuredBase.TrimEnd('/');
+        if (string.Equals(tokenIssuer, trimmedBase, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!Uri.TryCreate(trimmedBase, UriKind.Absolute, out var baseUri)) return false;
+        if (!Uri.TryCreate(tokenIssuer, UriKind.Absolute, out var issUri)) return false;
+
+        return string.Equals(issUri.Scheme, baseUri.Scheme, StringComparison.OrdinalIgnoreCase)
+            && issUri.Port == baseUri.Port
+            && issUri.Host.EndsWith("." + baseUri.Host, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

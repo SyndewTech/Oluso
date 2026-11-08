@@ -20,6 +20,8 @@ public class LdapDbContext : PluginDbContextBase<LdapDbContext>
     /// <inheritdoc />
     protected override string PluginName => PluginIdentifier;
 
+    protected override string? TablePrefix => "";
+
     /// <inheritdoc />
     /// <remarks>
     /// LDAP context has order 60 (after core and SCIM, before other plugins at 100)
@@ -45,9 +47,8 @@ public class LdapDbContext : PluginDbContextBase<LdapDbContext>
 
     public DbSet<LdapServiceAccount> LdapServiceAccounts => Set<LdapServiceAccount>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyLdapConfiguration();
     }
 }

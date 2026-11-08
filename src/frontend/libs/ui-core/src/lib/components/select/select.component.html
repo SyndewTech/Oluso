@@ -1,0 +1,86 @@
+<div class="relative">
+  <!-- Trigger button -->
+  <button
+    type="button"
+    (click)="toggle()"
+    [disabled]="disabled()"
+    class="relative w-full cursor-default rounded-md border border-gray-300 bg-white py-2 pl-3 pr-9 text-left shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 sm:text-sm disabled:bg-gray-50 disabled:cursor-not-allowed"
+  >
+    @if (selectedOption(); as opt) {
+      <span class="block truncate text-gray-900">{{ opt.label }}</span>
+      @if (opt.subLabel) {
+        <span class="block truncate text-xs text-gray-400 -mt-0.5">{{ opt.subLabel }}</span>
+      }
+    } @else {
+      <span class="block truncate text-gray-400">{{ placeholder() }}</span>
+    }
+
+    <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 gap-0.5">
+      @if (clearable() && value()) {
+        <button
+          type="button"
+          class="pointer-events-auto p-0.5 text-gray-400 hover:text-gray-600 rounded"
+          (click)="clear($event)"
+        >
+          <ui-icon name="x-mark" class="h-3.5 w-3.5" />
+        </button>
+      }
+      <ui-icon name="chevron-down" class="h-4 w-4 text-gray-400" />
+    </span>
+  </button>
+
+  <!-- Dropdown panel -->
+  @if (isOpen()) {
+    <div
+      class="absolute z-50 mt-1 w-full rounded-md bg-white shadow-lg border border-gray-200 overflow-hidden"
+      (click)="$event.stopPropagation()"
+    >
+      <!-- Search input -->
+      <div class="p-2 border-b border-gray-100">
+        <input
+          data-search
+          type="text"
+          [value]="searchQuery()"
+          (input)="onSearch($event)"
+          [placeholder]="searchPlaceholder()"
+          class="block w-full rounded border-gray-300 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500 py-1.5"
+        />
+      </div>
+
+      <!-- Options -->
+      <ul class="max-h-56 overflow-y-auto py-1" role="listbox">
+        @if (loading()) {
+          <li class="px-3 py-2 text-sm text-gray-400 flex items-center gap-2">
+            <div class="h-3.5 w-3.5 border-2 border-gray-300 border-t-primary-500 rounded-full animate-spin"></div>
+            Loading…
+          </li>
+        } @else if (filteredOptions().length === 0) {
+          <li class="px-3 py-2 text-sm text-gray-400">No options found.</li>
+        } @else {
+          @for (option of filteredOptions(); track option.value; let i = $index) {
+            <li
+              role="option"
+              [attr.aria-selected]="option.value === value()"
+              [class]="'relative select-none px-3 py-2 text-sm ' + optionClass(option, i)"
+              (click)="select(option)"
+              (mouseenter)="highlightedIndex.set(i)"
+            >
+              <span class="block truncate" [class.font-medium]="option.value === value()">{{ option.label }}</span>
+              @if (option.subLabel) {
+                <span class="block truncate text-xs opacity-60">{{ option.subLabel }}</span>
+              }
+              @if (option.value === value()) {
+                <span class="absolute inset-y-0 right-2 flex items-center">
+                  <ui-icon name="check" class="h-4 w-4 text-primary-600" />
+                </span>
+              }
+            </li>
+          }
+        }
+      </ul>
+      @if (hint() && !loading() && filteredOptions().length > 0) {
+        <div class="px-3 py-1.5 text-xs text-gray-400 border-t border-gray-100">{{ hint() }}</div>
+      }
+    </div>
+  }
+</div>

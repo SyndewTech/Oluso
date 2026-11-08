@@ -1,0 +1,1563 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div class="flex items-center space-x-4">
+      <button (click)="goBack()" class="text-gray-500 hover:text-gray-700">
+        <ui-icon name="arrow-left" class="h-5 w-5" />
+      </button>
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">
+          {{ isNew() ? 'Create User Journey' : 'Edit User Journey' }}
+        </h1>
+        <p class="mt-1 text-sm text-gray-500">
+          Define the steps users will go through during authentication
+        </p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-3">
+      @if (!isNew() && canPublish()) {
+        <label class="flex items-center gap-2 text-sm text-gray-700 select-none mr-2"
+               [class.cursor-pointer]="!togglingStatus()" [class.opacity-60]="togglingStatus()"
+               [title]="policy().enabled ? 'Journey is live for users' : 'Journey is disabled'">
+          <span class="relative inline-flex items-center">
+            <input type="checkbox" class="sr-only peer" [checked]="policy().enabled" [disabled]="togglingStatus()" (change)="toggleEnabled()" />
+            <div class="w-9 h-5 bg-gray-200 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary-300 peer-checked:bg-green-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-disabled:opacity-50"></div>
+          </span>
+          {{ policy().enabled ? 'Enabled' : 'Disabled' }}
+        </label>
+      }
+      @if (!isNew()) {
+        <ui-button variant="secondary" (clicked)="exportPolicy()" title="Download as a .journey file">
+          <ui-icon name="arrow-down-tray" class="h-4 w-4 mr-2" />
+          Export
+        </ui-button>
+      }
+      <ui-button variant="secondary" (clicked)="validate()" [disabled]="validating()">
+        @if (validating()) {
+          <svg class="h-4 w-4 animate-spin mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        }
+        Validate
+      </ui-button>
+      <ui-button (clicked)="save()" [disabled]="saving() || !isDirty()">
+        {{ saving() ? 'Saving...' : 'Save' }}
+      </ui-button>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="animate-pulse">Loading...</div>
+  } @else {
+    <!-- Validation Errors -->
+    @if (validationErrors().length > 0) {
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div class="flex items-center">
+          <ui-icon name="exclamation-circle" class="h-5 w-5 text-red-400 mr-2" />
+          <h3 class="text-sm font-medium text-red-800">Validation Errors</h3>
+        </div>
+        <ul class="mt-2 list-disc list-inside text-sm text-red-700">
+          @for (error of validationErrors(); track error) {
+            <li>{{ error }}</li>
+          }
+        </ul>
+      </div>
+    }
+
+    @if (validationWarnings().length > 0) {
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div class="flex items-center">
+          <ui-icon name="exclamation-triangle" class="h-5 w-5 text-yellow-500 mr-2" />
+          <h3 class="text-sm font-medium text-yellow-800">Warnings</h3>
+        </div>
+        <ul class="mt-2 list-disc list-inside text-sm text-yellow-700">
+          @for (warning of validationWarnings(); track warning) {
+            <li>{{ warning }}</li>
+          }
+        </ul>
+        <p class="mt-2 text-xs text-yellow-600">These don't block save, but worth a look — they often indicate runtime surprises.</p>
+      </div>
+    }
+
+    @if (validationRan() && validationErrors().length === 0 && validationWarnings().length === 0) {
+      <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div class="flex items-center">
+          <ui-icon name="check-circle" class="h-5 w-5 text-green-500 mr-2" />
+          <h3 class="text-sm font-medium text-green-800">All checks passed</h3>
+        </div>
+        <p class="mt-1 text-xs text-green-700">No errors or warnings detected. Edit any step to revalidate.</p>
+      </div>
+    }
+
+    <div class="grid grid-cols-12 gap-6">
+      <!-- Left Panel - Policy Info & Steps -->
+      <div class="col-span-5">
+        <ui-card>
+          <div class="px-4 py-3 border-b border-gray-200">
+            <h3 class="text-lg font-medium text-gray-900">Journey Flow</h3>
+          </div>
+          <div class="px-4 py-5">
+            <!-- Policy Info -->
+            <div class="mb-6 space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700">Name</label>
+                <input
+                  type="text"
+                  [ngModel]="policy().name || ''"
+                  (ngModelChange)="onNameChange($event)"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  placeholder="My Sign-In Journey"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700">Slug</label>
+                <input
+                  type="text"
+                  [ngModel]="policy().slug || ''"
+                  (ngModelChange)="onSlugChange($event)"
+                  [attr.maxlength]="slugMaxLength"
+                  [attr.aria-invalid]="!!slugError()"
+                  class="mt-1 block w-full rounded-md border-gray-300 font-mono shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  placeholder="my-sign-in-journey"
+                />
+                @if (slugError(); as error) {
+                  <p class="mt-1 text-sm text-red-600">{{ error }}</p>
+                } @else {
+                  <p class="mt-1 text-xs text-gray-500">
+                    How clients name this journey (?policy=, share links).
+                    @if (!isNew()) { Changing it breaks links that use the current slug. }
+                  </p>
+                }
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Type</label>
+                  <select
+                    [ngModel]="policy().type || 'SignIn'"
+                    (ngModelChange)="updatePolicy({ type: $event })"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <optgroup label="Authentication">
+                      <option value="SignIn">Sign In</option>
+                      <option value="SignUp">Sign Up</option>
+                      <option value="SignInSignUp">Sign In / Sign Up</option>
+                      <option value="PasswordReset">Password Reset</option>
+                      <option value="ProfileEdit">Profile Edit</option>
+                      <option value="LinkAccount">Link Account</option>
+                      <option value="Consent">Consent</option>
+                    </optgroup>
+                    <optgroup label="Data Collection (No Auth)">
+                      <option value="Waitlist">Waitlist</option>
+                      <option value="ContactForm">Contact Form</option>
+                      <option value="Survey">Survey</option>
+                      <option value="Feedback">Feedback</option>
+                      <option value="DataCollection">Data Collection</option>
+                    </optgroup>
+                    <optgroup label="Other">
+                      <option value="Custom">Custom</option>
+                    </optgroup>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Priority</label>
+                  <input
+                    type="number"
+                    [ngModel]="policy().priority || 100"
+                    (ngModelChange)="updatePolicy({ priority: $event })"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- UI Configuration -->
+            <div class="border-t pt-4">
+              <details class="group">
+                <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                  <span>UI Customization</span>
+                </summary>
+                <div class="mt-3 space-y-3">
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Theme</label>
+                      <select
+                        [ngModel]="policy().ui?.theme || ''"
+                        (ngModelChange)="updatePolicy({ ui: { ...policy().ui, theme: $event || undefined } })"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                      >
+                        <option value="">Default</option>
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                        <option value="minimal">Minimal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Step Indicator</label>
+                      <select
+                        [ngModel]="policy().ui?.progressStyle || ''"
+                        (ngModelChange)="updatePolicy({ ui: { ...policy().ui, progressStyle: $event || undefined } })"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                      >
+                        <option value="">Horizontal (default)</option>
+                        <option value="vertical">Vertical</option>
+                        <option value="none">None</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Layout Width</label>
+                      <select
+                        [ngModel]="policy().ui?.layout || ''"
+                        (ngModelChange)="updatePolicy({ ui: { ...policy().ui, layout: $event || undefined } })"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                      >
+                        <option value="">Narrow (default)</option>
+                        <option value="medium">Medium</option>
+                        <option value="wide">Wide</option>
+                        <option value="full">Full width</option>
+                      </select>
+                      <p class="mt-1 text-[11px] text-gray-400">Journey-wide default. Individual steps can override this.</p>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Logo URL</label>
+                      <input
+                        type="text"
+                        [ngModel]="policy().ui?.logoUrl || ''"
+                        (ngModelChange)="updatePolicy({ ui: { ...policy().ui, logoUrl: $event || undefined } })"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        placeholder="https://..."
+                      />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Page Title</label>
+                      <input
+                        type="text"
+                        [ngModel]="policy().ui?.title || ''"
+                        (ngModelChange)="updatePolicy({ ui: { ...policy().ui, title: $event || undefined } })"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        placeholder="Sign in to continue"
+                      />
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Primary Color</label>
+                      <div class="mt-1 flex items-center space-x-2">
+                        <input
+                          type="color"
+                          [ngModel]="policy().ui?.primaryColor || '#3b82f6'"
+                          (ngModelChange)="updatePolicy({ ui: { ...policy().ui, primaryColor: $event } })"
+                          class="h-8 w-8 rounded border border-gray-300 cursor-pointer"
+                        />
+                        <input
+                          type="text"
+                          [ngModel]="policy().ui?.primaryColor || ''"
+                          (ngModelChange)="updatePolicy({ ui: { ...policy().ui, primaryColor: $event || undefined } })"
+                          class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="#3b82f6"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Background Color</label>
+                      <div class="mt-1 flex items-center space-x-2">
+                        <input
+                          type="color"
+                          [ngModel]="policy().ui?.backgroundColor || '#ffffff'"
+                          (ngModelChange)="updatePolicy({ ui: { ...policy().ui, backgroundColor: $event } })"
+                          class="h-8 w-8 rounded border border-gray-300 cursor-pointer"
+                        />
+                        <input
+                          type="text"
+                          [ngModel]="policy().ui?.backgroundColor || ''"
+                          (ngModelChange)="updatePolicy({ ui: { ...policy().ui, backgroundColor: $event || undefined } })"
+                          class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="#ffffff"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-600">Custom CSS</label>
+                    <textarea
+                      [ngModel]="policy().ui?.customCss || ''"
+                      (ngModelChange)="updatePolicy({ ui: { ...policy().ui, customCss: $event || undefined } })"
+                      rows="3"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono text-xs"
+                      placeholder=".journey-container { border-radius: 12px; }"
+                    ></textarea>
+                  </div>
+
+                  <!-- String Overrides -->
+                  @if (!isNew()) {
+                    <details class="mt-4 border border-gray-200 rounded-md">
+                      <summary class="flex items-center justify-between text-xs font-medium text-gray-600 p-3 hover:bg-gray-50 cursor-pointer">
+                        <span>String Overrides</span>
+                        <span class="text-gray-400 text-[11px]">Override UI text for this journey</span>
+                      </summary>
+                      <div class="p-3 border-t bg-gray-50">
+                        <admin-locale-override-editor
+                          scope="journey"
+                          [scopeId]="policyId()"
+                        />
+                      </div>
+                    </details>
+                  }
+                </div>
+              </details>
+            </div>
+
+            <!-- Ownership -->
+            <div class="border-t pt-4">
+              <details class="group" [open]="!!policy().ownerModule">
+                <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                  <span>Ownership</span>
+                  <span class="text-xs font-normal text-gray-500">{{ policy().ownerModule ? (policy().ownerModuleName || policy().ownerModule) : 'Platform' }}</span>
+                </summary>
+                <div class="mt-3 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div>
+                    <label for="ownerModule" class="block text-xs font-medium text-gray-600">Owned by</label>
+                    <select
+                      id="ownerModule"
+                      class="mt-1 block w-full rounded-md border-gray-300 text-sm focus:border-primary-500 focus:ring-primary-500"
+                      [ngModel]="policy().ownerModule ?? ''"
+                      (ngModelChange)="updatePolicy({ ownerModule: $event || null })"
+                      [disabled]="!canChangeOwner()"
+                    >
+                      <option value="">Platform (no module)</option>
+                      @for (m of ownerOptions(); track m.key) {
+                        <option [value]="m.key">{{ m.name }}</option>
+                      }
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500">
+                      @if (policy().ownerModule) {
+                        Answers go only to this module. Data Collection shows when each submission arrived and its status, never the answers.
+                      } @else {
+                        Answers are saved here and shown in Data Collection.
+                      }
+                    </p>
+                    @if (!canChangeOwner()) {
+                      <p class="mt-1 text-xs text-amber-700">Only an administrator of this module can change who owns it.</p>
+                    }
+                  </div>
+                  @if (policy().ownerModule) {
+                    <div>
+                      <span class="block text-xs font-medium text-gray-600">Who can use it</span>
+                      <div class="mt-1 space-y-1.5">
+                        <label class="flex items-start gap-2 text-sm text-gray-700">
+                          <input type="radio" name="journeySharing" value="Private" class="mt-0.5 text-primary-600 focus:ring-primary-500"
+                            [ngModel]="policy().sharing ?? 'Private'" (ngModelChange)="updatePolicy({ sharing: $event })" [disabled]="!canChangeOwner()" />
+                          <span>Only this module</span>
+                        </label>
+                        <label class="flex items-start gap-2 text-sm text-gray-700">
+                          <input type="radio" name="journeySharing" value="Shared" class="mt-0.5 text-primary-600 focus:ring-primary-500"
+                            [ngModel]="policy().sharing ?? 'Private'" (ngModelChange)="updatePolicy({ sharing: $event })" [disabled]="!canChangeOwner()" />
+                          <span>Shared with other modules <span class="block text-xs text-gray-500">Each submission's answers go to the module that started it.</span></span>
+                        </label>
+                      </div>
+                    </div>
+                  }
+                </div>
+              </details>
+            </div>
+
+            <!-- Data Collection Settings -->
+            @if (isDataCollectionType()) {
+              <div class="border-t pt-4">
+                <details class="group">
+                  <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                    <span>Data Collection Settings</span>
+                  </summary>
+                  <div class="mt-3 space-y-3 bg-pink-50 border border-pink-200 rounded-lg p-3">
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="persistSubmissions"
+                        [ngModel]="policy().persistSubmissions ?? true"
+                        (ngModelChange)="updatePolicy({ persistSubmissions: $event })"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <label for="persistSubmissions" class="ml-2 text-sm text-gray-700">
+                        Save form submissions
+                      </label>
+                    </div>
+
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="requiresAuth"
+                        [ngModel]="policy().requiresAuthentication ?? false"
+                        (ngModelChange)="updatePolicy({ requiresAuthentication: $event })"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <label for="requiresAuth" class="ml-2 text-sm text-gray-700">
+                        Require authentication
+                      </label>
+                    </div>
+
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="allowDuplicates"
+                        [ngModel]="policy().allowDuplicates ?? false"
+                        (ngModelChange)="updatePolicy({ allowDuplicates: $event })"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <label for="allowDuplicates" class="ml-2 text-sm text-gray-700">
+                        Allow duplicate submissions
+                      </label>
+                    </div>
+
+                    @if (!policy().allowDuplicates) {
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Duplicate check fields</label>
+                        <input
+                          type="text"
+                          [value]="getDuplicateCheckFieldsString()"
+                          (input)="onDuplicateCheckFieldsChange($any($event.target).value)"
+                          placeholder="email, phone"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        />
+                      </div>
+                    }
+
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Max submissions</label>
+                        <input
+                          type="number"
+                          [ngModel]="policy().maxSubmissions ?? 0"
+                          (ngModelChange)="updatePolicy({ maxSubmissions: $event })"
+                          min="0"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        />
+                        <p class="mt-1 text-xs text-gray-500">0 = unlimited</p>
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Collection name</label>
+                        <input
+                          type="text"
+                          [ngModel]="policy().submissionCollection || ''"
+                          (ngModelChange)="updatePolicy({ submissionCollection: $event || undefined })"
+                          placeholder="Defaults to policy ID"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Success redirect URL</label>
+                      <input
+                        type="text"
+                        [ngModel]="policy().successRedirectUrl || ''"
+                        (ngModelChange)="updatePolicy({ successRedirectUrl: $event || undefined })"
+                        placeholder="https://yoursite.com/thank-you"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Success message</label>
+                      <div class="relative mt-1">
+                        <textarea
+                          [ngModel]="getFieldLocalized($any(policy()), 'successMessage')"
+                          (ngModelChange)="updatePolicyLocalized('successMessage', $event)"
+                          rows="2"
+                          [placeholder]="getFieldLocalizedPlaceholder($any(policy()), 'successMessage', 'Thank you for your submission!')"
+                          class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                        ></textarea>
+                        <span class="absolute right-2 top-2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            }
+
+            <!-- Embed Settings -->
+            <div class="border-t pt-4">
+              <details class="group">
+                <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                  <span>Embed Settings</span>
+                </summary>
+                <div class="mt-3 space-y-3 bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                  <p class="text-xs text-gray-500 mb-2">Configure which origins can embed this journey via the SDK modal (iframe-based).</p>
+                  <p class="text-xs text-gray-500 mb-2">
+                    If the journey takes photos or documents with the camera (a file field with "Take a photo", Business Verification),
+                    a page that embeds it in its own iframe must allow the camera:
+                    <code class="font-mono">&lt;iframe src="…" allow="camera; microphone"&gt;</code>. The SDK's modal and React embed already do.
+                  </p>
+
+                  <div>
+                    <label class="block text-xs font-medium text-gray-600">Allowed Origins</label>
+                    <input
+                      type="text"
+                      [value]="getAllowedOriginsString()"
+                      (input)="onAllowedOriginsChange($any($event.target).value)"
+                      placeholder="https://yoursite.com, https://app.yoursite.com"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">Comma-separated origins. Use * to allow all origins.</p>
+                  </div>
+
+                  <div class="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="requireApiKey"
+                      [ngModel]="policy().requireApiKey ?? false"
+                      (ngModelChange)="updatePolicy({ requireApiKey: $event })"
+                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="requireApiKey" class="ml-2 text-sm text-gray-700">
+                      Require API key for public access
+                    </label>
+                  </div>
+
+                  @if (policy().requireApiKey) {
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">API Key</label>
+                      <div class="mt-1 flex items-center gap-2">
+                        <input
+                          type="text"
+                          [ngModel]="policy().apiKey || ''"
+                          (ngModelChange)="updatePolicy({ apiKey: $event || undefined })"
+                          placeholder="pk_..."
+                          class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono text-xs"
+                        />
+                        <button
+                          (click)="generateApiKey()"
+                          class="text-xs text-primary-600 hover:text-primary-700 whitespace-nowrap"
+                        >
+                          Generate
+                        </button>
+                      </div>
+                    </div>
+                  }
+                </div>
+              </details>
+            </div>
+
+            <!-- Steps -->
+            <div class="border-t pt-4">
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="text-sm font-medium text-gray-700">Steps</h4>
+                <button
+                  (click)="openStepModal()"
+                  class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md shadow-sm transition-colors"
+                >
+                  <ui-icon name="plus" class="h-4 w-4 mr-1.5" />
+                  Add Step
+                </button>
+              </div>
+              <div class="space-y-2">
+                @for (step of policy().steps; track step.id; let i = $index) {
+                  @let stepType = getStepType(step);
+                  @let category = stepType?.category || 'Custom';
+                  @let categoryColor = getStepCategoryColor(category);
+                  <div
+                    (click)="selectStep(i)"
+                    [class]="'flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-all ' +
+                      (selectedStepIndex() === i
+                        ? 'border-primary-500 bg-primary-50 shadow-sm'
+                        : categoryColor.border + ' ' + categoryColor.bg + ' hover:shadow-sm')"
+                  >
+                    <div class="flex items-center">
+                      <span [class]="'w-7 h-7 rounded-full flex items-center justify-center mr-3 text-sm font-semibold ' +
+                        (selectedStepIndex() === i
+                          ? 'bg-primary-600 text-white'
+                          : categoryColor.text + ' bg-white border ' + categoryColor.border)">
+                        {{ i + 1 }}
+                      </span>
+                      <div>
+                        <div class="font-medium text-gray-900 text-sm flex items-center gap-2">
+                          {{ step.displayName || stepType?.displayName || step.type }}
+                          @if (step.optional) {
+                            <span class="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">optional</span>
+                          }
+                        </div>
+                        <div class="text-xs text-gray-500 flex items-center gap-1.5 min-w-0" [title]="stepType?.description || ''">
+                          <ui-icon [name]="stepIcon(stepType, category)" [class]="'h-3.5 w-3.5 shrink-0 ' + categoryColor.text" />
+                          <span class="truncate">{{ stepType?.displayName || step.type }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <button
+                        (click)="moveStep(i, 'up'); $event.stopPropagation()"
+                        [disabled]="i === 0"
+                        class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-white/50 rounded disabled:opacity-30"
+                      >
+                        <ui-icon name="chevron-up" class="h-4 w-4" />
+                      </button>
+                      <button
+                        (click)="moveStep(i, 'down'); $event.stopPropagation()"
+                        [disabled]="i === (policy().steps?.length || 0) - 1"
+                        class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-white/50 rounded disabled:opacity-30"
+                      >
+                        <ui-icon name="chevron-down" class="h-4 w-4" />
+                      </button>
+                      <button
+                        (click)="removeStep(i); $event.stopPropagation()"
+                        class="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      >
+                        <ui-icon name="trash" class="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                }
+
+                @if (!policy().steps || policy().steps?.length === 0) {
+                  <div class="text-center py-8 text-gray-500">
+                    <ui-icon name="plus" class="mx-auto h-8 w-8 text-gray-300 mb-2" />
+                    <p class="text-sm">No steps added yet</p>
+                    <p class="text-xs mt-1">Click "Add Step" to get started</p>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        </ui-card>
+      </div>
+
+      <!-- Right Panel - Step Configuration -->
+      <div class="col-span-7">
+        <ui-card>
+          <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+            <h3 class="text-lg font-medium text-gray-900">
+              {{ selectedStepIndex() !== null ? 'Step Configuration' : 'Select a Step' }}
+            </h3>
+            @if (selectedStep(); as step) {
+              @if (getStepType(step)?.testable) {
+                <button
+                  type="button"
+                  (click)="testStep(step)"
+                  [disabled]="stepTest()?.running"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-60"
+                  title="Check this step's settings: reach the services it calls and verify its credentials"
+                >
+                  <ui-icon [name]="stepTest()?.running ? 'arrow-path' : 'play'" [class]="'h-4 w-4 ' + (stepTest()?.running ? 'animate-spin' : '')" />
+                  {{ stepTest()?.running ? 'Testing…' : 'Test' }}
+                </button>
+              } @else {
+                <ui-icon name="cog" class="h-5 w-5 text-gray-400" />
+              }
+            }
+          </div>
+          <div class="px-4 py-5">
+            @if (selectedStep(); as step) {
+              <div class="space-y-4">
+                @if (stepTest(); as test) {
+                  @if (test.stepId === step.id && test.result) {
+                    <div
+                      [class]="'rounded-lg border px-3 py-2.5 text-sm ' +
+                        (test.result.success ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800')"
+                      role="status"
+                    >
+                      <div class="flex items-start gap-2">
+                        <ui-icon [name]="test.result.success ? 'check-circle' : 'x-circle'" class="h-5 w-5 shrink-0 mt-px" />
+                        <div class="min-w-0 flex-1">
+                          <p class="font-medium">{{ test.result.message }}</p>
+                          @if (test.result.details?.length) {
+                            <ul class="mt-1 space-y-0.5 text-xs opacity-90">
+                              @for (line of test.result.details; track $index) {
+                                <li class="break-words">{{ line }}</li>
+                              }
+                            </ul>
+                          }
+                        </div>
+                        <button type="button" (click)="stepTest.set(null)" class="shrink-0 opacity-60 hover:opacity-100" title="Dismiss">
+                          <ui-icon name="x-mark" class="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  }
+                }
+                <!-- Basic Info -->
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Step ID</label>
+                    <input
+                      type="text"
+                      [ngModel]="step.id"
+                      (ngModelChange)="updateStep(selectedStepIndex()!, { id: $event })"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Display Name</label>
+                    <input
+                      type="text"
+                      [ngModel]="step.displayName || ''"
+                      (ngModelChange)="updateStep(selectedStepIndex()!, { displayName: $event })"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="optional"
+                    [ngModel]="step.optional || false"
+                    (ngModelChange)="updateStep(selectedStepIndex()!, { optional: $event })"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="optional" class="ml-2 text-sm text-gray-700">
+                    Optional (continue on failure)
+                  </label>
+                </div>
+
+                <!-- DynamicForm Step -->
+                @if (isDynamicFormStep(step)) {
+                  <div class="border-t pt-4 space-y-4">
+                    <div class="flex items-center justify-between">
+                      <h4 class="text-sm font-medium text-gray-700">Form Settings</h4>
+                      @if (uiLocales().length > 1) {
+                        <div class="flex items-center gap-1">
+                          <span class="text-[11px] text-gray-500 uppercase mr-1">Locale</span>
+                          @for (loc of uiLocales(); track loc) {
+                            <button
+                              type="button"
+                              (click)="fieldLocale.set(loc)"
+                              [class]="fieldLocale() === loc
+                                ? 'px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary-600 text-white'
+                                : 'px-2 py-0.5 text-[11px] font-medium rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200'"
+                            >{{ loc }}</button>
+                          }
+                        </div>
+                      }
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Title</label>
+                        <div class="relative mt-1">
+                          <input
+                            type="text"
+                            [ngModel]="getFieldLocalized($any(step.configuration) || {}, 'title')"
+                            (ngModelChange)="updateStepConfigLocalized('title', $event)"
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                            [placeholder]="getFieldLocalizedPlaceholder($any(step.configuration) || {}, 'title', 'Form title')"
+                          />
+                          <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Submit Button</label>
+                        <div class="relative mt-1">
+                          <input
+                            type="text"
+                            [ngModel]="getFieldLocalized($any(step.configuration) || {}, 'submitButtonText')"
+                            (ngModelChange)="updateStepConfigLocalized('submitButtonText', $event)"
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                            [placeholder]="getFieldLocalizedPlaceholder($any(step.configuration) || {}, 'submitButtonText', 'Continue')"
+                          />
+                          <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-gray-600">Description</label>
+                      <div class="relative mt-1">
+                        <textarea
+                          [ngModel]="getFieldLocalized($any(step.configuration) || {}, 'description')"
+                          (ngModelChange)="updateStepConfigLocalized('description', $event)"
+                          rows="2"
+                          class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                          [placeholder]="getFieldLocalizedPlaceholder($any(step.configuration) || {}, 'description', 'Instructions for the user...')"
+                        ></textarea>
+                        <span class="absolute right-2 top-2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                      </div>
+                    </div>
+
+                    <div class="flex items-center space-x-4">
+                      <div class="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="allowCancel"
+                          [ngModel]="$any(step.configuration)?.allowCancel || false"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { configuration: { ...step.configuration, allowCancel: $event } })"
+                          class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        <label for="allowCancel" class="ml-2 text-xs text-gray-700">Show cancel button</label>
+                      </div>
+                    </div>
+
+                    @if ($any(step.configuration)?.allowCancel) {
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Cancel Button Text</label>
+                        <div class="relative mt-1">
+                          <input
+                            type="text"
+                            [ngModel]="getFieldLocalized($any(step.configuration) || {}, 'cancelButtonText')"
+                            (ngModelChange)="updateStepConfigLocalized('cancelButtonText', $event)"
+                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                            [placeholder]="getFieldLocalizedPlaceholder($any(step.configuration) || {}, 'cancelButtonText', 'Cancel')"
+                          />
+                          <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                        </div>
+                      </div>
+                    }
+
+                    <div class="border-t pt-4">
+                      <div class="flex items-center justify-between mb-3">
+                        <h4 class="text-sm font-medium text-gray-700">Form Fields</h4>
+                        <button
+                          (click)="addFormField()"
+                          class="text-sm text-primary-600 hover:text-primary-800 flex items-center"
+                        >
+                          <ui-icon name="plus" class="h-4 w-4 mr-1" />
+                          Add Field
+                        </button>
+                      </div>
+
+                      <div class="space-y-2">
+                        @for (field of $any(step.configuration)?.fields || []; track $index; let i = $index) {
+                          <div class="border rounded-lg">
+                            <div
+                              class="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50"
+                              (click)="expandedFormField.set(expandedFormField() === i ? null : i)"
+                            >
+                              <div class="flex items-center space-x-3">
+                                <span class="text-xs text-gray-400 w-5">{{ i + 1 }}</span>
+                                <div>
+                                  <div class="font-medium text-sm">{{ getFieldLocalized(field, 'label') || field.name }}</div>
+                                  <div class="text-xs text-gray-500">
+                                    {{ field.type }}
+                                    @if (field.required) {
+                                      <span> &bull; required</span>
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="flex items-center space-x-1">
+                                <button
+                                  (click)="moveFormField(i, 'up'); $event.stopPropagation()"
+                                  [disabled]="i === 0"
+                                  class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                                >
+                                  <ui-icon name="chevron-up" class="h-4 w-4" />
+                                </button>
+                                <button
+                                  (click)="moveFormField(i, 'down'); $event.stopPropagation()"
+                                  [disabled]="i === ($any(step.configuration)?.fields?.length || 0) - 1"
+                                  class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                                >
+                                  <ui-icon name="chevron-down" class="h-4 w-4" />
+                                </button>
+                                <button
+                                  (click)="removeFormField(i); $event.stopPropagation()"
+                                  class="p-1 text-red-400 hover:text-red-600"
+                                >
+                                  <ui-icon name="trash" class="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            @if (expandedFormField() === i) {
+                              <div class="p-3 border-t bg-gray-50 space-y-3">
+                                <div class="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">Field Name</label>
+                                    <input
+                                      type="text"
+                                      [ngModel]="field.name || ''"
+                                      (ngModelChange)="updateFormField(i, { name: $event })"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                      placeholder="field_name"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">Type</label>
+                                    <select
+                                      [ngModel]="field.type || 'text'"
+                                      (ngModelChange)="updateFormField(i, { type: $event })"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                    >
+                                      @for (ft of fieldTypes; track ft.value) {
+                                        <option [value]="ft.value">{{ ft.label }}</option>
+                                      }
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">Label</label>
+                                    <div class="relative mt-1">
+                                      <input
+                                        type="text"
+                                        [ngModel]="getFieldLocalized(field, 'label')"
+                                        (ngModelChange)="updateFormFieldLocalized(i, 'label', $event)"
+                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                                        [placeholder]="getFieldLocalizedPlaceholder(field, 'label', 'Field Label')"
+                                      />
+                                      <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">Claim Type</label>
+                                    <input
+                                      type="text"
+                                      [ngModel]="field.claimType || ''"
+                                      (ngModelChange)="updateFormField(i, { claimType: $event || undefined })"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                      placeholder="Defaults to field name"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-600">Placeholder</label>
+                                  <div class="relative mt-1">
+                                    <input
+                                      type="text"
+                                      [ngModel]="getFieldLocalized(field, 'placeholder')"
+                                      (ngModelChange)="updateFormFieldLocalized(i, 'placeholder', $event)"
+                                      class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                                      [placeholder]="getFieldLocalizedPlaceholder(field, 'placeholder', '')"
+                                    />
+                                    <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-600">Help Text</label>
+                                  <div class="relative mt-1">
+                                    <input
+                                      type="text"
+                                      [ngModel]="getFieldLocalized(field, 'description')"
+                                      (ngModelChange)="updateFormFieldLocalized(i, 'description', $event)"
+                                      class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm pr-10"
+                                      [placeholder]="getFieldLocalizedPlaceholder(field, 'description', '')"
+                                    />
+                                    <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-gray-400 uppercase">{{ fieldLocale() }}</span>
+                                  </div>
+                                </div>
+
+                                <!-- Phone settings -->
+                                @if (field.type === 'tel') {
+                                  <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                      <label class="block text-xs font-medium text-gray-600">Phone Format</label>
+                                      <select
+                                        [ngModel]="field.phoneFormat || 'international'"
+                                        (ngModelChange)="updateFormField(i, { phoneFormat: $event })"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                      >
+                                        @for (pf of phoneFormats; track pf.value) {
+                                          <option [value]="pf.value">{{ pf.label }}</option>
+                                        }
+                                      </select>
+                                      <p class="mt-1 text-xs text-gray-500">
+                                        @if ((field.phoneFormat || 'international') === 'international') {
+                                          Shows a country picker and stores the number as +2348031234567.
+                                        } @else {
+                                          Takes the number exactly as dialled locally, no country picker.
+                                        }
+                                      </p>
+                                    </div>
+                                    @if ((field.phoneFormat || 'international') === 'international') {
+                                      <div>
+                                        <label class="block text-xs font-medium text-gray-600">Default Country</label>
+                                        <select
+                                          [ngModel]="field.phoneDefaultCountry || ''"
+                                          (ngModelChange)="updateFormField(i, { phoneDefaultCountry: $event || null })"
+                                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                        >
+                                          <option value="">Use the tenant locale's country</option>
+                                          @for (c of countryOptions; track c.code) {
+                                            <option [value]="c.code">{{ c.label }}</option>
+                                          }
+                                        </select>
+                                      </div>
+                                    }
+                                  </div>
+                                }
+
+                                <!-- File upload settings -->
+                                @if (field.type === 'file') {
+                                  <div class="space-y-3">
+                                    <div>
+                                      <label class="block text-xs font-medium text-gray-600">Accepted files</label>
+                                      <div class="mt-1 flex flex-wrap gap-3">
+                                        @for (k of fileFieldKinds; track k.value) {
+                                          <label class="flex items-center gap-1 text-xs text-gray-700">
+                                            <input type="checkbox" class="rounded border-gray-300 text-primary-600"
+                                                   [checked]="fileKinds(field).includes(k.value)"
+                                                   (change)="toggleFileKind(i, field, k.value, $any($event.target).checked)" />
+                                            {{ k.label }}
+                                          </label>
+                                        }
+                                      </div>
+                                      <p class="mt-1 text-xs text-gray-500">Checked by content, not by the name or type the browser sends. Files are stored privately with the submission.</p>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-3">
+                                      <div>
+                                        <label class="block text-xs font-medium text-gray-600">Largest file (MB)</label>
+                                        <input type="number" min="1" max="50"
+                                               [ngModel]="field.maxFileSizeMb || 10"
+                                               (ngModelChange)="updateFormField(i, { maxFileSizeMb: $event })"
+                                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm" />
+                                      </div>
+                                      <div>
+                                        <label class="block text-xs font-medium text-gray-600">Most files</label>
+                                        <input type="number" min="1" max="10"
+                                               [ngModel]="field.maxFiles || 1"
+                                               (ngModelChange)="updateFormField(i, { maxFiles: $event })"
+                                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm" />
+                                      </div>
+                                    </div>
+                                    <label class="flex items-center gap-2 text-xs text-gray-700">
+                                      <input type="checkbox" class="rounded border-gray-300 text-primary-600"
+                                             [checked]="!!field.capture"
+                                             (change)="updateFormField(i, { capture: $any($event.target).checked })" />
+                                      Offer "Take a photo" (opens the camera on phones). Embedded journeys need the host iframe to allow camera.
+                                    </label>
+                                  </div>
+                                }
+
+                                <!-- Options for select/radio -->
+                                @if (field.type === 'select' || field.type === 'radio') {
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600 mb-1">Options</label>
+                                    <div class="space-y-1">
+                                      @for (opt of field.options || []; track $index; let optIdx = $index) {
+                                        <div class="flex items-center space-x-2">
+                                          <input
+                                            type="text"
+                                            [value]="opt"
+                                            (input)="updateFieldOption(i, optIdx, $any($event.target).value)"
+                                            placeholder="Option value"
+                                            class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                          />
+                                          <button
+                                            (click)="removeFieldOption(i, optIdx)"
+                                            class="text-red-400 hover:text-red-600"
+                                          >
+                                            <ui-icon name="trash" class="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                      }
+                                      <button
+                                        (click)="addFieldOption(i)"
+                                        class="text-xs text-primary-600 hover:text-primary-800"
+                                      >
+                                        + Add option
+                                      </button>
+                                    </div>
+                                  </div>
+                                }
+
+                                <div class="flex items-center space-x-4">
+                                  <label class="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      [ngModel]="field.required || false"
+                                      (ngModelChange)="updateFormField(i, { required: $event })"
+                                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span class="ml-2 text-xs text-gray-600">Required</span>
+                                  </label>
+                                  <label class="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      [ngModel]="field.hidden || false"
+                                      (ngModelChange)="updateFormField(i, { hidden: $event })"
+                                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span class="ml-2 text-xs text-gray-600">Hidden</span>
+                                  </label>
+                                  <label class="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      [ngModel]="field.persistToUser || false"
+                                      (ngModelChange)="updateFormField(i, { persistToUser: $event })"
+                                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                    <span class="ml-2 text-xs text-gray-600">Save to User</span>
+                                  </label>
+                                </div>
+
+                                @if (field.persistToUser) {
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">User Property Name</label>
+                                    <input
+                                      type="text"
+                                      [ngModel]="field.userPropertyName || ''"
+                                      (ngModelChange)="updateFormField(i, { userPropertyName: $event || undefined })"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                      placeholder="e.g., firstName, lastName, phoneNumber"
+                                    />
+                                    <p class="mt-1 text-xs text-gray-500">
+                                      Standard: firstName, lastName, phoneNumber, picture. Others saved as custom properties.
+                                    </p>
+                                  </div>
+                                }
+
+                                <!-- Validation -->
+                                <div class="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">Min Length</label>
+                                    <input
+                                      type="number"
+                                      [ngModel]="field.minLength"
+                                      (ngModelChange)="updateFormField(i, { minLength: $event ? +$event : undefined })"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-600">Max Length</label>
+                                    <input
+                                      type="number"
+                                      [ngModel]="field.maxLength"
+                                      (ngModelChange)="updateFormField(i, { maxLength: $event ? +$event : undefined })"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-600">Validation Pattern (Regex)</label>
+                                  <input
+                                    type="text"
+                                    [ngModel]="field.pattern || ''"
+                                    (ngModelChange)="updateFormField(i, { pattern: $event })"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                    placeholder="e.g., ^[A-Z]{2}[0-9]{4}$"
+                                  />
+                                </div>
+                              </div>
+                            }
+                          </div>
+                        }
+
+                        @if (!$any(step.configuration)?.fields || $any(step.configuration)?.fields?.length === 0) {
+                          <div class="text-center py-4 text-gray-500 text-sm">
+                            No fields defined. Click "Add Field" to create one.
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  </div>
+                }
+
+
+                <!--
+                  Generic schema-driven config form. Renders for any step
+                  type whose backend metadata declares a configurationSchema
+                  and which doesn't have a bespoke form block above
+                  (DynamicForm / Condition / Transform). Supports primitives,
+                  enums, secret/textarea controls, x-enumSource lookups, the
+                  Phase-2 shapes (object maps, array-of-object, nested-object
+                  with showWhen), and x-sections accordion grouping.
+                -->
+                @if (shouldUseGenericConfigForm(step)) {
+                  <admin-journey-step-config-form
+                    [schema]="$any(resolveSchemaForStep(step))"
+                    [value]="$any(step.configuration) || {}"
+                    [locales]="uiLocales()"
+                    (valueChange)="updateStep(selectedStepIndex()!, { configuration: $event })"
+                    (addStep)="onConfigFormAddStep($event)"
+                  />
+                }
+
+                <!-- Condition Step -->
+                @if (isConditionStep(step)) {
+                  <div class="border-t pt-4">
+                    <admin-condition-builder
+                      [conditions]="$any(step.configuration?.['conditions']) || []"
+                      (conditionsChange)="onStepConditionsChange($event)"
+                    ></admin-condition-builder>
+                    <!-- Where to go next: the step's own onTrue/onFalse settings, as step pickers -->
+                    <div class="mt-3">
+                      <admin-journey-step-config-form
+                        [schema]="$any(conditionTargetsSchema(step))"
+                        [value]="$any(step.configuration) || {}"
+                        [locales]="uiLocales()"
+                        (valueChange)="updateStep(selectedStepIndex()!, { configuration: $event })"
+                        (addStep)="onConfigFormAddStep($event)"
+                      />
+                    </div>
+                  </div>
+                }
+
+                <!-- Transform Step -->
+                @if (isTransformStep(step)) {
+                  <div class="border-t pt-4">
+                    <admin-mapping-builder
+                      mode="transform"
+                      [mappings]="$any(step.configuration?.['mappings']) || []"
+                      [transforms]="transformCatalog(step)"
+                      [transformSourceTypes]="transformSourceTypes(step)"
+                      (mappingsChange)="onMappingsChange($event)"
+                      title="Data Transformations"
+                      description="Transform and map data between journey steps"
+                    ></admin-mapping-builder>
+                  </div>
+                }
+
+                <!-- Execution Conditions -->
+                <div class="border-t pt-4">
+                  <details class="group">
+                    <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                      <span class="flex items-center gap-2">
+                        <ui-icon name="adjustments" class="h-4 w-4" />
+                        Execution Conditions
+                      </span>
+                      <span class="text-xs text-gray-500 group-open:hidden">
+                        {{ step.conditions?.length || 0 }} condition(s)
+                      </span>
+                    </summary>
+                    <div class="mt-3">
+                      <p class="text-xs text-gray-500 mb-3">
+                        Define when this step should execute. If conditions are not met, the step will be skipped.
+                      </p>
+                      <admin-condition-builder
+                        [conditions]="step.conditions || []"
+                        (conditionsChange)="onConditionsChange($event)"
+                      ></admin-condition-builder>
+                    </div>
+                  </details>
+                </div>
+
+                <!-- Flow Control -->
+                <div class="border-t pt-4">
+                  <h4 class="text-sm font-medium text-gray-700 mb-3">Flow Control</h4>
+                  <div class="space-y-3">
+                    <div class="grid grid-cols-2 gap-4">
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">On Success</label>
+                        <select
+                          [ngModel]="step.onSuccess || ''"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { onSuccess: $event || undefined })"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        >
+                          <option value="">Next step (default)</option>
+                          @for (s of getOtherSteps(); track s.id) {
+                            <option [value]="s.id">{{ s.displayName || s.id }}</option>
+                          }
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">On Failure</label>
+                        <select
+                          [ngModel]="step.onFailure || ''"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { onFailure: $event || undefined })"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        >
+                          <option value="">Fail journey (default)</option>
+                          @for (s of getOtherSteps(); track s.id) {
+                            <option [value]="s.id">{{ s.displayName || s.id }}</option>
+                          }
+                        </select>
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">Layout Width</label>
+                        <select
+                          [ngModel]="step.layout || ''"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { layout: $event || undefined })"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                        >
+                          <option value="">Use journey default</option>
+                          <option value="narrow">Narrow</option>
+                          <option value="medium">Medium</option>
+                          <option value="wide">Wide</option>
+                          <option value="full">Full width</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <!-- Branches -->
+                    <div>
+                      <details class="group">
+                        <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                          <span>Branches</span>
+                          <span class="text-xs text-gray-500 group-open:hidden">
+                            {{ objectKeys(step.branches || {}).length }} branch(es)
+                          </span>
+                        </summary>
+                        <div class="mt-2 space-y-2">
+                          <p class="text-xs text-gray-500">
+                            @if (availableBranchesForSelectedStep().length > 0) {
+                              Route this step's named outcomes to specific steps
+                            } @else {
+                              Define named branches for conditional navigation
+                            }
+                          </p>
+                          @for (entry of objectEntries(step.branches || {}); track entry[0]) {
+                            <div class="flex items-center gap-2">
+                              @if (availableBranchesForSelectedStep().length > 0) {
+                                <select
+                                  [ngModel]="entry[0]"
+                                  (ngModelChange)="updateBranch(entry[0], $event, $any(entry[1]))"
+                                  class="flex-1 rounded-md border-gray-300 text-sm"
+                                >
+                                  @for (b of unusedBranchOptions($any(entry[0])); track b.id) {
+                                    <option [value]="b.id" [title]="b.description || ''">
+                                      {{ b.displayName || b.id }}
+                                    </option>
+                                  }
+                                </select>
+                              } @else {
+                                <input
+                                  type="text"
+                                  [value]="entry[0]"
+                                  (input)="updateBranch(entry[0], $any($event.target).value, $any(entry[1]))"
+                                  placeholder="Branch name"
+                                  class="flex-1 rounded-md border-gray-300 text-sm"
+                                />
+                              }
+                              <span class="text-gray-400">-></span>
+                              <select
+                                [ngModel]="entry[1]"
+                                (ngModelChange)="updateBranch(entry[0], entry[0], $event)"
+                                class="flex-1 rounded-md border-gray-300 text-sm"
+                              >
+                                <option value="">Select step...</option>
+                                @for (s of getOtherSteps(); track s.id) {
+                                  <option [value]="s.id">{{ s.displayName || s.id }}</option>
+                                }
+                              </select>
+                              <button
+                                type="button"
+                                (click)="removeBranch(entry[0])"
+                                class="text-red-400 hover:text-red-600"
+                              >
+                                <ui-icon name="trash" class="h-4 w-4" />
+                              </button>
+                            </div>
+                          }
+                          @if (availableBranchesForSelectedStep().length === 0 || unusedBranchOptions('').length > 0) {
+                            <button
+                              type="button"
+                              (click)="addBranch()"
+                              class="text-sm text-primary-600 hover:text-primary-800 flex items-center"
+                            >
+                              <ui-icon name="plus" class="h-4 w-4 mr-1" />
+                              Add Branch
+                            </button>
+                          }
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Advanced Options -->
+                <div class="border-t pt-4">
+                  <details class="group">
+                    <summary class="flex items-center justify-between text-sm font-medium text-gray-700 py-1">
+                      <span>Advanced Options</span>
+                    </summary>
+                    <div class="mt-3 space-y-3">
+                      <div class="grid grid-cols-2 gap-3">
+                        <div>
+                          <label class="block text-xs font-medium text-gray-600">Timeout (seconds)</label>
+                          <input
+                            type="number"
+                            [ngModel]="step.timeoutSeconds || ''"
+                            (ngModelChange)="updateStep(selectedStepIndex()!, { timeoutSeconds: $event ? +$event : undefined })"
+                            placeholder="Use policy default"
+                            class="mt-1 block w-full rounded-md border-gray-300 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label class="block text-xs font-medium text-gray-600">Max Failed Attempts</label>
+                          <input
+                            type="number"
+                            [ngModel]="step.maxRetries || 0"
+                            (ngModelChange)="updateStep(selectedStepIndex()!, { maxRetries: +$event || 0 })"
+                            min="0"
+                            max="20"
+                            class="mt-1 block w-full rounded-md border-gray-300 text-sm"
+                          />
+                          <p class="mt-1 text-xs text-gray-500">
+                            Wrong codes or passwords allowed before the journey fails. 0 = platform default (5).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div class="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="skipIfCompleted"
+                          [ngModel]="step.skipIfCompleted || false"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { skipIfCompleted: $event })"
+                          class="rounded border-gray-300 text-blue-600"
+                        />
+                        <label for="skipIfCompleted" class="ml-2 text-xs text-gray-600">
+                          Skip if already completed in this session
+                        </label>
+                      </div>
+
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Error Message Template</label>
+                        <input
+                          type="text"
+                          [ngModel]="step.errorMessageTemplate || ''"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { errorMessageTemplate: $event || undefined })"
+                          placeholder="Custom error message shown on failure"
+                          class="mt-1 block w-full rounded-md border-gray-300 text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Required Claims</label>
+                        <input
+                          type="text"
+                          [ngModel]="(step.requiredClaims || []).join(', ')"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { requiredClaims: parseClaimsList($event) })"
+                          placeholder="email, sub"
+                          class="mt-1 block w-full rounded-md border-gray-300 text-sm"
+                        />
+                        <p class="text-xs text-gray-500 mt-1">Claims that must exist before this step runs</p>
+                      </div>
+
+                      <div>
+                        <label class="block text-xs font-medium text-gray-600">Output Claims</label>
+                        <input
+                          type="text"
+                          [ngModel]="(step.outputClaims || []).join(', ')"
+                          (ngModelChange)="updateStep(selectedStepIndex()!, { outputClaims: parseClaimsList($event) })"
+                          placeholder="mfaVerified, authLevel"
+                          class="mt-1 block w-full rounded-md border-gray-300 text-sm"
+                        />
+                        <p class="text-xs text-gray-500 mt-1">Claims this step adds to the journey context</p>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            } @else {
+              <div class="text-center py-12 text-gray-500">
+                <ui-icon name="cog" class="mx-auto h-10 w-10 text-gray-300 mb-3" />
+                <p class="text-sm font-medium">Select a step to configure</p>
+                <p class="text-xs mt-1">Click on a step in the flow to edit its properties</p>
+              </div>
+            }
+          </div>
+        </ui-card>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- Add Step Modal -->
+<ui-modal
+  [open]="showStepModal()"
+  title="Add Step"
+  size="full"
+  [scrollable]="true"
+  (closed)="closeStepModal()"
+>
+  <div class="space-y-4">
+    <div class="sticky top-0 z-10 -mx-6 -mt-4 px-6 pt-4 pb-3 bg-white border-b border-gray-100 space-y-3">
+      <div class="relative">
+        <ui-icon name="search" class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+        <input
+          #stepSearchInput
+          type="search"
+          [ngModel]="stepSearch()"
+          (ngModelChange)="stepSearch.set($event)"
+          (keydown.enter)="addFirstMatchingStep()"
+          placeholder="Search steps — e.g. passkey, email, webhook"
+          class="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+        />
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          (click)="stepCategoryFilter.set(null)"
+          [class]="'px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ' +
+            (stepCategoryFilter() === null ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300')"
+        >
+          All <span class="opacity-60">{{ stepTypes().length }}</span>
+        </button>
+        @for (c of stepCategories(); track c.name) {
+          @let color = getStepCategoryColor(c.name);
+          <button
+            type="button"
+            (click)="toggleStepCategory(c.name)"
+            [class]="'inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ' +
+              (stepCategoryFilter() === c.name ? color.bg + ' ' + color.text + ' ' + color.border : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300')"
+          >
+            <ui-icon [name]="getCategoryIcon(c.name)" class="h-3.5 w-3.5" />
+            {{ c.name }} <span class="opacity-60">{{ c.count }}</span>
+          </button>
+        }
+      </div>
+    </div>
+
+    @for (group of filteredStepGroups(); track group.category) {
+      @let color = getStepCategoryColor(group.category);
+      <section>
+        <h4 [class]="'text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5 ' + color.text">
+          <ui-icon [name]="getCategoryIcon(group.category)" class="h-3.5 w-3.5" />
+          {{ group.category }}
+        </h4>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          @for (type of group.types; track type.type) {
+            @let used = stepTypeUsage()[type.type] ?? 0;
+            <button
+              type="button"
+              (click)="addStep(type)"
+              [disabled]="!type.isAvailable"
+              [title]="type.description"
+              [class]="'group text-left p-3 rounded-lg border bg-white transition-all flex gap-3 ' +
+                (type.isAvailable
+                  ? 'border-gray-200 hover:border-primary-400 hover:shadow-md hover:-translate-y-px'
+                  : 'opacity-50 cursor-not-allowed border-gray-100')"
+            >
+              <span [class]="'shrink-0 h-9 w-9 rounded-lg flex items-center justify-center border ' + color.bg + ' ' + color.border + ' ' + color.text">
+                <ui-icon [name]="stepIcon(type, group.category)" class="h-5 w-5" />
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="flex items-center gap-1.5">
+                  <span class="font-medium text-sm text-gray-900 truncate group-hover:text-primary-700">{{ type.displayName || type.type }}</span>
+                  @if (used > 0) {
+                    <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-100" [title]="'Already in this journey ' + used + '×'">
+                      {{ used === 1 ? 'in journey' : used + '× in journey' }}
+                    </span>
+                  }
+                </span>
+                <span class="block text-xs text-gray-500 mt-0.5 line-clamp-2">{{ type.description }}</span>
+                <span class="flex items-center gap-1.5 mt-1.5">
+                  <code class="text-[10px] text-gray-400">{{ type.type }}</code>
+                  @if (type.module) {
+                    <span class="text-[10px] px-1.5 py-px rounded bg-gray-100 text-gray-500">{{ moduleLabel(type.module) }}</span>
+                  }
+                </span>
+              </span>
+            </button>
+          }
+        </div>
+      </section>
+    } @empty {
+      <div class="text-center py-12 text-gray-500">
+        <ui-icon name="document-magnifying-glass" class="mx-auto h-10 w-10 text-gray-300 mb-3" />
+        <p class="text-sm font-medium">No steps match “{{ stepSearch() }}”</p>
+        <button type="button" (click)="stepSearch.set(''); stepCategoryFilter.set(null)" class="mt-2 text-xs text-primary-600 hover:text-primary-800 underline">
+          Clear search
+        </button>
+      </div>
+    }
+  </div>
+
+  <div modal-footer class="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+    <p class="text-xs text-gray-400">
+      {{ filteredStepCount() }} of {{ stepTypes().length }} steps
+      @if (stepSearch()) { · Enter adds the first match }
+    </p>
+    <button
+      (click)="closeStepModal()"
+      class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+    >
+      Cancel
+    </button>
+  </div>
+</ui-modal>

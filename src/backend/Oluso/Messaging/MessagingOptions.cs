@@ -23,9 +23,20 @@ public class EmailOptions
     public string? FromName { get; set; }
 
     /// <summary>
+    /// Platform default reply-to, used for tenants sending from the platform
+    /// address when they have not confirmed a reply-to inbox of their own.
+    /// </summary>
+    public string? ReplyToAddress { get; set; }
+
+    /// <summary>
     /// SendGrid specific settings
     /// </summary>
     public SendGridSettings SendGrid { get; set; } = new();
+
+    /// <summary>
+    /// Cloudflare Email Sending specific settings
+    /// </summary>
+    public CloudflareEmailSettings Cloudflare { get; set; } = new();
 
     /// <summary>
     /// SMTP specific settings
@@ -42,6 +53,25 @@ public class SendGridSettings
     /// SendGrid API key
     /// </summary>
     public string? ApiKey { get; set; }
+}
+
+/// <summary>
+/// Cloudflare Email Sending settings (public beta service — REST API
+/// at https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send).
+/// The sender domain must be onboarded in the Cloudflare dashboard under
+/// Email → Sending → Onboard Domain before any send will succeed.
+/// </summary>
+public class CloudflareEmailSettings
+{
+    /// <summary>
+    /// Cloudflare account ID — forms the {account_id} segment of the send URL.
+    /// </summary>
+    public string? AccountId { get; set; }
+
+    /// <summary>
+    /// Cloudflare API token with the "Email Sending" permission.
+    /// </summary>
+    public string? ApiToken { get; set; }
 }
 
 /// <summary>
@@ -122,6 +152,70 @@ public class InfobipSettings
     /// Sender ID for SMS messages
     /// </summary>
     public string? SenderId { get; set; }
+}
+
+/// <summary>
+/// Configuration options for WhatsApp Business API messaging
+/// </summary>
+public class WhatsAppOptions
+{
+    public const string SectionName = "Oluso:Messaging:WhatsApp";
+
+    /// <summary>
+    /// The WhatsApp provider to use. Only "Meta" (Cloud API) is implemented;
+    /// any other value fails at startup rather than silently sending via Meta.
+    /// </summary>
+    public string Provider { get; set; } = "Meta";
+
+    /// <summary>
+    /// Meta WhatsApp Business API settings
+    /// </summary>
+    public MetaWhatsAppSettings Meta { get; set; } = new();
+}
+
+/// <summary>
+/// Meta WhatsApp Business API settings
+/// </summary>
+public class MetaWhatsAppSettings
+{
+    /// <summary>
+    /// Permanent access token for the WhatsApp Business API
+    /// </summary>
+    public string? AccessToken { get; set; }
+
+    /// <summary>
+    /// Phone number ID registered in Meta Business Manager
+    /// </summary>
+    public string? PhoneNumberId { get; set; }
+
+    /// <summary>
+    /// WhatsApp Business Account ID
+    /// </summary>
+    public string? BusinessAccountId { get; set; }
+
+    /// <summary>
+    /// API version (default: v21.0)
+    /// </summary>
+    public string ApiVersion { get; set; } = "v21.0";
+
+    /// <summary>
+    /// Meta app secret. Verifies the X-Hub-Signature-256 header on webhooks
+    /// delivered to the shared platform URL (tenants that bring their own Meta
+    /// app configure their own secret in tenant settings instead).
+    /// </summary>
+    public string? AppSecret { get; set; }
+
+    /// <summary>
+    /// Verify token for the webhook subscription handshake on the shared
+    /// platform URL.
+    /// </summary>
+    public string? WebhookVerifyToken { get; set; }
+
+    /// <summary>
+    /// ISO 3166-1 alpha-2 country used to complete numbers typed without a
+    /// country code when the tenant has not set its own default.
+    /// </summary>
+    public string? DefaultCountry { get; set; }
 }
 
 /// <summary>

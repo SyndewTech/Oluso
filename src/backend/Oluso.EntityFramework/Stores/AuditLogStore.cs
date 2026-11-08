@@ -93,6 +93,12 @@ public class AuditLogService : IAuditLogService
         if (!string.IsNullOrEmpty(query.ClientId))
             baseQuery = baseQuery.Where(a => a.ClientId == query.ClientId);
 
+        if (!string.IsNullOrEmpty(query.OriginKind))
+            baseQuery = baseQuery.Where(a => a.OriginKind == query.OriginKind);
+
+        if (!string.IsNullOrEmpty(query.OriginId))
+            baseQuery = baseQuery.Where(a => a.OriginId == query.OriginId);
+
         if (query.Success.HasValue)
             baseQuery = baseQuery.Where(a => a.Success == query.Success.Value);
 

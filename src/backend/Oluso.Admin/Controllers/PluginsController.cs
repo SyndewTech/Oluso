@@ -1,23 +1,32 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Admin.Events;
+using Oluso.Core.Events;
+using Oluso.Core.Plugins;
 using Oluso.Core.UserJourneys;
+using Oluso.Admin.Dto.Plugins;
 
 namespace Oluso.Admin.Controllers;
 
 /// <summary>
-/// Admin API for managing WASM plugins per tenant
+/// Admin API for managing WASM plugins, hook bindings, and configurations
 /// </summary>
 [Route("api/admin/plugins")]
 public class PluginsController : AdminBaseController
 {
     private readonly IPluginStore _pluginStore;
     private readonly IPluginExecutor _pluginExecutor;
+    private readonly IPluginHookStore? _hookStore;
+    private readonly IPluginExecutionLogger? _executionLogger;
+    private readonly IOlusoEventService _eventService;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<PluginsController> _logger;
+    private readonly string? _platformHost;
 
     private const long MaxPluginSize = 10 * 1024 * 1024; // 10MB
 
@@ -25,18 +34,31 @@ public class PluginsController : AdminBaseController
         IPluginStore pluginStore,
         IPluginExecutor pluginExecutor,
         ITenantContext tenantContext,
-        ILogger<PluginsController> logger) : base(tenantContext)
+        IOlusoEventService eventService,
+        ILogger<PluginsController> logger,
+        Microsoft.Extensions.Configuration.IConfiguration configuration,
+        IPluginHookStore? hookStore = null,
+        IPluginExecutionLogger? executionLogger = null) : base(tenantContext)
     {
         _pluginStore = pluginStore;
         _pluginExecutor = pluginExecutor;
         _tenantContext = tenantContext;
+        _eventService = eventService;
+        _hookStore = hookStore;
+        _executionLogger = executionLogger;
         _logger = logger;
+
+        var issuer = configuration["Oluso:IssuerUri"];
+        _platformHost = Uri.TryCreate(issuer, UriKind.Absolute, out var uri) ? uri.Host : null;
     }
+
+    // ============ Plugin Metadata ============
 
     /// <summary>
     /// Get all plugins available to the current tenant
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.PluginsRead)]
     public async Task<ActionResult<IEnumerable<PluginListItemDto>>> GetPlugins(
         CancellationToken cancellationToken = default)
     {
@@ -46,14 +68,20 @@ public class PluginsController : AdminBaseController
 
         var result = plugins.Select(p => new PluginListItemDto
         {
+            Id = p.Id,
             Name = p.Name,
             DisplayName = p.DisplayName ?? p.Name,
             Description = p.Description,
             Version = p.Version,
             Author = p.Author,
+            Type = p.Type.ToString(),
             Scope = p.Scope.ToString(),
+            Enabled = p.Enabled,
             IsGlobal = p.Scope == PluginScope.Global,
             SizeBytes = p.SizeBytes,
+            ExecutionCount = p.ExecutionCount,
+            AverageExecutionMs = p.AverageExecutionMs,
+            LastExecutedAt = p.LastExecutedAt,
             CreatedAt = p.CreatedAt,
             UpdatedAt = p.UpdatedAt,
             IsLoaded = _pluginExecutor.IsPluginLoaded(p.Name)
@@ -66,6 +94,7 @@ public class PluginsController : AdminBaseController
     /// Get plugin details
     /// </summary>
     [HttpGet("{pluginName}")]
+    [RequirePermission(AdminPermissions.PluginsRead)]
     public async Task<ActionResult<PluginDetailDto>> GetPlugin(
         string pluginName,
         CancellationToken cancellationToken = default)
@@ -82,16 +111,25 @@ public class PluginsController : AdminBaseController
 
         return Ok(new PluginDetailDto
         {
+            Id = plugin.Id,
             Name = plugin.Name,
             DisplayName = plugin.DisplayName ?? plugin.Name,
             Description = plugin.Description,
             Version = plugin.Version,
             Author = plugin.Author,
+            Type = plugin.Type.ToString(),
             Scope = plugin.Scope.ToString(),
+            Enabled = plugin.Enabled,
             TenantId = plugin.TenantId,
             SizeBytes = plugin.SizeBytes,
+            ContentHash = plugin.ContentHash,
+            ExecutionCount = plugin.ExecutionCount,
+            AverageExecutionMs = plugin.AverageExecutionMs,
+            LastExecutedAt = plugin.LastExecutedAt,
             CreatedAt = plugin.CreatedAt,
+            CreatedBy = plugin.CreatedBy,
             UpdatedAt = plugin.UpdatedAt,
+            UpdatedBy = plugin.UpdatedBy,
             RequiredClaims = plugin.GetRequiredClaimsList(),
             OutputClaims = plugin.GetOutputClaimsList(),
             ConfigSchema = plugin.GetConfigSchemaObject(),
@@ -103,6 +141,7 @@ public class PluginsController : AdminBaseController
     /// Upload a new plugin
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.PluginsManage)]
     [RequestSizeLimit(MaxPluginSize)]
     public async Task<ActionResult<PluginDetailDto>> UploadPlugin(
         [FromForm] UploadPluginRequest request,
@@ -162,7 +201,10 @@ public class PluginsController : AdminBaseController
             DisplayName = request.DisplayName ?? pluginName,
             Description = request.Description,
             Version = request.Version ?? "1.0.0",
-            Author = request.Author
+            Author = request.Author,
+            Type = Enum.TryParse<PluginType>(request.Type, true, out var pType) ? pType : PluginType.Step,
+            Enabled = request.Enabled ?? true,
+            CreatedBy = AdminUserId
         };
 
         // Set JSON-serialized fields
@@ -174,7 +216,7 @@ public class PluginsController : AdminBaseController
             metadata.SetConfigSchemaObject(request.ConfigSchema);
 
         // Save plugin
-        await _pluginStore.SavePluginAsync(
+        var saved = await _pluginStore.SavePluginAsync(
             pluginName,
             wasmBytes,
             metadata,
@@ -187,22 +229,32 @@ public class PluginsController : AdminBaseController
             await _pluginExecutor.LoadPluginAsync(pluginName, wasmBytes, cancellationToken);
         }
 
+        await _eventService.RaiseAsync(new PluginUploadedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = RequireAdminUserId,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = saved.Id,
+            ResourceName = saved.Name,
+            PluginType = saved.Type.ToString(),
+            SizeBytes = saved.SizeBytes
+        }, cancellationToken);
+
         _logger.LogInformation("Uploaded plugin {PluginName} for tenant {TenantId}",
             pluginName, _tenantContext.TenantId);
 
-        var saved = await _pluginStore.GetPluginInfoAsync(
-            pluginName,
-            _tenantContext.TenantId,
-            cancellationToken);
-
         return CreatedAtAction(nameof(GetPlugin), new { pluginName }, new PluginDetailDto
         {
-            Name = saved!.Name,
+            Id = saved.Id,
+            Name = saved.Name,
             DisplayName = saved.DisplayName ?? saved.Name,
             Description = saved.Description,
             Version = saved.Version,
             Author = saved.Author,
+            Type = saved.Type.ToString(),
             Scope = saved.Scope.ToString(),
+            Enabled = saved.Enabled,
             TenantId = saved.TenantId,
             SizeBytes = saved.SizeBytes,
             CreatedAt = saved.CreatedAt,
@@ -218,6 +270,7 @@ public class PluginsController : AdminBaseController
     /// Update plugin metadata (not the WASM file)
     /// </summary>
     [HttpPatch("{pluginName}")]
+    [RequirePermission(AdminPermissions.PluginsWrite)]
     public async Task<ActionResult<PluginDetailDto>> UpdatePluginMetadata(
         string pluginName,
         [FromBody] UpdatePluginMetadataRequest request,
@@ -260,6 +313,9 @@ public class PluginsController : AdminBaseController
         existing.Description = request.Description ?? existing.Description;
         existing.Version = request.Version ?? existing.Version;
         existing.Author = request.Author ?? existing.Author;
+        existing.Enabled = request.Enabled ?? existing.Enabled;
+        existing.UpdatedBy = AdminUserId;
+
         if (request.RequiredClaims != null)
             existing.SetRequiredClaimsList(request.RequiredClaims);
         if (request.OutputClaims != null)
@@ -274,14 +330,27 @@ public class PluginsController : AdminBaseController
             _tenantContext.TenantId,
             cancellationToken);
 
+        await _eventService.RaiseAsync(new PluginUpdatedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = RequireAdminUserId,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = existing.Id,
+            ResourceName = existing.Name
+        }, cancellationToken);
+
         return Ok(new PluginDetailDto
         {
+            Id = existing.Id,
             Name = existing.Name,
             DisplayName = existing.DisplayName ?? existing.Name,
             Description = existing.Description,
             Version = existing.Version,
             Author = existing.Author,
+            Type = existing.Type.ToString(),
             Scope = existing.Scope.ToString(),
+            Enabled = existing.Enabled,
             TenantId = existing.TenantId,
             SizeBytes = existing.SizeBytes,
             CreatedAt = existing.CreatedAt,
@@ -297,6 +366,7 @@ public class PluginsController : AdminBaseController
     /// Delete a plugin
     /// </summary>
     [HttpDelete("{pluginName}")]
+    [RequirePermission(AdminPermissions.PluginsManage)]
     public async Task<IActionResult> DeletePlugin(
         string pluginName,
         CancellationToken cancellationToken = default)
@@ -338,6 +408,16 @@ public class PluginsController : AdminBaseController
             return NotFound();
         }
 
+        await _eventService.RaiseAsync(new PluginDeletedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = RequireAdminUserId,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = existing.Id,
+            ResourceName = existing.Name
+        }, cancellationToken);
+
         _logger.LogInformation("Deleted plugin {PluginName} for tenant {TenantId}",
             pluginName, _tenantContext.TenantId);
 
@@ -348,6 +428,7 @@ public class PluginsController : AdminBaseController
     /// Reload a plugin in the executor
     /// </summary>
     [HttpPost("{pluginName}/reload")]
+    [RequirePermission(AdminPermissions.PluginsManage)]
     public async Task<IActionResult> ReloadPlugin(
         string pluginName,
         CancellationToken cancellationToken = default)
@@ -369,6 +450,430 @@ public class PluginsController : AdminBaseController
         return Ok(new { reloaded = true });
     }
 
+    // ============ Hook Bindings ============
+
+    /// <summary>
+    /// Get all hook bindings for a plugin
+    /// </summary>
+    [HttpGet("{pluginName}/hooks")]
+    [RequirePermission(AdminPermissions.PluginsRead)]
+    public async Task<ActionResult<IEnumerable<PluginHookBindingDto>>> GetHooks(
+        string pluginName,
+        CancellationToken cancellationToken)
+    {
+        if (_hookStore == null)
+        {
+            return BadRequest(new { error = "Plugin hook store not configured. Call AddPluginHooks() during startup." });
+        }
+
+        // Get plugin to find its ID
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+        if (plugin == null)
+        {
+            return NotFound();
+        }
+
+        var hooks = await _hookStore.GetHooksByPluginAsync(TenantId!, plugin.Id, cancellationToken);
+
+        var result = hooks.Select(h => new PluginHookBindingDto
+        {
+            Id = h.Id,
+            PluginId = h.PluginId,
+            Domain = h.Domain,
+            EntityType = h.EntityType,
+            EventType = h.EventType,
+            FunctionName = h.FunctionName,
+            Order = h.Order,
+            IsActive = h.IsActive,
+            FailureMode = h.FailureMode.ToString(),
+            TimeoutMs = h.TimeoutMs,
+            FilterConditions = h.FilterConditions
+        });
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Create a hook binding for a plugin
+    /// </summary>
+    [HttpPost("{pluginName}/hooks")]
+    [RequirePermission(AdminPermissions.PluginsWrite)]
+    public async Task<ActionResult<PluginHookBindingDto>> CreateHook(
+        string pluginName,
+        [FromBody] CreateHookBindingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (_hookStore == null)
+        {
+            return BadRequest(new { error = "Plugin hook store not configured. Call AddPluginHooks() during startup." });
+        }
+
+        // Get plugin to find its ID
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+        if (plugin == null)
+        {
+            return NotFound();
+        }
+
+        var binding = new PluginHookBinding
+        {
+            TenantId = TenantId,
+            PluginId = plugin.Id,
+            Domain = request.Domain,
+            EntityType = request.EntityType,
+            EventType = request.EventType,
+            FunctionName = request.FunctionName,
+            Order = request.Order ?? 0,
+            IsActive = request.IsActive ?? true,
+            FailureMode = Enum.TryParse<PluginFailureMode>(request.FailureMode, true, out var mode)
+                ? mode : PluginFailureMode.Continue,
+            TimeoutMs = request.TimeoutMs ?? 5000,
+            FilterConditions = request.FilterConditions
+        };
+
+        var created = await _hookStore.CreateAsync(binding, cancellationToken);
+
+        await _eventService.RaiseAsync(new PluginHookCreatedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = RequireAdminUserId,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = created.Id,
+            ResourceName = $"{created.Domain}/{created.EntityType}/{created.EventType}",
+            PluginId = plugin.Id,
+            PluginName = plugin.Name
+        }, cancellationToken);
+
+        return CreatedAtAction(nameof(GetHooks), new { pluginName }, new PluginHookBindingDto
+        {
+            Id = created.Id,
+            PluginId = created.PluginId,
+            Domain = created.Domain,
+            EntityType = created.EntityType,
+            EventType = created.EventType,
+            FunctionName = created.FunctionName,
+            Order = created.Order,
+            IsActive = created.IsActive,
+            FailureMode = created.FailureMode.ToString(),
+            TimeoutMs = created.TimeoutMs,
+            FilterConditions = created.FilterConditions
+        });
+    }
+
+    /// <summary>
+    /// Update a hook binding
+    /// </summary>
+    [HttpPut("{pluginName}/hooks/{hookId}")]
+    [RequirePermission(AdminPermissions.PluginsWrite)]
+    public async Task<ActionResult<PluginHookBindingDto>> UpdateHook(
+        string pluginName,
+        string hookId,
+        [FromBody] UpdateHookBindingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (_hookStore == null)
+        {
+            return BadRequest(new { error = "Plugin hook store not configured. Call AddPluginHooks() during startup." });
+        }
+
+        // Get plugin to find its ID
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+        if (plugin == null)
+        {
+            return NotFound();
+        }
+
+        var binding = new PluginHookBinding
+        {
+            Id = hookId,
+            TenantId = TenantId,
+            PluginId = plugin.Id,
+            Domain = request.Domain,
+            EntityType = request.EntityType,
+            EventType = request.EventType,
+            FunctionName = request.FunctionName,
+            Order = request.Order ?? 0,
+            IsActive = request.IsActive ?? true,
+            FailureMode = Enum.TryParse<PluginFailureMode>(request.FailureMode, true, out var mode)
+                ? mode : PluginFailureMode.Continue,
+            TimeoutMs = request.TimeoutMs ?? 5000,
+            FilterConditions = request.FilterConditions
+        };
+
+        try
+        {
+            var updated = await _hookStore.UpdateAsync(binding, cancellationToken);
+
+            await _eventService.RaiseAsync(new PluginHookUpdatedEvent
+            {
+                TenantId = TenantId,
+                AdminUserId = RequireAdminUserId,
+                AdminUserName = AdminUserName,
+                IpAddress = ClientIp,
+                ResourceId = updated.Id,
+                ResourceName = $"{updated.Domain}/{updated.EntityType}/{updated.EventType}",
+                PluginId = plugin.Id,
+                PluginName = plugin.Name
+            }, cancellationToken);
+
+            return Ok(new PluginHookBindingDto
+            {
+                Id = updated.Id,
+                PluginId = updated.PluginId,
+                Domain = updated.Domain,
+                EntityType = updated.EntityType,
+                EventType = updated.EventType,
+                FunctionName = updated.FunctionName,
+                Order = updated.Order,
+                IsActive = updated.IsActive,
+                FailureMode = updated.FailureMode.ToString(),
+                TimeoutMs = updated.TimeoutMs,
+                FilterConditions = updated.FilterConditions
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Delete a hook binding
+    /// </summary>
+    [HttpDelete("{pluginName}/hooks/{hookId}")]
+    [RequirePermission(AdminPermissions.PluginsWrite)]
+    public async Task<ActionResult> DeleteHook(
+        string pluginName,
+        string hookId,
+        CancellationToken cancellationToken)
+    {
+        if (_hookStore == null)
+        {
+            return BadRequest(new { error = "Plugin hook store not configured. Call AddPluginHooks() during startup." });
+        }
+
+        // Get plugin for the event
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+
+        await _hookStore.DeleteAsync(TenantId!, hookId, cancellationToken);
+
+        await _eventService.RaiseAsync(new PluginHookDeletedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = RequireAdminUserId,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = hookId,
+            ResourceName = hookId,
+            PluginId = plugin?.Id,
+            PluginName = plugin?.Name
+        }, cancellationToken);
+
+        return NoContent();
+    }
+
+    // ============ Execution Logs ============
+
+    /// <summary>
+    /// Get recent execution logs for a plugin
+    /// </summary>
+    [HttpGet("{pluginName}/executions")]
+    [RequirePermission(AdminPermissions.PluginsRead)]
+    public async Task<ActionResult<IEnumerable<PluginExecutionLogDto>>> GetExecutions(
+        string pluginName,
+        [FromQuery] int limit = 100,
+        CancellationToken cancellationToken = default)
+    {
+        if (_executionLogger == null)
+        {
+            return BadRequest(new { error = "Plugin execution logger not configured. Call AddPluginHooks() during startup." });
+        }
+
+        // Get plugin to find its ID
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+        if (plugin == null)
+        {
+            return NotFound();
+        }
+
+        var logs = await _executionLogger.GetRecentExecutionsAsync(TenantId!, plugin.Id, limit, cancellationToken);
+
+        var result = logs.Select(l => new PluginExecutionLogDto
+        {
+            Id = l.Id,
+            PluginId = l.PluginId,
+            HookBindingId = l.HookBindingId,
+            ExecutionId = l.ExecutionId,
+            Domain = l.Domain,
+            EventType = l.EventType,
+            EntityType = l.EntityType,
+            EntityId = l.EntityId,
+            DurationMs = l.DurationMs,
+            Result = l.Result.ToString(),
+            ResultAction = l.ResultAction,
+            ErrorMessage = l.ErrorMessage,
+            UserId = l.UserId,
+            ExecutedAt = l.ExecutedAt
+        });
+
+        return Ok(result);
+    }
+
+    // ============ Network Configuration ============
+
+    /// <summary>
+    /// Get network configuration for a plugin
+    /// </summary>
+    [HttpGet("{pluginName}/network")]
+    [RequirePermission(AdminPermissions.PluginsRead)]
+    public async Task<ActionResult<PluginNetworkConfigDto>> GetNetworkConfig(
+        string pluginName,
+        CancellationToken cancellationToken)
+    {
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+        if (plugin == null)
+        {
+            return NotFound();
+        }
+
+        var config = await _pluginStore.GetNetworkConfigAsync(plugin.Id, cancellationToken);
+
+        // No row yet → return the safe default ("None" — no network access).
+        if (config == null)
+        {
+            return Ok(new PluginNetworkConfigDto
+            {
+                PluginId = plugin.Id,
+                PluginName = plugin.Name,
+                AccessMode = NetworkAccessMode.None.ToString(),
+                AllowedHosts = new List<string>(),
+                HttpTimeoutMs = 5000,
+                MaxHttpRequestsPerExecution = 5,
+                RequiresApproval = false,
+                IsApproved = false
+            });
+        }
+
+        return Ok(MapToDto(plugin.Id, plugin.Name, config));
+    }
+
+    /// <summary>
+    /// Update network configuration for a plugin
+    /// </summary>
+    [HttpPut("{pluginName}/network")]
+    [RequirePermission(AdminPermissions.PluginsManage)]
+    public async Task<ActionResult<PluginNetworkConfigDto>> UpdateNetworkConfig(
+        string pluginName,
+        [FromBody] UpdateNetworkConfigRequest request,
+        CancellationToken cancellationToken)
+    {
+        var plugin = await _pluginStore.GetPluginInfoAsync(pluginName, TenantId, cancellationToken);
+        if (plugin == null)
+        {
+            return NotFound();
+        }
+
+        if (!Enum.TryParse<NetworkAccessMode>(request.AccessMode, ignoreCase: true, out var accessMode))
+        {
+            return BadRequest(new { error = $"Invalid AccessMode '{request.AccessMode}' — expected one of None, Self, Whitelist" });
+        }
+
+        if (accessMode == NetworkAccessMode.All)
+        {
+            return BadRequest(new
+            {
+                error = "AccessMode=All is not permitted for sandboxed WASM plugins. Use Whitelist with explicit hosts, or implement as a managed (.NET) plugin if unrestricted egress is required."
+            });
+        }
+
+        // Whitelist entries must not smuggle catch-alls or internal IPs.
+        // Validation is save-time only — DNS rebinding (hostname resolves to
+        // an internal IP at request time) is a separate runtime defence.
+        if (accessMode == NetworkAccessMode.Whitelist && request.AllowedHosts != null)
+        {
+            var refusal = PluginNetworkPolicyValidator.ValidateAll(request.AllowedHosts, _platformHost);
+            if (refusal != null)
+            {
+                return BadRequest(new { error = $"Invalid whitelist entry: {refusal}" });
+            }
+        }
+
+        var existing = await _pluginStore.GetNetworkConfigAsync(plugin.Id, cancellationToken);
+
+        // Wide-open access ("All") needs admin approval. Switching INTO All
+        // resets approval — a separate approve endpoint flips IsApproved.
+        // Switching out of All clears the approval state so re-entry needs
+        // approval again.
+        var requiresApproval = accessMode == NetworkAccessMode.All;
+        var keepApproval = existing != null
+            && existing.AccessMode == accessMode
+            && existing.IsApproved;
+
+        var toSave = new PluginNetworkConfig
+        {
+            Id = existing?.Id ?? string.Empty,
+            PluginId = plugin.Id,
+            TenantId = plugin.TenantId,
+            AccessMode = accessMode,
+            AllowedHosts = request.AllowedHosts != null && request.AllowedHosts.Count > 0
+                ? System.Text.Json.JsonSerializer.Serialize(request.AllowedHosts)
+                : null,
+            HttpTimeoutMs = request.HttpTimeoutMs ?? 5000,
+            MaxHttpRequestsPerExecution = request.MaxHttpRequestsPerExecution ?? 5,
+            RequiresApproval = requiresApproval,
+            IsApproved = keepApproval,
+            ApprovedBy = keepApproval ? existing!.ApprovedBy : null,
+            ApprovedAt = keepApproval ? existing!.ApprovedAt : null
+        };
+
+        var saved = await _pluginStore.UpsertNetworkConfigAsync(toSave, cancellationToken);
+
+        // Drop the cached WASM module so the next execution reloads with
+        // the new manifest. Without this, an admin's network policy change
+        // wouldn't take effect until the host process restarts.
+        if (_pluginExecutor.IsPluginLoaded(plugin.Name))
+        {
+            await _pluginExecutor.UnloadPluginAsync(plugin.Name, cancellationToken);
+        }
+
+        await _eventService.RaiseAsync(new PluginNetworkConfigUpdatedEvent
+        {
+            TenantId = TenantId,
+            AdminUserId = RequireAdminUserId,
+            AdminUserName = AdminUserName,
+            IpAddress = ClientIp,
+            ResourceId = plugin.Id,
+            ResourceName = plugin.Name,
+            AccessMode = saved.AccessMode.ToString()
+        }, cancellationToken);
+
+        return Ok(MapToDto(plugin.Id, plugin.Name, saved));
+    }
+
+    private static PluginNetworkConfigDto MapToDto(string pluginId, string pluginName, PluginNetworkConfig config)
+    {
+        var hosts = string.IsNullOrEmpty(config.AllowedHosts)
+            ? new List<string>()
+            : System.Text.Json.JsonSerializer.Deserialize<List<string>>(config.AllowedHosts) ?? new List<string>();
+
+        return new PluginNetworkConfigDto
+        {
+            PluginId = pluginId,
+            PluginName = pluginName,
+            AccessMode = config.AccessMode.ToString(),
+            AllowedHosts = hosts,
+            HttpTimeoutMs = config.HttpTimeoutMs,
+            MaxHttpRequestsPerExecution = config.MaxHttpRequestsPerExecution,
+            RequiresApproval = config.RequiresApproval,
+            IsApproved = config.IsApproved,
+            ApprovedBy = config.ApprovedBy,
+            ApprovedAt = config.ApprovedAt
+        };
+    }
+
+    // ============ Helpers ============
+
     private static string SanitizePluginName(string name)
     {
         // Only allow alphanumeric, hyphens, underscores
@@ -389,41 +894,6 @@ public class PluginsController : AdminBaseController
     }
 }
 
-#region DTOs
-
-public class PluginListItemDto
-{
-    public string Name { get; set; } = null!;
-    public string DisplayName { get; set; } = null!;
-    public string? Description { get; set; }
-    public string? Version { get; set; }
-    public string? Author { get; set; }
-    public string Scope { get; set; } = null!;
-    public bool IsGlobal { get; set; }
-    public long SizeBytes { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
-    public bool IsLoaded { get; set; }
-}
-
-public class PluginDetailDto
-{
-    public string Name { get; set; } = null!;
-    public string DisplayName { get; set; } = null!;
-    public string? Description { get; set; }
-    public string? Version { get; set; }
-    public string? Author { get; set; }
-    public string Scope { get; set; } = null!;
-    public string? TenantId { get; set; }
-    public long SizeBytes { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
-    public List<string>? RequiredClaims { get; set; }
-    public List<string>? OutputClaims { get; set; }
-    public Dictionary<string, object>? ConfigSchema { get; set; }
-    public bool IsLoaded { get; set; }
-}
-
 public class UploadPluginRequest
 {
     public IFormFile? File { get; set; }
@@ -432,20 +902,9 @@ public class UploadPluginRequest
     public string? Description { get; set; }
     public string? Version { get; set; }
     public string? Author { get; set; }
+    public string? Type { get; set; }
+    public bool? Enabled { get; set; }
     public List<string>? RequiredClaims { get; set; }
     public List<string>? OutputClaims { get; set; }
     public Dictionary<string, object>? ConfigSchema { get; set; }
 }
-
-public class UpdatePluginMetadataRequest
-{
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public string? Version { get; set; }
-    public string? Author { get; set; }
-    public List<string>? RequiredClaims { get; set; }
-    public List<string>? OutputClaims { get; set; }
-    public Dictionary<string, object>? ConfigSchema { get; set; }
-}
-
-#endregion

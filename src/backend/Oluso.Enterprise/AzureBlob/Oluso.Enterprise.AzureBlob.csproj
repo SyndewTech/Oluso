@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Package metadata -->
+    <PackageId>Oluso.Enterprise.AzureBlob</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Azure Blob Storage IFileUploader implementation for Oluso identity platform. Provides container-based file storage with SAS URL signing, content hashing, and access tier control.</Description>
+    <PackageTags>identity;authentication;oauth;oidc;azure;blob;storage;files</PackageTags>
+
+    <!-- Generate XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Azure Blob SDK -->
+    <PackageReference Include="Azure.Storage.Blobs" />
+  </ItemGroup>
+
+  <!-- Reference Oluso packages -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Oluso.Core\Oluso.Core.csproj" />
+  </ItemGroup>
+
+</Project>

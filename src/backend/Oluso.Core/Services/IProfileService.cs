@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Oluso.Core.Domain.Entities;
 
 namespace Oluso.Core.Services;
@@ -29,6 +30,12 @@ public class ProfileDataRequestContext
     public IEnumerable<string>? RequestedClaimTypes { get; init; }
 
     /// <summary>
+    /// The resource indicators (RFC 8707) requested for the token, if any.
+    /// Used to fold the matching Resource.UserClaims into the emitted claim set.
+    /// </summary>
+    public IEnumerable<string>? RequestedResources { get; init; }
+
+    /// <summary>
     /// The caller (e.g., "UserInfoEndpoint", "TokenEndpoint")
     /// </summary>
     public string? Caller { get; init; }
@@ -38,6 +45,22 @@ public class ProfileDataRequestContext
     /// Claims providers can use this to only respond to specific protocols.
     /// </summary>
     public string? Protocol { get; init; }
+
+    /// <summary>
+    /// Out-of-band data carried into claim resolution that is not a scope or a
+    /// stored user attribute — e.g. allowlisted custom /authorize parameters
+    /// (keyed by parameter name) captured at the authorization request and
+    /// transported to the token endpoint. Claims providers read this via
+    /// <c>ClaimsProviderContext.AdditionalData</c>.
+    /// </summary>
+    public IDictionary<string, object>? AdditionalData { get; init; }
+
+    /// <summary>
+    /// The tenant the token is for, when the caller names it (a refresh's <c>tenant</c> parameter, or the
+    /// tenant a refresh token was issued for). Null means the request's tenant. Either way the user must be
+    /// entitled to it; a profile service issues the token for their home tenant otherwise.
+    /// </summary>
+    public string? TenantId { get; init; }
 
     /// <summary>
     /// The issued claims - add claims here
@@ -207,9 +230,7 @@ public static class ProfileServiceExtensions
 
         await profileService.GetProfileDataAsync(context);
 
-        return context.IssuedClaims.ToDictionary(
-            c => c.Type,
-            c => (object)c.Value);
+        return BuildClaimDictionary(context.IssuedClaims);
     }
 
     /// <summary>
@@ -234,9 +255,7 @@ public static class ProfileServiceExtensions
 
         await profileService.GetProfileDataAsync(context);
 
-        return context.IssuedClaims.ToDictionary(
-            c => c.Type,
-            c => (object)c.Value);
+        return BuildClaimDictionary(context.IssuedClaims);
     }
 
     /// <summary>
@@ -260,13 +279,26 @@ public static class ProfileServiceExtensions
 
         await profileService.GetProfileDataAsync(context);
 
-        return context.IssuedClaims.ToDictionary(
-            c => c.Type,
-            c => (object)c.Value);
+        return BuildClaimDictionary(context.IssuedClaims);
     }
 
     /// <summary>
     /// Gets profile claims for a user with full context including protocol
+    /// </summary>
+    public static Task<IDictionary<string, object>> GetProfileClaimsAsync(
+        this IProfileService profileService,
+        string subjectId,
+        Client client,
+        IEnumerable<string> scopes,
+        string caller,
+        string protocol,
+        CancellationToken cancellationToken = default)
+        => profileService.GetProfileClaimsAsync(subjectId, client, scopes, caller, protocol, null, null, cancellationToken);
+
+    /// <summary>
+    /// Gets profile claims for a user with full context including protocol and
+    /// the requested resource indicators (RFC 8707), so Resource.UserClaims are
+    /// folded into the emitted claim set.
     /// </summary>
     public static async Task<IDictionary<string, object>> GetProfileClaimsAsync(
         this IProfileService profileService,
@@ -275,6 +307,8 @@ public static class ProfileServiceExtensions
         IEnumerable<string> scopes,
         string caller,
         string protocol,
+        IEnumerable<string>? resources,
+        IDictionary<string, object>? additionalData = null,
         CancellationToken cancellationToken = default)
     {
         var context = new ProfileDataRequestContext
@@ -283,13 +317,83 @@ public static class ProfileServiceExtensions
             Client = client,
             RequestedScopes = scopes,
             Caller = caller,
-            Protocol = protocol
+            Protocol = protocol,
+            RequestedResources = resources,
+            AdditionalData = additionalData
         };
 
         await profileService.GetProfileDataAsync(context);
 
-        return context.IssuedClaims.ToDictionary(
-            c => c.Type,
-            c => (object)c.Value);
+        return BuildClaimDictionary(context.IssuedClaims);
     }
+
+    /// <summary>
+    /// Gets profile claims for a token for a named tenant rather than the request's
+    /// (see <see cref="ProfileDataRequestContext.TenantId"/>).
+    /// </summary>
+    public static async Task<IDictionary<string, object>> GetProfileClaimsForTenantAsync(
+        this IProfileService profileService,
+        string subjectId,
+        Client client,
+        IEnumerable<string> scopes,
+        string tenantId,
+        string caller,
+        string protocol,
+        IEnumerable<string>? resources,
+        CancellationToken cancellationToken = default)
+    {
+        var context = new ProfileDataRequestContext
+        {
+            SubjectId = subjectId,
+            Client = client,
+            RequestedScopes = scopes,
+            Caller = caller,
+            Protocol = protocol,
+            RequestedResources = resources,
+            TenantId = tenantId
+        };
+
+        await profileService.GetProfileDataAsync(context);
+
+        return BuildClaimDictionary(context.IssuedClaims);
+    }
+
+    private static IDictionary<string, object> BuildClaimDictionary(IEnumerable<Claim> issuedClaims)
+    {
+        var result = new Dictionary<string, object>();
+
+        foreach (var group in issuedClaims.GroupBy(c => c.Type))
+        {
+            var values = group.Select(c => c.Value).Distinct().ToList();
+
+            // A claim tagged JSON carries structure. Collapsing it to a string
+            // emits a quoted blob that every client then has to unwrap, so hand
+            // the token layer the parsed value instead.
+            if (values.Count == 1 && group.First().ValueType == ProfileClaimValueTypes.Json)
+            {
+                try
+                {
+                    result[group.Key] = JsonSerializer.Deserialize<JsonElement>(values[0]);
+                    continue;
+                }
+                catch (JsonException)
+                {
+                    // Malformed — fall through and emit it verbatim.
+                }
+            }
+
+            result[group.Key] = values.Count == 1 ? (object)values[0] : values;
+        }
+
+        return result;
+    }
+}
+
+/// <summary>
+/// Claim value types recognised when building token claims. Mirrors
+/// <c>JsonClaimValueTypes</c> without taking a JWT package dependency in Core.
+/// </summary>
+public static class ProfileClaimValueTypes
+{
+    public const string Json = "JSON";
 }

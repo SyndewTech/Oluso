@@ -161,8 +161,19 @@ public class LocalKeyMaterialProvider : IKeyMaterialProvider
 
     #region Key Generation
 
+    /// <summary>Minimum RSA key size accepted (RFC 7518 §3.3 requires ≥ 2048 bits for RS256/384/512).</summary>
+    private const int MinRsaKeySizeBits = 2048;
+
     private static (string privateKey, string publicKey) GenerateRsaKey(int keySize)
     {
+        // Enforce the minimum at the application layer so weak keys are rejected
+        // deterministically on every platform — the underlying crypto provider's
+        // behaviour for small key sizes varies by OS / OpenSSL policy.
+        if (keySize < MinRsaKeySizeBits)
+            throw new ArgumentOutOfRangeException(
+                nameof(keySize), keySize,
+                $"RSA key size must be at least {MinRsaKeySizeBits} bits.");
+
         using var rsa = RSA.Create(keySize);
 
         var privateKeyBytes = rsa.ExportRSAPrivateKey();

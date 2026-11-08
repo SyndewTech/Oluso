@@ -21,7 +21,10 @@
         </div>
     }
 
-    <form method="post">
+    @{
+        var hasFileField = Model.Fields.Any(f => string.Equals(f.Type, "file", StringComparison.OrdinalIgnoreCase));
+    }
+    <form method="post" enctype="@(hasFileField ? "multipart/form-data" : "application/x-www-form-urlencoded")">
         <input type="hidden" name="__submitted" value="true" />
 
         @foreach (var field in Model.Fields)
@@ -32,12 +35,15 @@
                 continue;
             }
 
-            <div class="form-group mb-3">
+            <div class="form-group mb-3"
+                 data-show-when-field="@field.ShowWhen?.Field"
+                 data-show-when-operator="@field.ShowWhen?.Operator"
+                 data-show-when-value="@field.ShowWhen?.Value">
                 <label for="@field.Name" class="form-label">
                     @field.Label
                     @if (field.Required)
                     {
-                        <span class="text-danger">*</span>
+                        <span class="text-danger">@Localizer["dynamic_form_required_marker"]</span>
                     }
                 </label>
 
@@ -64,7 +70,7 @@
                                 class="form-select @errorClass"
                                 @(field.Required ? "required" : "")
                                 @(field.ReadOnly ? "disabled" : "")>
-                            <option value="">@(field.Placeholder ?? "Select...")</option>
+                            <option value="">@(field.Placeholder ?? @Localizer["dynamic_form_select_default"].Value)</option>
                             @foreach (var option in field.Options)
                             {
                                 if (option.Value == field.Value)
@@ -151,15 +157,75 @@
 
                     case "tel":
                     case "phone":
-                        <input type="tel"
+                        @if (field.PhoneCountries != null)
+                        {
+                            <div class="phone-input">
+                                <select id="@(field.Name)__country"
+                                        name="@(field.Name)__country"
+                                        class="form-select phone-input-country @errorClass"
+                                        aria-label="Country code"
+                                        @(field.ReadOnly ? "disabled" : "")>
+                                    @if (string.IsNullOrEmpty(field.PhoneCountry))
+                                    {
+                                        <option value="" selected>Country</option>
+                                    }
+                                    @foreach (var country in field.PhoneCountries)
+                                    {
+                                        <option value="@country.Code" selected="@(country.Code == field.PhoneCountry)">@country.Flag @country.Name (+@country.DialCode)</option>
+                                    }
+                                </select>
+                                <input type="tel"
+                                       id="@field.Name"
+                                       name="@field.Name"
+                                       class="form-control phone-input-number @errorClass"
+                                       placeholder="@(field.Placeholder ?? "Phone number")"
+                                       value="@field.PhoneNational"
+                                       inputmode="tel"
+                                       autocomplete="tel-national"
+                                       @(field.Required ? "required" : "")
+                                       @(field.ReadOnly ? "readonly" : "") />
+                            </div>
+                        }
+                        else
+                        {
+                            <input type="tel"
+                                   id="@field.Name"
+                                   name="@field.Name"
+                                   class="form-control @errorClass"
+                                   placeholder="@field.Placeholder"
+                                   value="@field.Value"
+                                   inputmode="tel"
+                                   autocomplete="tel"
+                                   @(field.Required ? "required" : "")
+                                   @(field.ReadOnly ? "readonly" : "") />
+                        }
+                        break;
+
+                    case "file":
+                        var kept = string.IsNullOrEmpty(field.Value) ? 0 : field.Value.Split(',', StringSplitOptions.RemoveEmptyEntries).Length;
+                        <input type="file"
                                id="@field.Name"
                                name="@field.Name"
                                class="form-control @errorClass"
-                               placeholder="@field.Placeholder"
-                               value="@field.Value"
-                               autocomplete="tel"
-                               @(field.Required ? "required" : "")
-                               @(field.ReadOnly ? "readonly" : "") />
+                               accept="@field.FileAccept"
+                               @((field.MaxFiles ?? 1) > 1 ? "multiple" : "")
+                               @(field.Required && kept == 0 && !field.FileCapture ? "required" : "")
+                               @(field.ReadOnly ? "disabled" : "") />
+                        @if (field.FileCapture && !field.ReadOnly)
+                        {
+                            <label class="form-label mt-2 d-block" for="@(field.Name)__camera">@Localizer["journey_upload_take_photo"]</label>
+                            <input type="file"
+                                   id="@(field.Name)__camera"
+                                   name="@field.Name"
+                                   class="form-control"
+                                   accept="image/*"
+                                   capture="environment" />
+                        }
+                        <small class="form-text text-muted d-block">@Localizer["journey_upload_limits", field.MaxFileSizeMb ?? 0, field.MaxFiles ?? 1]</small>
+                        @if (kept > 0)
+                        {
+                            <small class="form-text text-muted d-block">@Localizer["journey_upload_kept", kept]</small>
+                        }
                         break;
 
                     default:
@@ -193,7 +259,7 @@
             @if (Model.ShowCancel)
             {
                 <button type="submit" name="__cancel" value="true" class="btn btn-outline-secondary">
-                    @(Model.CancelButtonText ?? "Cancel")
+                    @(Model.CancelButtonText ?? @Localizer["dynamic_form_cancel_button"].Value)
                 </button>
             }
             <button type="submit" class="btn btn-primary">
@@ -202,3 +268,66 @@
         </div>
     </form>
 </div>
+
+@if (Model.Fields.Any(f => f.ShowWhen != null))
+{
+    <script>
+    (function () {
+        // Mirrors the server's condition operators (canonical names) for showWhen.
+        function answers(form, name) {
+            var values = [];
+            form.querySelectorAll('[name="' + CSS.escape(name) + '"]').forEach(function (el) {
+                if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) return;
+                if (el.disabled) return;
+                if (el.value !== '') values.push(el.value);
+            });
+            return values;
+        }
+        function compare(actual, op, expected) {
+            var a = (actual || '').toLowerCase(), e = (expected || '').toLowerCase();
+            var na = parseFloat(actual), ne = parseFloat(expected);
+            switch (op) {
+                case 'eq': return a === e;
+                case 'ne': return a !== e;
+                case 'gt': return !isNaN(na) && !isNaN(ne) && na > ne;
+                case 'gte': return !isNaN(na) && !isNaN(ne) && na >= ne;
+                case 'lt': return !isNaN(na) && !isNaN(ne) && na < ne;
+                case 'lte': return !isNaN(na) && !isNaN(ne) && na <= ne;
+                case 'contains': return a.indexOf(e) >= 0;
+                case 'starts_with': return a.indexOf(e) === 0;
+                case 'ends_with': return e.length <= a.length && a.slice(a.length - e.length) === e;
+                case 'regex': try { return new RegExp(expected).test(actual); } catch (x) { return false; }
+                default: return false;
+            }
+        }
+        function met(values, op, expected) {
+            var list = (expected || '').split(',').map(function (v) { return v.trim().toLowerCase(); }).filter(Boolean);
+            switch (op) {
+                case 'exists': case 'not_empty': return values.length > 0;
+                case 'not_exists': case 'empty': return values.length === 0;
+                case 'ne': return !values.some(function (v) { return compare(v, 'eq', expected); });
+                case 'not_contains': return !values.some(function (v) { return compare(v, 'contains', expected); });
+                case 'in': return values.some(function (v) { return list.indexOf(v.toLowerCase()) >= 0; });
+                case 'not_in': return !values.some(function (v) { return list.indexOf(v.toLowerCase()) >= 0; });
+                case 'true': return values.some(function (v) { return ['true', '1', 'yes', 'on'].indexOf(v.toLowerCase()) >= 0; });
+                case 'false': return !values.some(function (v) { return ['true', '1', 'yes', 'on'].indexOf(v.toLowerCase()) >= 0; });
+                default: return values.some(function (v) { return compare(v, op, expected); });
+            }
+        }
+        document.querySelectorAll('form').forEach(function (form) {
+            var groups = form.querySelectorAll('[data-show-when-field]:not([data-show-when-field=""])');
+            if (groups.length === 0) return;
+            function apply() {
+                groups.forEach(function (group) {
+                    var shown = met(answers(form, group.dataset.showWhenField), group.dataset.showWhenOperator, group.dataset.showWhenValue);
+                    group.hidden = !shown;
+                    group.querySelectorAll('input, select, textarea').forEach(function (el) { el.disabled = !shown; });
+                });
+            }
+            form.addEventListener('input', apply);
+            form.addEventListener('change', apply);
+            apply();
+        });
+    })();
+    </script>
+}

@@ -1,8 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Admin.Dto.Resources;
+using Oluso.Admin.Dto.Scopes;
+using Oluso.Core.Protocols.Models;
+using Oluso.Core.Services;
 
 namespace Oluso.Admin.Controllers;
 
@@ -32,9 +37,22 @@ public class IdentityResourcesController : AdminBaseController
     [RequirePermission(AdminPermissions.IdentityResourcesRead)]
     public async Task<ActionResult<IEnumerable<IdentityResourceDto>>> GetAll(CancellationToken cancellationToken)
     {
-        var resources = await _resourceStore.GetAllIdentityResourcesAsync(cancellationToken);
-        var dtos = resources.Select(MapToDto);
-        return Ok(dtos);
+        var registered = (await _resourceStore.GetAllIdentityResourcesAsync(cancellationToken)).Select(MapToDto).ToList();
+        var builtIn = OidcConstants.Scopes.StandardIdentity
+            .Where(name => !registered.Any(r => string.Equals(r.Name, name, StringComparison.Ordinal)))
+            .Select(name => new IdentityResourceDto
+            {
+                Name = name,
+                DisplayName = name,
+                Enabled = true,
+                ShowInDiscoveryDocument = true,
+                Required = name == OidcConstants.Scopes.OpenId,
+                UserClaims = IdentityScopeClaimResolver.StandardScopeClaimTypes.TryGetValue(name, out var claims)
+                    ? claims.ToList()
+                    : new List<string>(),
+                BuiltIn = true,
+            });
+        return Ok(builtIn.Concat(registered));
     }
 
     /// <summary>
@@ -108,27 +126,24 @@ public class IdentityResourcesController : AdminBaseController
     [RequirePermission(AdminPermissions.IdentityResourcesWrite)]
     public async Task<ActionResult<IdentityResourceDto>> Update(
         int id,
-        [FromBody] UpdateIdentityResourceRequest request,
+        [FromBody] IdentityResourceDto request,
         CancellationToken cancellationToken)
     {
         var existing = await _resourceStore.GetIdentityResourceByIdAsync(id, cancellationToken);
         if (existing == null)
             return NotFound();
 
-        if (request.DisplayName != null) existing.DisplayName = request.DisplayName;
-        if (request.Description != null) existing.Description = request.Description;
-        if (request.Required.HasValue) existing.Required = request.Required.Value;
-        if (request.Emphasize.HasValue) existing.Emphasize = request.Emphasize.Value;
-        if (request.ShowInDiscoveryDocument.HasValue) existing.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument.Value;
-        if (request.Enabled.HasValue) existing.Enabled = request.Enabled.Value;
+        existing.DisplayName = request.DisplayName;
+        existing.Description = request.Description;
+        existing.Required = request.Required;
+        existing.Emphasize = request.Emphasize;
+        existing.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument;
+        existing.Enabled = request.Enabled;
 
-        if (request.UserClaims != null)
+        existing.UserClaims.Clear();
+        foreach (var claim in request.UserClaims)
         {
-            existing.UserClaims.Clear();
-            foreach (var claim in request.UserClaims)
-            {
-                existing.UserClaims.Add(new IdentityResourceClaim { Type = claim });
-            }
+            existing.UserClaims.Add(new IdentityResourceClaim { Type = claim });
         }
 
         var updated = await _resourceStore.UpdateIdentityResourceAsync(existing, cancellationToken);
@@ -150,8 +165,8 @@ public class IdentityResourcesController : AdminBaseController
             return NotFound();
 
         // Prevent deletion of standard OIDC scopes
-        var standardScopes = new[] { "openid", "profile", "email", "address", "phone", "offline_access" };
-        if (standardScopes.Contains(existing.Name, StringComparer.OrdinalIgnoreCase))
+        if (OidcConstants.Scopes.StandardIdentity.Append(OidcConstants.Scopes.OfflineAccess)
+            .Contains(existing.Name, StringComparer.OrdinalIgnoreCase))
         {
             return BadRequest(new { error = "Cannot delete standard OIDC scope" });
         }
@@ -178,45 +193,3 @@ public class IdentityResourcesController : AdminBaseController
         Updated = resource.Updated
     };
 }
-
-#region DTOs
-
-public class IdentityResourceDto
-{
-    public int Id { get; set; }
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool Required { get; set; }
-    public bool Emphasize { get; set; }
-    public bool ShowInDiscoveryDocument { get; set; }
-    public bool Enabled { get; set; }
-    public List<string> UserClaims { get; set; } = new();
-    public DateTime Created { get; set; }
-    public DateTime? Updated { get; set; }
-}
-
-public class CreateIdentityResourceRequest
-{
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Required { get; set; }
-    public bool? Emphasize { get; set; }
-    public bool? ShowInDiscoveryDocument { get; set; }
-    public bool? Enabled { get; set; }
-    public List<string>? UserClaims { get; set; }
-}
-
-public class UpdateIdentityResourceRequest
-{
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Required { get; set; }
-    public bool? Emphasize { get; set; }
-    public bool? ShowInDiscoveryDocument { get; set; }
-    public bool? Enabled { get; set; }
-    public List<string>? UserClaims { get; set; }
-}
-
-#endregion

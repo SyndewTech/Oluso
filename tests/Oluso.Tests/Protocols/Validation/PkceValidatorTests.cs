@@ -245,8 +245,8 @@ public class PkceValidatorTests
     {
         var verifier = _validator.GenerateCodeVerifier();
 
-        verifier.Length.Should().BeGreaterOrEqualTo(43);
-        verifier.Length.Should().BeLessOrEqualTo(128);
+        verifier.Length.Should().BeGreaterThanOrEqualTo(43);
+        verifier.Length.Should().BeLessThanOrEqualTo(128);
     }
 
     [Fact]

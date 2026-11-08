@@ -1,18 +1,15 @@
 @model Oluso.UserJourneys.Steps.LinkAccountConfirmViewModel
 
 <div class="link-account-confirm-form">
-    <h2>Link @Model.ProviderDisplayName Account</h2>
-    <p class="description">
-        You're about to link your <strong>@Model.ProviderDisplayName</strong> account to your profile.
-        This will allow you to sign in using @Model.ProviderDisplayName in the future.
-    </p>
+    <h2>@Localizer["link_account_confirm_title", Model.ProviderDisplayName]</h2>
+    <p class="description">@Localizer["link_account_confirm_description", Model.ProviderDisplayName]</p>
 
     <div class="alert alert-info" role="alert">
-        <strong>What this means:</strong>
+        <strong>@Localizer["link_account_confirm_alert_header"]</strong>
         <ul class="mb-0 mt-2">
-            <li>You can sign in with your @Model.ProviderDisplayName account</li>
-            <li>Your @Model.ProviderDisplayName profile info may be used to keep your profile up to date</li>
-            <li>You can unlink this account at any time from your settings</li>
+            <li>@Localizer["link_account_confirm_alert_item1", Model.ProviderDisplayName]</li>
+            <li>@Localizer["link_account_confirm_alert_item2", Model.ProviderDisplayName]</li>
+            <li>@Localizer["link_account_confirm_alert_item3"]</li>
         </ul>
     </div>
 
@@ -24,9 +21,9 @@
 
         <div class="d-grid gap-2 d-md-flex">
             <button type="submit" class="btn btn-primary">
-                Link @Model.ProviderDisplayName
+                @Localizer["link_account_confirm_button", Model.ProviderDisplayName]
             </button>
-            <a href="?cancel=true" class="btn btn-outline-secondary">Cancel</a>
+            <a href="?cancel=true" class="btn btn-outline-secondary">@Localizer["link_account_confirm_cancel"]</a>
         </div>
     </form>
 </div>

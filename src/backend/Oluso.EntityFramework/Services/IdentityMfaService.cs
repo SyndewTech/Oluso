@@ -1,3 +1,6 @@
+using Oluso.Core.Domain.Interfaces;
+using System.Text;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
@@ -18,22 +21,27 @@ public class IdentityMfaService : IMfaService
     private readonly ILogger<IdentityMfaService> _logger;
     private readonly IEmailSender? _emailSender;
     private readonly ISmsSender? _smsSender;
+    private readonly IPlatformEmailTemplateService? _platformTemplates;
 
     private const string CacheKeyPrefix = "oluso:mfa:code:";
-    private static readonly TimeSpan CodeExpiration = TimeSpan.FromMinutes(10);
+    private readonly ITenantSettingsProvider _tenantSettings;
 
     public IdentityMfaService(
         UserManager<OlusoUser> userManager,
         IDistributedCache cache,
+        ITenantSettingsProvider tenantSettings,
         ILogger<IdentityMfaService> logger,
         IEmailSender? emailSender = null,
-        ISmsSender? smsSender = null)
+        ISmsSender? smsSender = null,
+        IPlatformEmailTemplateService? platformTemplates = null)
     {
+        _tenantSettings = tenantSettings;
         _userManager = userManager;
         _cache = cache;
         _logger = logger;
         _emailSender = emailSender;
         _smsSender = smsSender;
+        _platformTemplates = platformTemplates;
     }
 
     public async Task<MfaSetupResult> GenerateTotpSetupAsync(string userId, CancellationToken cancellationToken = default)
@@ -106,10 +114,15 @@ public class IdentityMfaService : IMfaService
         var code = GenerateCode();
         var cacheKey = GetCacheKey(userId, provider);
 
+        var accountEmails = string.IsNullOrEmpty(user.TenantId)
+            ? await _tenantSettings.GetAccountEmailSettingsAsync(cancellationToken)
+            : await _tenantSettings.GetAccountEmailSettingsAsync(user.TenantId, cancellationToken);
+        var codeExpiration = TimeSpan.FromMinutes(accountEmails.MfaCodeLifetimeMinutes);
+
         // Store the code in distributed cache
         var options = new DistributedCacheEntryOptions
         {
-            AbsoluteExpirationRelativeToNow = CodeExpiration
+            AbsoluteExpirationRelativeToNow = codeExpiration
         };
         await _cache.SetStringAsync(cacheKey, code, options, cancellationToken);
 
@@ -121,8 +134,7 @@ public class IdentityMfaService : IMfaService
             case "email":
                 if (_emailSender != null && !string.IsNullOrEmpty(user.Email))
                 {
-                    var subject = "Your verification code";
-                    var body = GenerateVerificationEmailBody(code);
+                    var (subject, body) = await BuildMfaEmailAsync(code, codeExpiration, cancellationToken);
                     var result = await _emailSender.SendAsync(user.Email, subject, body, cancellationToken);
                     if (!result.Success)
                     {
@@ -141,7 +153,7 @@ public class IdentityMfaService : IMfaService
             case "phone":
                 if (_smsSender != null && !string.IsNullOrEmpty(user.PhoneNumber))
                 {
-                    var message = $"Your verification code is: {code}. Valid for 10 minutes.";
+                    var message = $"Your verification code is: {code}. Valid for {Durations.Describe(codeExpiration)}.";
                     var result = await _smsSender.SendAsync(user.PhoneNumber, message, cancellationToken);
                     if (!result.Success)
                     {
@@ -160,19 +172,42 @@ public class IdentityMfaService : IMfaService
         return true;
     }
 
-    private static string GenerateVerificationEmailBody(string code)
+    private async Task<(string Subject, string Body)> BuildMfaEmailAsync(string code, TimeSpan codeExpiration, CancellationToken cancellationToken)
     {
-        return $@"
-<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;'>
-    <h2>Verification Code</h2>
-    <p>Your verification code is:</p>
-    <div style='font-size: 32px; font-weight: bold; letter-spacing: 8px; padding: 20px; background: #f5f5f5; text-align: center; margin: 20px 0;'>
-        {code}
-    </div>
-    <p>This code will expire in 10 minutes.</p>
-    <p style='color: #666; font-size: 12px;'>If you didn't request this code, you can safely ignore this email.</p>
-</div>";
+        if (_platformTemplates != null)
+        {
+            var rendered = await _platformTemplates.RenderAsync(
+                PlatformTemplateNames.MfaEmail,
+                new Dictionary<string, object>
+                {
+                    [PlatformTemplateScopeKeys.OtpCode] = code,
+                    [PlatformTemplateScopeKeys.ExpirationMinutes] = (int)codeExpiration.TotalMinutes,
+                    [PlatformTemplateScopeKeys.ExpiresIn] = Durations.Describe(codeExpiration),
+                },
+                cancellationToken);
+            if (rendered != null)
+            {
+                return (rendered.Subject, rendered.HtmlBody);
+            }
+        }
+
+        return ("Your verification code", GenerateVerificationEmailBody(code, Durations.Describe(codeExpiration)));
     }
+
+    private static string GenerateVerificationEmailBody(string code, string expiresIn) => BrandedEmailLayout.Document(
+        title: "Your verification code",
+        preheader: "Your verification code",
+        accent: BrandedEmailLayout.DefaultAccent,
+        brand: "",
+        eyebrow: "Two-step verification",
+        heading: "Confirm it's you",
+        rows:
+            BrandedEmailLayout.Lead("Enter this code to finish signing in:") +
+            BrandedEmailLayout.Code(code, BrandedEmailLayout.DefaultAccent) +
+            BrandedEmailLayout.Note($"This code expires in <strong>{expiresIn}</strong>.") +
+            BrandedEmailLayout.Divider() +
+            BrandedEmailLayout.Paragraph("<strong>Didn't try to sign in?</strong> Someone may know your password. Change it as soon as you can."),
+        footnote: "This is an automated security email.");
 
     private static string MaskPhoneNumber(string phone)
     {
@@ -330,8 +365,8 @@ public class IdentityMfaService : IMfaService
         var cacheKey = GetCacheKey(userId, provider);
         var storedCode = await _cache.GetStringAsync(cacheKey, cancellationToken);
 
-        if (!string.IsNullOrEmpty(storedCode) &&
-            string.Equals(code, storedCode, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrEmpty(storedCode) && !string.IsNullOrEmpty(code) &&
+            CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(code.Trim()), Encoding.UTF8.GetBytes(storedCode)))
         {
             // Remove the code after successful verification
             await _cache.RemoveAsync(cacheKey, cancellationToken);
@@ -343,10 +378,7 @@ public class IdentityMfaService : IMfaService
         return false;
     }
 
-    private static string GenerateCode()
-    {
-        return Random.Shared.Next(100000, 999999).ToString();
-    }
+    private static string GenerateCode() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
 
     private static string GetCacheKey(string userId, string provider)
     {

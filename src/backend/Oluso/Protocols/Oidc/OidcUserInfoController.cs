@@ -13,7 +13,7 @@ namespace Oluso.Protocols.Oidc;
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
 
-public class OidcUserInfoController : ControllerBase
+public class OidcUserInfoController : OidcControllerBase
 {
     private readonly IProfileService _profileService;
     private readonly ITenantContext _tenantContext;
@@ -32,6 +32,8 @@ public class OidcUserInfoController : ControllerBase
     [HttpGet]
     [HttpPost]
     [Authorize(AuthenticationSchemes = OidcConstants.AccessTokenAuthenticationScheme)]
+    // Scope-restricted clients may read the profile their openid token grants.
+    [Oluso.Core.Authorization.RequireScope("openid")]
     public async Task<IActionResult> GetUserInfo(CancellationToken cancellationToken)
     {
         // Get subject from token

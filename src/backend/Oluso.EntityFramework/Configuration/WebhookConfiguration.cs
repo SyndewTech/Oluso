@@ -33,11 +33,29 @@ public class WebhookEndpointConfiguration : IEntityTypeConfiguration<WebhookEndp
             .IsRequired()
             .HasMaxLength(256);
 
+        builder.Property(x => x.SigningSecretEncrypted)
+            .HasMaxLength(512);
+
         builder.Property(x => x.ApiVersion)
             .HasMaxLength(20);
 
         builder.Property(x => x.HeadersJson)
             .HasMaxLength(4000);
+
+        builder.Property(x => x.AuthType)
+            .HasDefaultValue(0);
+
+        builder.Property(x => x.AuthCredential)
+            .HasMaxLength(512);
+
+        builder.Property(x => x.ClientId)
+            .HasMaxLength(200);
+
+        builder.Property(x => x.SensitiveDataAuthorizedBy)
+            .HasMaxLength(128);
+
+        builder.Property(x => x.SensitiveDataAuthorizedByName)
+            .HasMaxLength(256);
 
         // Indexes
         builder.HasIndex(x => x.TenantId);

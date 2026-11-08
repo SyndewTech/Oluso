@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Oluso.Core.Data;
+using Oluso.Core.UserJourneys;
 using Oluso.Enterprise.Ldap.Authentication;
 using Oluso.Enterprise.Ldap.Configuration;
 using Oluso.Enterprise.Ldap.Connection;
@@ -118,6 +119,7 @@ public static class LdapExtensions
 
         // Register step handler for User Journey Engine
         builder.Services.AddScoped<LdapStepHandler>();
+        builder.Services.AddJourneyStepFormDescribers(typeof(LdapStepHandler).Assembly);
 
         return builder;
     }

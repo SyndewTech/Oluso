@@ -1,0 +1,61 @@
+name: Publish npm Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish-public-npm:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: src/frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the JavaScript SDK
+        run: npm ci && npm run build
+        working-directory: sdk/js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version
+        run: ../../scripts/set-version.sh ${{ steps.version.outputs.VERSION }}
+
+      - name: Build all libs
+        run: npx nx run-many --target=build --all --configuration=production
+
+      - name: Publish packages
+        run: |
+          # The JavaScript SDK goes out with the public libs, which depend on it (e.g. @oluso/journey-ui).
+          echo "Publishing ../../sdk/js"
+          npm publish ../../sdk/js --access public
+          for pkg in dist/libs/*/; do
+            if [ -f "$pkg/package.json" ]; then
+              echo "Publishing $pkg"
+              npm publish "$pkg" --access public
+            fi
+          done
+          for pkg in dist/libs/plugins/*/; do
+            if [ -f "$pkg/package.json" ]; then
+              echo "Publishing $pkg"
+              npm publish "$pkg" --access public
+            fi
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

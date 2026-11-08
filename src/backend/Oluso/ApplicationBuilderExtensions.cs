@@ -12,20 +12,39 @@ public static class ApplicationBuilderExtensions
 {
     /// <summary>
     /// Adds Oluso middleware to the pipeline.
-    /// This should be called after UseRouting() and before UseAuthentication().
+    /// This should be called after UseAuthentication() and before UseAuthorization().
+    /// The middleware needs access to JWT claims for tenant access validation.
+    ///
+    /// Pre-authentication host-based tenant resolution (so OAuth callbacks,
+    /// the dynamic external-scheme provider, and Stripe webhooks can read
+    /// <see cref="Oluso.Core.Domain.Interfaces.ITenantContext"/> when they
+    /// fire inside <c>UseAuthentication</c>) is auto-injected at the start
+    /// of the pipeline by <c>EarlyTenantHostStartupFilter</c> — registered
+    /// from <c>AddOluso(...)</c>, no consumer setup required.
     /// </summary>
     /// <example>
     /// <code>
     /// app.UseRouting();
-    /// app.UseOluso();  // Add this line
     /// app.UseAuthentication();
+    /// app.UseOluso();  // claim-based tenant refinement + validation
     /// app.UseAuthorization();
     /// </code>
     /// </example>
     public static IApplicationBuilder UseOluso(this IApplicationBuilder app)
     {
+        // Host validation — rejects requests from unknown hosts (DNS rebinding protection).
+        // Disabled by default; enable via Configure<HostValidationOptions>(o => o.Enabled = true).
+        app.UseMiddleware<HostValidationMiddleware>();
+
         // Add tenant resolution middleware (if multi-tenancy enabled)
         app.UseMiddleware<TenantResolutionMiddleware>();
+
+        // Per-IP limits on sign-in surfaces ([EnableRateLimiting(SignInRateLimitPolicies.*)]).
+        // Runs after UseRouting (called before UseOluso) so endpoint policies are known.
+        app.UseRateLimiter();
+
+        // Mobile force-update signal on API responses (only when Oluso:Mobile:MinAppVersion is set)
+        app.UseMiddleware<MobileMinVersionMiddleware>();
 
         // Add CORS for OIDC endpoints (cross-origin token requests, etc.)
         //app.UseMiddleware<OidcCorsMiddleware>();
@@ -107,6 +126,17 @@ public static class ApplicationBuilderExtensions
                 return _options;
             return _inner.GetService(serviceType);
         }
+    }
+
+    /// <summary>
+    /// Map the SignalR realtime hub. Consumers wire this alongside
+    /// <c>app.MapControllers()</c> so module realtime broadcasts can
+    /// reach connected workspace / admin clients.
+    /// </summary>
+    public static IEndpointRouteBuilder MapOlusoRealtime(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapHub<Oluso.Realtime.RealtimeHub>(Oluso.Realtime.RealtimeHub.Path);
+        return endpoints;
     }
 
     /// <summary>

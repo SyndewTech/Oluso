@@ -1,0 +1,14 @@
+{
+  "$schema": "../../node_modules/ng-packagr/ng-package.schema.json",
+  "dest": "../../dist/libs/ui-core",
+  "assets": [
+    {
+      "input": "src/lib/ui-core",
+      "glob": "ui-core.css",
+      "output": "."
+    }
+  ],
+  "lib": {
+    "entryFile": "src/index.ts"
+  }
+}

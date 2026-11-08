@@ -11,221 +11,13 @@ public class InMemoryJourneyPolicyStore : IJourneyPolicyStore
 
     public InMemoryJourneyPolicyStore()
     {
-        SeedDefaultPolicies();
-    }
-
-    private void SeedDefaultPolicies()
-    {
-        // Default sign-in policy
-        var signIn = new JourneyPolicy
+        // Single source of truth for the canonical platform defaults lives in
+        // DefaultJourneyPolicies — the EF-backed seeder uses the same list so
+        // database deployments get the same baseline as in-memory ones.
+        foreach (var policy in DefaultJourneyPolicies.Build())
         {
-            Id = "signin",
-            Name = "Sign In",
-            Description = "Default sign-in policy with optional MFA",
-            Type = JourneyType.SignIn,
-            Enabled = true,
-            Priority = 100,
-            Steps = new List<JourneyPolicyStep>
-            {
-                new()
-                {
-                    Id = "login",
-                    Type = "local_login",
-                    DisplayName = "Sign In",
-                    Order = 1,
-                    Configuration = new Dictionary<string, object>
-                    {
-                        ["allowRememberMe"] = true,
-                        ["allowSelfRegistration"] = false
-                    }
-                },
-                new()
-                {
-                    Id = "mfa",
-                    Type = "mfa",
-                    DisplayName = "Multi-Factor Authentication",
-                    Order = 2,
-                    Optional = true,
-                    Configuration = new Dictionary<string, object>
-                    {
-                        ["required"] = false,
-                        ["methods"] = new[] { "totp", "phone" }
-                    }
-                },
-                new()
-                {
-                    Id = "consent",
-                    Type = "consent",
-                    DisplayName = "Consent",
-                    Order = 3
-                }
-            }
-        };
-
-        // Sign-up/Sign-in combined policy
-        var signUpSignIn = new JourneyPolicy
-        {
-            Id = "signup-signin",
-            Name = "Sign Up or Sign In",
-            Description = "Combined sign-up and sign-in flow",
-            Type = JourneyType.SignInSignUp,
-            Enabled = true,
-            Priority = 90,
-            Steps = new List<JourneyPolicyStep>
-            {
-                new()
-                {
-                    Id = "login",
-                    Type = "local_login",
-                    DisplayName = "Sign In or Sign Up",
-                    Order = 1,
-                    Configuration = new Dictionary<string, object>
-                    {
-                        ["allowRememberMe"] = true,
-                        ["allowSelfRegistration"] = true
-                    },
-                    Branches = new Dictionary<string, string>
-                    {
-                        ["signup"] = "create_user"
-                    }
-                },
-                new()
-                {
-                    Id = "create_user",
-                    Type = "create_user",
-                    DisplayName = "Create Account",
-                    Order = 2,
-                    Optional = true
-                },
-                new()
-                {
-                    Id = "consent",
-                    Type = "consent",
-                    DisplayName = "Consent",
-                    Order = 3
-                }
-            }
-        };
-
-        // Sign-up policy
-        var signUp = new JourneyPolicy
-        {
-            Id = "signup",
-            Name = "Sign Up",
-            Description = "Self-registration flow",
-            Type = JourneyType.SignUp,
-            Enabled = true,
-            Priority = 95,
-            Steps = new List<JourneyPolicyStep>
-            {
-                new()
-                {
-                    Id = "create_user",
-                    Type = "create_user",
-                    DisplayName = "Create Account",
-                    Order = 1
-                },
-                new()
-                {
-                    Id = "consent",
-                    Type = "consent",
-                    DisplayName = "Consent",
-                    Order = 2
-                }
-            }
-        };
-
-        // Password reset policy
-        var passwordReset = new JourneyPolicy
-        {
-            Id = "password-reset",
-            Name = "Password Reset",
-            Description = "Self-service password reset",
-            Type = JourneyType.PasswordReset,
-            Enabled = true,
-            Priority = 100,
-            Steps = new List<JourneyPolicyStep>
-            {
-                new()
-                {
-                    Id = "reset",
-                    Type = "password_reset",
-                    DisplayName = "Reset Password",
-                    Order = 1
-                }
-            }
-        };
-
-        // Profile edit policy
-        var profileEdit = new JourneyPolicy
-        {
-            Id = "profile-edit",
-            Name = "Edit Profile",
-            Description = "Update user profile information",
-            Type = JourneyType.ProfileEdit,
-            Enabled = true,
-            Priority = 100,
-            Steps = new List<JourneyPolicyStep>
-            {
-                new()
-                {
-                    Id = "update",
-                    Type = "update_user",
-                    DisplayName = "Update Profile",
-                    Order = 1
-                }
-            }
-        };
-
-        // MFA-required sign-in policy
-        var mfaRequired = new JourneyPolicy
-        {
-            Id = "signin-mfa",
-            Name = "Sign In with MFA",
-            Description = "Sign-in requiring multi-factor authentication",
-            Type = JourneyType.SignIn,
-            Enabled = true,
-            Priority = 85,
-            Conditions = new List<JourneyPolicyCondition>
-            {
-                new() { Type = "AcrValue", Operator = "contains", Value = "mfa" }
-            },
-            Steps = new List<JourneyPolicyStep>
-            {
-                new()
-                {
-                    Id = "login",
-                    Type = "local_login",
-                    DisplayName = "Sign In",
-                    Order = 1
-                },
-                new()
-                {
-                    Id = "mfa",
-                    Type = "mfa",
-                    DisplayName = "Multi-Factor Authentication",
-                    Order = 2,
-                    Configuration = new Dictionary<string, object>
-                    {
-                        ["required"] = true
-                    }
-                },
-                new()
-                {
-                    Id = "consent",
-                    Type = "consent",
-                    DisplayName = "Consent",
-                    Order = 3
-                }
-            }
-        };
-
-        _policies[signIn.Id] = signIn;
-        _policies[signUpSignIn.Id] = signUpSignIn;
-        _policies[signUp.Id] = signUp;
-        _policies[passwordReset.Id] = passwordReset;
-        _policies[profileEdit.Id] = profileEdit;
-        _policies[mfaRequired.Id] = mfaRequired;
+            _policies[policy.Id] = policy;
+        }
     }
 
     public Task<JourneyPolicy?> GetAsync(string policyId, CancellationToken cancellationToken = default)
@@ -238,6 +30,12 @@ public class InMemoryJourneyPolicyStore : IJourneyPolicyStore
         _policies.TryGetValue(policyId, out var policy);
         return Task.FromResult(policy);
     }
+
+    public Task<JourneyPolicy?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_policies.Values.FirstOrDefault(p => p.Slug == slug));
+
+    public Task<bool> IsSlugTakenAsync(string slug, string? exceptPolicyId = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_policies.Values.Any(p => p.Slug == slug && p.Id != exceptPolicyId));
 
     public Task<JourneyPolicy?> GetByTypeAsync(JourneyType type, CancellationToken cancellationToken = default)
     {

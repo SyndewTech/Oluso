@@ -1,0 +1,252 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Grants & Sessions</h1>
+    <p class="mt-1 text-sm text-gray-500">
+      Manage persisted grants and active sessions
+    </p>
+  </div>
+
+  <!-- Tabs -->
+  <div class="border-b border-gray-200">
+    <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+      <button
+        (click)="setActiveTab('grants')"
+        [class]="'py-4 px-1 border-b-2 font-medium text-sm ' + (activeTab() === 'grants' ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')"
+      >
+        Persisted Grants
+      </button>
+      <button
+        (click)="setActiveTab('sessions')"
+        [class]="'py-4 px-1 border-b-2 font-medium text-sm ' + (activeTab() === 'sessions' ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')"
+      >
+        Active Sessions
+      </button>
+    </nav>
+  </div>
+
+  <!-- Grants Tab -->
+  @if (activeTab() === 'grants') {
+    <div class="flex items-center justify-end mb-3">
+      <label class="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+        <input type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+               [checked]="showExpired()" (change)="toggleShowExpired()" />
+        Show expired
+      </label>
+    </div>
+    <ui-card [padding]="false">
+      @if (loading()) {
+        <div class="flex items-center justify-center h-64">
+          <div class="text-gray-500">Loading...</div>
+        </div>
+      } @else if (grants().length === 0) {
+        <div class="flex flex-col items-center justify-center h-64 text-gray-500">
+          <ui-icon name="document-text" class="h-12 w-12 mb-4" />
+          <p>No persisted grants found</p>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Type
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Client
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Subject
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Created
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Expires
+                </th>
+                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+              @for (grant of grants(); track grant.id) {
+                <tr class="hover:bg-gray-50">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                      {{ grant.type }}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {{ grant.clientId }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ grant.subjectId || '-' }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ formatDate(grant.creationTime) }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ formatExpiration(grant.expiration) }}
+                    @if (grant.isExpired) {
+                      <span class="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Expired</span>
+                    }
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right">
+                    <ui-button
+                      variant="danger"
+                      size="sm"
+                      [disabled]="revokingKey() === grant.key"
+                      (clicked)="revokeGrant(grant)"
+                    >
+                      {{ revokingKey() === grant.key ? 'Revoking...' : 'Revoke' }}
+                    </ui-button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </ui-card>
+
+    <!-- Grants Pagination -->
+    @if (grantsTotalPages() > 1) {
+      <div class="flex items-center justify-between">
+        <p class="text-sm text-gray-500">
+          Page {{ grantsPage() }} of {{ grantsTotalPages() }}
+        </p>
+        <div class="flex items-center gap-2">
+          <ui-button
+            variant="secondary"
+            size="sm"
+            [disabled]="grantsPage() === 1"
+            (clicked)="onGrantsPreviousPage()"
+          >
+            Previous
+          </ui-button>
+          <ui-button
+            variant="secondary"
+            size="sm"
+            [disabled]="grantsPage() === grantsTotalPages()"
+            (clicked)="onGrantsNextPage()"
+          >
+            Next
+          </ui-button>
+        </div>
+      </div>
+    }
+  }
+
+  <!-- Sessions Tab -->
+  @if (activeTab() === 'sessions') {
+    <ui-card [padding]="false">
+      @if (loading()) {
+        <div class="flex items-center justify-center h-64">
+          <div class="text-gray-500">Loading...</div>
+        </div>
+      } @else if (sessions().length === 0) {
+        <div class="flex flex-col items-center justify-center h-64 text-gray-500">
+          <ui-icon name="users" class="h-12 w-12 mb-4" />
+          <p>No active sessions found</p>
+        </div>
+      } @else {
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Subject
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Display Name
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Scheme
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Created
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Renewed
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Expires
+                </th>
+                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+              @for (session of sessions(); track session.id) {
+                <tr class="hover:bg-gray-50">
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {{ session.subjectId }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ session.displayName || '-' }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                      {{ session.scheme }}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ formatDate(session.created) }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ formatDate(session.renewed) }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ formatExpiration(session.expires) }}
+                    @if (session.isExpired) {
+                      <span class="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Expired</span>
+                    }
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right">
+                    <ui-button
+                      variant="danger"
+                      size="sm"
+                      [disabled]="terminatingKey() === session.key"
+                      (clicked)="terminateSession(session)"
+                    >
+                      {{ terminatingKey() === session.key ? 'Terminating...' : 'Terminate' }}
+                    </ui-button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </ui-card>
+
+    <!-- Sessions Pagination -->
+    @if (sessionsTotalPages() > 1) {
+      <div class="flex items-center justify-between">
+        <p class="text-sm text-gray-500">
+          Page {{ sessionsPage() }} of {{ sessionsTotalPages() }}
+        </p>
+        <div class="flex items-center gap-2">
+          <ui-button
+            variant="secondary"
+            size="sm"
+            [disabled]="sessionsPage() === 1"
+            (clicked)="onSessionsPreviousPage()"
+          >
+            Previous
+          </ui-button>
+          <ui-button
+            variant="secondary"
+            size="sm"
+            [disabled]="sessionsPage() === sessionsTotalPages()"
+            (clicked)="onSessionsNextPage()"
+          >
+            Next
+          </ui-button>
+        </div>
+      </div>
+    }
+  }
+</div>

@@ -1,0 +1,123 @@
+@page "/account/accept-invitation"
+@model Oluso.UI.Pages.Account.AcceptInvitationModel
+@{
+    ViewData["Title"] = Localizer["accept_invitation_title", Model.OrganizationName ?? ""].Value;
+}
+
+<div class="auth-container">
+    <div class="auth-card">
+        @if (Model.Accepted)
+        {
+            <div class="success-state">
+                <div class="success-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <h1 class="auth-title">@Localizer["accept_invitation_success_title"]</h1>
+                <p class="auth-subtitle">@Localizer["accept_invitation_success_body", Model.OrganizationName ?? ""]</p>
+                <a href="/account/login" class="btn btn-primary btn-block">@Localizer["accept_invitation_sign_in"]</a>
+            </div>
+        }
+        else if (Model.LinkInvalid)
+        {
+            <div class="error-state">
+                <h1 class="auth-title">@Localizer["accept_invitation_invalid_title"]</h1>
+                <p class="auth-subtitle">@Localizer["accept_invitation_invalid_body"]</p>
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(Model.BlockedReason))
+        {
+            <div class="error-state">
+                <h1 class="auth-title">@Localizer["accept_invitation_blocked_title"]</h1>
+                <p class="auth-subtitle">@Model.BlockedReason</p>
+            </div>
+        }
+        else
+        {
+            <h1 class="auth-title">@Localizer["accept_invitation_title", Model.OrganizationName ?? ""]</h1>
+            <p class="auth-subtitle">@Localizer["accept_invitation_subtitle", Model.OrganizationName ?? "", Model.InvitedRole ?? ""]</p>
+
+            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+            {
+                <div class="alert alert-danger" role="alert">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                    <span>@Model.ErrorMessage</span>
+                </div>
+            }
+
+            <form method="post" novalidate>
+                <input type="hidden" name="Token" value="@Model.Token" />
+
+                <div class="form-group">
+                    <label for="invited_email">@Localizer["accept_invitation_email_label"]</label>
+                    <input type="email" id="invited_email" class="form-control" value="@Model.InvitedEmail" autocomplete="username" readonly />
+                </div>
+
+                @if (Model.RequiresPassword)
+                {
+                    <div class="form-group">
+                        <label for="first_name">@Localizer["accept_invitation_first_name_label"]</label>
+                        <input type="text"
+                               id="first_name"
+                               name="Input.FirstName"
+                               class="form-control"
+                               autocomplete="given-name"
+                               value="@Model.Input.FirstName" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="last_name">@Localizer["accept_invitation_last_name_label"]</label>
+                        <input type="text"
+                               id="last_name"
+                               name="Input.LastName"
+                               class="form-control"
+                               autocomplete="family-name"
+                               value="@Model.Input.LastName" />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">@Localizer["accept_invitation_password_label"]</label>
+                        <input type="password"
+                               id="password"
+                               name="Input.Password"
+                               class="form-control @(Model.ValidationErrors.ContainsKey("password") ? "is-invalid" : "")"
+                               autocomplete="new-password"
+                               required
+                               data-min-length="@Model.MinLength"
+                               data-require-uppercase="@Model.RequireUppercase.ToString().ToLower()"
+                               data-require-lowercase="@Model.RequireLowercase.ToString().ToLower()"
+                               data-require-digit="@Model.RequireDigit.ToString().ToLower()"
+                               data-require-special="@Model.RequireNonAlphanumeric.ToString().ToLower()" />
+                        @if (Model.ValidationErrors.TryGetValue("password", out var pwError))
+                        {
+                            <div class="invalid-feedback">@pwError</div>
+                        }
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirm_password">@Localizer["accept_invitation_confirm_password_label"]</label>
+                        <input type="password"
+                               id="confirm_password"
+                               name="Input.ConfirmPassword"
+                               class="form-control @(Model.ValidationErrors.ContainsKey("confirm_password") ? "is-invalid" : "")"
+                               autocomplete="new-password"
+                               required />
+                        @if (Model.ValidationErrors.TryGetValue("confirm_password", out var confirmError))
+                        {
+                            <div class="invalid-feedback">@confirmError</div>
+                        }
+                    </div>
+                }
+
+                <button type="submit" class="btn btn-primary btn-block">
+                    @(Model.RequiresPassword
+                        ? Localizer["accept_invitation_submit"]
+                        : Localizer["accept_invitation_submit_no_password"])
+                </button>
+            </form>
+        }
+    </div>
+</div>

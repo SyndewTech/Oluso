@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -26,17 +26,20 @@
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Ldap\Oluso.Enterprise.Ldap.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Saml\Oluso.Enterprise.Saml.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Scim\Oluso.Enterprise.Scim.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\Verification\Oluso.Enterprise.Verification.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Telemetry.OpenTelemetry\Oluso.Telemetry.OpenTelemetry.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Enterprise\AzureKeyVault\Oluso.Enterprise.AzureKeyVault.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- SQLite for easy local development -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.22" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.22">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="Microsoft.OpenApi" />
   </ItemGroup>
 
 </Project>

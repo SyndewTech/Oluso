@@ -51,6 +51,12 @@ public class ScimResourceMappingStore : IScimResourceMappingStore
         return mapping;
     }
 
+    public async Task UpdateAsync(ScimResourceMapping mapping, CancellationToken cancellationToken = default)
+    {
+        _context.ScimResourceMappings.Update(mapping);
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task DeleteAsync(string id, CancellationToken cancellationToken = default)
     {
         var mapping = await _context.ScimResourceMappings

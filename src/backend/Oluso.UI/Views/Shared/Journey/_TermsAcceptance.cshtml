@@ -20,8 +20,8 @@
         else if (!string.IsNullOrEmpty(Model?.TermsUrl))
         {
             <p>
-                Please review our <a href="@Model.TermsUrl" target="_blank">@Model.TermsTitle</a>
-                (Version @Model?.TermsVersion).
+                @Localizer["terms_acceptance_review_link"] <a href="@Model.TermsUrl" target="_blank">@Model.TermsTitle</a>
+                (@Localizer["terms_acceptance_version", Model!.TermsVersion]).
             </p>
         }
 
@@ -31,53 +31,69 @@
             {
                 <div class="terms-box">
                     <h3>@Model?.PrivacyTitle</h3>
-                    <div class="terms-text">@Html.Raw(Model.PrivacyContent)</div>
+                    <div class="terms-text">@Html.Raw(Model!.PrivacyContent)</div>
                 </div>
             }
             else if (!string.IsNullOrEmpty(Model?.PrivacyUrl))
             {
                 <p>
-                    Please also review our <a href="@Model.PrivacyUrl" target="_blank">@Model?.PrivacyTitle</a>
-                    (Version @Model?.PrivacyVersion).
+                    @Localizer["terms_acceptance_review_link"] <a href="@Model.PrivacyUrl" target="_blank">@Model?.PrivacyTitle</a>
+                    (@Localizer["terms_acceptance_version", Model!.PrivacyVersion]).
                 </p>
             }
         }
     </div>
 
     <form method="post" id="termsForm">
-        <div class="form-check">
-            <input type="checkbox"
-                   id="acceptTerms"
-                   name="acceptTerms"
-                   class="form-check-input"
-                   value="true"
-                   required />
-            <label class="form-check-label" for="acceptTerms">
-                I have read and agree to the <strong>@Model?.TermsTitle</strong>
-            </label>
-        </div>
+        <input type="hidden" name="_submitted" value="true" />
 
-        @if (Model?.RequireBoth == true)
+        @if (Model?.RequireCheckbox == true)
         {
             <div class="form-check">
                 <input type="checkbox"
-                       id="acceptPrivacy"
-                       name="acceptPrivacy"
+                       id="acceptTerms"
+                       name="acceptTerms"
                        class="form-check-input"
                        value="true"
                        required />
-                <label class="form-check-label" for="acceptPrivacy">
-                    I have read and agree to the <strong>@Model?.PrivacyTitle</strong>
+                <label class="form-check-label" for="acceptTerms">
+                    @Localizer["terms_acceptance_agree_label", Model!.TermsTitle]
                 </label>
             </div>
+
+            @if (Model?.RequireBoth == true)
+            {
+                <div class="form-check">
+                    <input type="checkbox"
+                           id="acceptPrivacy"
+                           name="acceptPrivacy"
+                           class="form-check-input"
+                           value="true"
+                           required />
+                    <label class="form-check-label" for="acceptPrivacy">
+                        @Localizer["terms_acceptance_agree_label", Model!.PrivacyTitle]
+                    </label>
+                </div>
+            }
+        }
+        else
+        {
+            <p class="implicit-acceptance">
+                @Localizer["terms_acceptance_implicit"]
+                <strong>@Model?.TermsTitle</strong>@(Model?.RequireBoth == true ? " " + @Localizer["terms_acceptance_review_and"] + " " : "")
+                @if (Model?.RequireBoth == true)
+                {
+                    <strong>@Model?.PrivacyTitle</strong>
+                }.
+            </p>
         }
 
         <div class="button-group">
-            <button type="submit" class="btn btn-primary">@(Model?.AcceptButtonText ?? "I Accept")</button>
+            <button type="submit" class="btn btn-primary">@(Model?.AcceptButtonText ?? @Localizer["terms_acceptance_accept_button"].Value)</button>
 
             @if (Model?.CanDecline == true && !string.IsNullOrEmpty(Model?.DeclineButtonText))
             {
-                <button type="button" class="btn btn-outline-secondary" onclick="window.history.back()">
+                <button type="submit" class="btn btn-outline-secondary" name="decline" value="true">
                     @Model.DeclineButtonText
                 </button>
             }

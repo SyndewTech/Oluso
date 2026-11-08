@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Oluso.Core.Authentication;
+using Oluso.Core.Authorization;
 using Oluso.Core.Data;
 using Oluso.Core.Events;
 using Oluso.Core.UserJourneys;
@@ -114,18 +115,27 @@ public static class Fido2Extensions
         // Register FIDO2 authentication service (internal implementation)
         builder.Services.AddScoped<IFido2AuthenticationService, Fido2AuthenticationService>();
 
-        // Register the adapter that implements IFido2Service for User Journey step handlers
+        // Register the adapter that implements IFido2Service for User Journey step handlers.
+        // Pending ceremonies live in IDistributedCache; hosts without a real one get the
+        // in-process implementation (TryAdd: a Redis/SQL registration still wins).
+        builder.Services.AddDistributedMemoryCache();
         builder.Services.AddScoped<Oluso.Core.Services.IFido2Service, Fido2ServiceAdapter>();
+        builder.Services.AddScoped<Oluso.Core.Services.IUserDeletionParticipant, Fido2UserDeletionParticipant>();
 
-        // Register step handlers for new User Journey Engine
-        builder.Services.AddScoped<IStepHandler, Fido2LoginStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Fido2RegistrationStepHandler>();
+        // Register step handlers as ICustomStepHandler for discovery by the journey builder
+        builder.Services.AddScoped<ICustomStepHandler, Fido2LoginStepHandler>();
+        builder.Services.AddScoped<ICustomStepHandler, Fido2RegistrationStepHandler>();
+        builder.Services.AddScoped<ICustomStepHandler, Fido2StepHandler>();
+        builder.Services.AddJourneyStepFormDescribers(typeof(Fido2StepHandler).Assembly);
 
-        // Register step handler for legacy User Journey Engine
-        builder.Services.AddScoped<Fido2StepHandler>();
+        builder.Services.AddEventPropertySource<EnterpriseFido2EventPropertySource>();
 
-        // Register FIDO2 webhook event provider for webhook subscriptions
-        builder.Services.AddSingleton<IWebhookEventProvider, Fido2WebhookEventProvider>();
+        PermissionRegistry.Instance.RegisterPermissions(new[]
+        {
+            new PermissionDefinition("fido2.read", "View passkeys", "FIDO2", "View FIDO2 passkey configurations and credentials"),
+            new PermissionDefinition("fido2.write", "Manage passkeys", "FIDO2", "Configure FIDO2 passkey settings"),
+            new PermissionDefinition("fido2.delete", "Delete passkeys", "FIDO2", "Delete user passkeys"),
+        });
 
         // Register authentication method provider for pluggable UI discovery
         builder.Services.AddScoped<IAuthenticationMethodProvider, PasskeyAuthenticationMethodProvider>();

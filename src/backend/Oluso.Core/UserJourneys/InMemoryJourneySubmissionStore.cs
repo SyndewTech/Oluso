@@ -9,6 +9,9 @@ public class InMemoryJourneySubmissionStore : IJourneySubmissionStore
 {
     private readonly ConcurrentDictionary<string, JourneySubmission> _submissions = new();
 
+    public Task<JourneySubmission?> GetByJourneyAsync(string journeyId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_submissions.Values.FirstOrDefault(s => s.JourneyId == journeyId));
+
     public Task<JourneySubmission?> GetAsync(string submissionId, CancellationToken cancellationToken = default)
     {
         _submissions.TryGetValue(submissionId, out var submission);

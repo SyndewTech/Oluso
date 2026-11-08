@@ -65,6 +65,15 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
         builder.Property(x => x.ActivityId)
             .HasMaxLength(128);
 
+        builder.Property(x => x.OriginKind)
+            .HasMaxLength(50);
+
+        builder.Property(x => x.OriginId)
+            .HasMaxLength(200);
+
+        builder.Property(x => x.OriginName)
+            .HasMaxLength(200);
+
         // Indexes for common queries
         builder.HasIndex(x => x.Timestamp);
         builder.HasIndex(x => x.Category);
@@ -73,6 +82,7 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
         builder.HasIndex(x => new { x.ResourceType, x.ResourceId });
         builder.HasIndex(x => x.ClientId);
         builder.HasIndex(x => x.ActivityId);
+        builder.HasIndex(x => new { x.OriginKind, x.OriginId });
 
         // Tenant isolation index
         builder.HasIndex(x => x.TenantId);

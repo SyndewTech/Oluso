@@ -69,12 +69,12 @@ public class KeyGenerationSecurityTests
     }
 
     /// <summary>
-    /// NIST SP 800-57: Very weak RSA keys (512-bit) are rejected by the runtime.
+    /// RFC 7518 §3.3 / NIST SP 800-57: weak RSA keys (512-bit) are rejected by
+    /// application-level validation (deterministic across platforms).
     /// </summary>
     [Fact]
     public async Task GenerateRsaKey_With512BitKey_ThrowsException()
     {
-        // .NET runtime correctly rejects 512-bit RSA keys
         var request = new KeyGenerationParams
         {
             KeyType = SigningKeyType.RSA,
@@ -84,19 +84,16 @@ public class KeyGenerationSecurityTests
 
         Func<Task> act = async () => await _provider.GenerateKeyAsync(request);
 
-        // 512-bit keys are rejected at the crypto layer
-        await act.Should().ThrowAsync<CryptographicException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
     /// <summary>
-    /// NIST SP 800-57: 1024-bit RSA keys are deprecated but still technically allowed by .NET.
-    /// Note: Consider adding application-level validation to reject keys < 2048 bits.
+    /// RFC 7518 §3.3 requires ≥ 2048-bit RSA. 1024-bit is below the minimum and
+    /// is rejected by application-level validation.
     /// </summary>
     [Fact]
-    public async Task GenerateRsaKey_With1024BitKey_IsAllowedButDeprecated()
+    public async Task GenerateRsaKey_With1024BitKey_ThrowsException()
     {
-        // 1024-bit keys are deprecated but .NET runtime still allows them
-        // This documents current behavior - consider adding validation
         var request = new KeyGenerationParams
         {
             KeyType = SigningKeyType.RSA,
@@ -104,17 +101,9 @@ public class KeyGenerationSecurityTests
             KeySize = 1024
         };
 
-        var result = await _provider.GenerateKeyAsync(request);
+        Func<Task> act = async () => await _provider.GenerateKeyAsync(request);
 
-        result.PublicKeyData.Should().NotBeNullOrEmpty();
-
-        var publicKeyBytes = Convert.FromBase64String(result.PublicKeyData);
-        using var rsa = RSA.Create();
-        rsa.ImportRSAPublicKey(publicKeyBytes, out _);
-        rsa.KeySize.Should().Be(1024);
-
-        // SECURITY NOTE: 1024-bit RSA is deprecated per NIST SP 800-57
-        // Consider adding validation to require minimum 2048 bits
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
     /// <summary>

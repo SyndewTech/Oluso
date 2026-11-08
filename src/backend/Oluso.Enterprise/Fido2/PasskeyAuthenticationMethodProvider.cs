@@ -1,4 +1,5 @@
 using Oluso.Core.Authentication;
+using Oluso.Core.Locale;
 using Oluso.Core.Services;
 
 namespace Oluso.Enterprise.Fido2;
@@ -44,13 +45,13 @@ public class PasskeyAuthenticationMethodProvider : IAuthenticationMethodProvider
     public string? LoginUrl => "/fido2/login";
 
     /// <inheritdoc />
-    public string? LoginButtonText => "Sign in with Passkey";
+    public string? LoginButtonText => UiStringDefaults.Resolve("passkey_assert_title");
 
     /// <inheritdoc />
     public string? LoginButtonIcon => """<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>""";
 
     /// <inheritdoc />
-    public string? LoginHint => "Use your fingerprint, face, or security key";
+    public string? LoginHint => UiStringDefaults.Resolve("passkey_assert_description");
 
     /// <inheritdoc />
     public string? LoginPartialViewName => "_PasskeyAssertion";

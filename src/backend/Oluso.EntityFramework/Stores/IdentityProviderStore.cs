@@ -35,6 +35,18 @@ public class IdentityProviderStore : IIdentityProviderStore
         return await GetProvidersQuery().ToListAsync(cancellationToken);
     }
 
+    public async Task<IEnumerable<IdentityProvider>> GetAllForTenantAsync(
+        string tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        // Tenant-explicit query — bypasses ambient ITenantContext filtering so
+        // admin endpoints can validate against a target tenant whose id
+        // differs from the logged-in user's tenant.
+        return await _context.IdentityProviders
+            .Where(p => p.TenantId == tenantId || p.TenantId == null)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IEnumerable<IdentityProvider>> GetByProviderTypeAsync(
         ExternalProviderType providerType,
         CancellationToken cancellationToken = default)

@@ -142,7 +142,7 @@ public class AzureKeyVaultCertificateProvider : ICertificateMaterialProvider
 
         // Get the full certificate (public part only - private key stays in vault)
         var certWithPolicy = await _certClient.GetCertificateAsync(certName, cancellationToken);
-        var x509Cert = new X509Certificate2(certWithPolicy.Value.Cer);
+        var x509Cert = X509CertificateLoader.LoadCertificate(certWithPolicy.Value.Cer);
 
         var thumbprint = x509Cert.Thumbprint;
         var thumbprintSha256 = ComputeSha256Thumbprint(x509Cert);
@@ -180,7 +180,7 @@ public class AzureKeyVaultCertificateProvider : ICertificateMaterialProvider
 
             // Get certificate from Key Vault
             var response = await _certClient.GetCertificateAsync(certName, cancellationToken);
-            var cert = new X509Certificate2(response.Value.Cer);
+            var cert = X509CertificateLoader.LoadCertificate(response.Value.Cer);
 
             // Note: This returns the certificate with public key only
             // For signing, you need to use the Key Vault crypto client

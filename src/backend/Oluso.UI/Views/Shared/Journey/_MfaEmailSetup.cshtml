@@ -2,10 +2,9 @@
 @model MfaEmailSetupViewModel
 
 <div class="mfa-card">
-    <h1 class="title">Verify Your Email</h1>
+    <h1 class="title">@Localizer["mfa_email_setup_title"]</h1>
     <p class="subtitle">
-        We sent a verification code to <strong>@Model?.Email</strong>.
-        Enter the code below to enable email-based two-factor authentication.
+        @Localizer["mfa_email_setup_subtitle", Model?.Email ?? ""]
     </p>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
@@ -15,27 +14,18 @@
 
     <form method="post" id="verifyForm">
         <div class="form-group">
-            <label for="setup_email_code">Verification Code</label>
-            <input type="text"
-                   id="setup_email_code"
-                   name="setup_email_code"
-                   class="form-control code-input"
-                   pattern="[0-9]{6}"
-                   maxlength="6"
-                   autocomplete="one-time-code"
-                   inputmode="numeric"
-                   autofocus
-                   required />
+            <label>@Localizer["mfa_email_setup_code_label"]</label>
+            <partial name="Journey/_OtpCodeInput" model='new Oluso.UI.ViewModels.OtpCodeInputViewModel(6, "setup_email_code")' />
         </div>
 
-        <button type="submit" class="btn btn-primary btn-block">Verify and Enable</button>
+        <button type="submit" class="btn btn-primary btn-block">@Localizer["mfa_email_setup_button"]</button>
     </form>
 
     <form method="post" id="resendForm" class="resend-form">
         <input type="hidden" name="setup_email" value="resend" />
         <p class="text-center">
-            Didn't receive the code?
-            <button type="submit" class="btn-link">Resend</button>
+            @Localizer["mfa_email_setup_resend_prompt"]
+            <button type="submit" class="btn-link">@Localizer["mfa_email_setup_resend_button"]</button>
         </p>
     </form>
 </div>

@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Oluso.Core.Services;
@@ -24,21 +24,28 @@ public class Fido2ServiceAdapter : CoreFido2Service
     private readonly IFido2AuthenticationService _innerService;
     private readonly IOlusoUserService _userService;
     private readonly Fido2Options _options;
+    private readonly IDistributedCache _cache;
     private readonly ILogger<Fido2ServiceAdapter> _logger;
 
-    // Store pending ceremonies (in production, use distributed cache)
-    private static readonly ConcurrentDictionary<string, PendingAssertion> _pendingAssertions = new();
-    private static readonly ConcurrentDictionary<string, PendingRegistration> _pendingRegistrations = new();
+    // Pending ceremonies live in the distributed cache so the begin and complete
+    // calls may land on different instances. Entries expire on their own; a
+    // ceremony older than the verify window is rejected as well.
+    private const string RegistrationKeyPrefix = "oluso:fido2:registration:";
+    private const string AssertionKeyPrefix = "oluso:fido2:assertion:";
+    private static readonly TimeSpan CeremonyRetention = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan CeremonyWindow = TimeSpan.FromMinutes(5);
 
     public Fido2ServiceAdapter(
         IFido2AuthenticationService innerService,
         IOlusoUserService userService,
         IOptions<Fido2Options> options,
+        IDistributedCache cache,
         ILogger<Fido2ServiceAdapter> logger)
     {
         _innerService = innerService;
         _userService = userService;
         _options = options.Value;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -62,15 +69,12 @@ public class Fido2ServiceAdapter : CoreFido2Service
 
         // Generate a registration ID and store the pending registration
         var registrationId = GenerateId();
-        _pendingRegistrations[registrationId] = new PendingRegistration
+        await PutPendingAsync(RegistrationKeyPrefix + registrationId, new PendingRegistration
         {
             UserId = userId,
             Challenge = options.Challenge,
             CreatedAt = DateTime.UtcNow
-        };
-
-        // Clean up old entries
-        CleanupOldEntries();
+        }, cancellationToken);
 
         return new CoreFido2RegistrationOptions
         {
@@ -121,12 +125,13 @@ public class Fido2ServiceAdapter : CoreFido2Service
         string? credentialName = null,
         CancellationToken cancellationToken = default)
     {
-        if (!_pendingRegistrations.TryRemove(registrationId, out var pending))
+        var pending = await TakePendingAsync<PendingRegistration>(RegistrationKeyPrefix + registrationId, cancellationToken);
+        if (pending == null)
         {
             return CoreFido2RegistrationResult.Failed("invalid_registration", "Invalid or expired registration");
         }
 
-        if (DateTime.UtcNow - pending.CreatedAt > TimeSpan.FromMinutes(5))
+        if (DateTime.UtcNow - pending.CreatedAt > CeremonyWindow)
         {
             return CoreFido2RegistrationResult.Failed("expired", "Registration has expired");
         }
@@ -170,15 +175,12 @@ public class Fido2ServiceAdapter : CoreFido2Service
 
         // Generate an assertion ID and store the pending assertion
         var assertionId = GenerateId();
-        _pendingAssertions[assertionId] = new PendingAssertion
+        await PutPendingAsync(AssertionKeyPrefix + assertionId, new PendingAssertion
         {
             Challenge = options.Challenge,
             Username = username,
             CreatedAt = DateTime.UtcNow
-        };
-
-        // Clean up old entries
-        CleanupOldEntries();
+        }, cancellationToken);
 
         return new CoreFido2Options
         {
@@ -202,12 +204,13 @@ public class Fido2ServiceAdapter : CoreFido2Service
         string assertionResponse,
         CancellationToken cancellationToken = default)
     {
-        if (!_pendingAssertions.TryRemove(assertionId, out var pending))
+        var pending = await TakePendingAsync<PendingAssertion>(AssertionKeyPrefix + assertionId, cancellationToken);
+        if (pending == null)
         {
             return CoreFido2AssertionResult.Failed("invalid_assertion", "Invalid or expired assertion");
         }
 
-        if (DateTime.UtcNow - pending.CreatedAt > TimeSpan.FromMinutes(5))
+        if (DateTime.UtcNow - pending.CreatedAt > CeremonyWindow)
         {
             return CoreFido2AssertionResult.Failed("expired", "Assertion has expired");
         }
@@ -284,43 +287,38 @@ public class Fido2ServiceAdapter : CoreFido2Service
             .TrimEnd('=');
     }
 
-    private void CleanupOldEntries()
+    private async Task PutPendingAsync<T>(string key, T pending, CancellationToken cancellationToken)
     {
-        var cutoff = DateTime.UtcNow.AddMinutes(-10);
+        await _cache.SetStringAsync(key, JsonSerializer.Serialize(pending),
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CeremonyRetention }, cancellationToken);
+    }
 
-        foreach (var key in _pendingAssertions.Keys.ToList())
-        {
-            if (_pendingAssertions.TryGetValue(key, out var assertion) && assertion.CreatedAt < cutoff)
-            {
-                _pendingAssertions.TryRemove(key, out _);
-            }
-        }
-
-        foreach (var key in _pendingRegistrations.Keys.ToList())
-        {
-            if (_pendingRegistrations.TryGetValue(key, out var registration) && registration.CreatedAt < cutoff)
-            {
-                _pendingRegistrations.TryRemove(key, out _);
-            }
-        }
+    // One-time: the ceremony is removed as it is read, so a second completion
+    // with the same id fails on every instance.
+    private async Task<T?> TakePendingAsync<T>(string key, CancellationToken cancellationToken) where T : class
+    {
+        var json = await _cache.GetStringAsync(key, cancellationToken);
+        if (json == null) return null;
+        await _cache.RemoveAsync(key, cancellationToken);
+        return JsonSerializer.Deserialize<T>(json);
     }
 
     #endregion
 
     #region Pending Ceremony Models
 
-    private class PendingAssertion
+    internal sealed class PendingAssertion
     {
-        public required string Challenge { get; init; }
-        public string? Username { get; init; }
-        public DateTime CreatedAt { get; init; }
+        public required string Challenge { get; set; }
+        public string? Username { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 
-    private class PendingRegistration
+    internal sealed class PendingRegistration
     {
-        public required string UserId { get; init; }
-        public required string Challenge { get; init; }
-        public DateTime CreatedAt { get; init; }
+        public required string UserId { get; set; }
+        public required string Challenge { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 
     #endregion

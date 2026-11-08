@@ -26,9 +26,28 @@ namespace Oluso.Enterprise.Fido2.Steps;
 /// - title: Custom title for the registration UI
 /// - description: Custom description for the registration UI
 /// </remarks>
-public class Fido2RegistrationStepHandler : IStepHandler
+public class Fido2RegistrationStepHandler : ICustomStepHandler, ICustomStepHandlerMetadata
 {
     public string StepType => "fido2_register";
+    public string DisplayName => "Passkey Registration";
+    public string Description => "Prompt users to register a FIDO2/WebAuthn passkey after authentication";
+    public string Category => "Authentication";
+    public string? Icon => "user-plus";
+
+    public Dictionary<string, object>? GetConfigurationSchema() => new()
+    {
+        ["promptNewUsers"] = new { type = "boolean", @default = true, description = "Offer to create a passkey to users who just signed up" },
+        ["promptExistingUsers"] = new { type = "boolean", @default = false, description = "Offer to create a passkey to existing users" },
+        ["skipIfHasPasskey"] = new { type = "boolean", @default = true, description = "Skip this step for users who already have a passkey" },
+        ["maxPasskeys"] = new { type = "number", @default = 10, description = "Skip this step once a user has this many passkeys" },
+        ["allowSkip"] = new { type = "boolean", @default = true, description = "Let users skip creating a passkey" },
+        ["authenticatorType"] = new { type = "string", @enum = new[] { "", "platform", "cross-platform" }, @default = "", description = "Limit to built-in authenticators (platform) or security keys (cross-platform); blank allows both" },
+        ["requireResidentKey"] = new { type = "boolean", @default = false, description = "Require a discoverable credential, so the user can sign in without a username" },
+        ["showSuccessMessage"] = new { type = "boolean", @default = true, description = "Confirm the new passkey before continuing" },
+        ["title"] = new Dictionary<string, object> { ["type"] = "string", ["description"] = "Heading of the passkey page", ["x-localizable"] = true },
+        ["description"] = new Dictionary<string, object> { ["type"] = "string", ["description"] = "Text under the heading", ["x-localizable"] = true },
+    };
+    public string? Module => "Oluso.Enterprise.Fido2";
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
@@ -36,6 +55,17 @@ public class Fido2RegistrationStepHandler : IStepHandler
         var userService = context.ServiceProvider.GetRequiredService<IOlusoUserService>();
         var tenantContext = context.ServiceProvider.GetRequiredService<ITenantContext>();
         var logger = context.ServiceProvider.GetRequiredService<ILogger<Fido2RegistrationStepHandler>>();
+
+        // Tenant has disabled passkeys — skip enrolment too. Otherwise the
+        // user would be prompted to register a credential they'd never be
+        // allowed to use, which is the worst kind of UX.
+        if (tenantContext.Tenant?.EnablePasskey == false)
+        {
+            logger.LogDebug(
+                "Skipping Fido2 registration step — passkey is disabled for tenant {TenantId}",
+                tenantContext.TenantId);
+            return StepHandlerResult.Continue();
+        }
 
         // This step requires an authenticated user
         if (string.IsNullOrEmpty(context.UserId))
@@ -113,13 +143,15 @@ public class Fido2RegistrationStepHandler : IStepHandler
         ITenantContext tenantContext,
         int existingCredentialCount)
     {
-        var title = context.GetConfig("title", existingCredentialCount > 0
-            ? "Add Another Passkey"
-            : "Set Up a Passkey");
+        var title = context.GetLocalizedConfig("title")
+            ?? (existingCredentialCount > 0
+                ? Oluso.Core.Locale.UiStringDefaults.Resolve("fido2_reg_prompt_add_another")
+                : Oluso.Core.Locale.UiStringDefaults.Resolve("fido2_reg_prompt_default_title"));
 
-        var description = context.GetConfig("description", existingCredentialCount > 0
-            ? "Add a passkey on this device for quick, secure sign-in."
-            : "Passkeys let you sign in with your fingerprint, face, or security key instead of a password.");
+        var description = context.GetLocalizedConfig("description")
+            ?? (existingCredentialCount > 0
+                ? Oluso.Core.Locale.UiStringDefaults.Resolve("fido2_reg_prompt_add_description")
+                : Oluso.Core.Locale.UiStringDefaults.Resolve("fido2_reg_prompt_default_description"));
 
         var allowSkip = context.GetConfig("allowSkip", true);
 
@@ -141,7 +173,7 @@ public class Fido2RegistrationStepHandler : IStepHandler
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        var authenticatorType = context.GetConfig<string?>("authenticatorType", null);
+        var authenticatorType = context.GetConfig<string?>("authenticatorType", null) is { Length: > 0 } type ? type : null;
         var requireResidentKey = context.GetConfig("requireResidentKey", false);
 
         try
@@ -221,7 +253,7 @@ public class Fido2RegistrationStepHandler : IStepHandler
 
             // Registration successful
             context.SetData("fido2_credential_registered", true);
-            context.SetData("fido2_credential_id", result.CredentialId);
+            context.SetData("fido2_credential_id", result.CredentialId ?? "");
 
             logger.LogInformation("FIDO2 passkey registered for user {UserId}, credential {CredentialId}",
                 user.Id, result.CredentialId);

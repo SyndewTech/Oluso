@@ -1,0 +1,418 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Organizations</h1>
+      <p class="mt-1 text-sm text-gray-500">Manage organizations and their tenants</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <ui-button variant="primary" (clicked)="openProvisionModal()">
+        <ui-icon name="rocket-launch" class="h-4 w-4 mr-2" />
+        Provision
+      </ui-button>
+      <ui-button variant="secondary" (clicked)="openCreateModal()">
+        <ui-icon name="plus" class="h-4 w-4 mr-2" />
+        Add Organization
+      </ui-button>
+    </div>
+  </div>
+
+  <!-- Organizations Table -->
+  <ui-data-table
+    [loading]="loading()"
+    [empty]="organizations().length === 0"
+    emptyMessage="No organizations configured yet"
+    [searchable]="true"
+    searchPlaceholder="Search organizations by name or slug..."
+    [paginated]="true"
+    [page]="currentPage()"
+    [pageSize]="pageSize"
+    [totalCount]="totalCount()"
+    [totalPages]="totalPages()"
+    [initialSearch]="searchTerm"
+    (searchChange)="onSearch($event)"
+    (pageChange)="onPageChange($event)"
+  >
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Slug</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tenants</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+          <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="bg-white divide-y divide-gray-200">
+        @for (org of organizations(); track org.id) {
+          <tr class="hover:bg-gray-50 cursor-pointer" (click)="goToDetail(org)">
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="font-medium text-gray-900">{{ org.name }}</div>
+              @if (org.description) {
+                <div class="text-xs text-gray-500">{{ org.description }}</div>
+              }
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <code class="text-sm bg-gray-100 px-2 py-0.5 rounded">{{ org.slug }}</code>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              {{ org.tenantCount }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <ui-badge [variant]="org.enabled ? 'success' : 'danger'">
+                {{ org.enabled ? 'Enabled' : 'Disabled' }}
+              </ui-badge>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              {{ formatDate(org.created) }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right">
+              <div class="flex items-center justify-end gap-2">
+                <button
+                  (click)="goToDetail(org); $event.stopPropagation()"
+                  class="p-1 text-gray-400 hover:text-blue-600"
+                  title="Settings"
+                >
+                  <ui-icon name="cog" class="h-4 w-4" />
+                </button>
+                <button
+                  (click)="openDeleteModal(org); $event.stopPropagation()"
+                  class="p-1 text-gray-400 hover:text-red-600"
+                  title="Delete organization"
+                >
+                  <ui-icon name="trash" class="h-4 w-4" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </ui-data-table>
+
+  <!-- Create Modal -->
+  <ui-modal
+    [open]="showCreateModal()"
+    title="Create Organization"
+    (closed)="closeCreateModal()"
+  >
+    <form (ngSubmit)="onCreate()" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+        <input
+          type="text"
+          [(ngModel)]="formData.name"
+          name="name"
+          required
+          class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+        />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Slug</label>
+        <input
+          type="text"
+          [ngModel]="formData.slug"
+          name="slug"
+          (input)="onSlugInput($event)"
+          placeholder="my-organization"
+          required
+          class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+        />
+        <p class="mt-1 text-xs text-gray-500">
+          URL-safe identifier (lowercase, alphanumeric and hyphens only)
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+        <textarea
+          [(ngModel)]="formData.description"
+          name="description"
+          rows="2"
+          class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+        ></textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Website URL</label>
+        <input
+          type="text"
+          [(ngModel)]="formData.websiteUrl"
+          name="websiteUrl"
+          placeholder="https://example.com"
+          class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+        />
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Max Members</label>
+          <input
+            type="number"
+            [(ngModel)]="formData.maxMembers"
+            name="maxMembers"
+            min="0"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          />
+          <p class="mt-1 text-xs text-gray-500">0 = unlimited</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Max Tenants</label>
+          <input
+            type="number"
+            [(ngModel)]="formData.maxTenants"
+            name="maxTenants"
+            min="0"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          />
+          <p class="mt-1 text-xs text-gray-500">0 = unlimited</p>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-4">
+        <ui-button type="button" variant="secondary" (clicked)="closeCreateModal()">
+          Cancel
+        </ui-button>
+        <ui-button type="submit" [disabled]="saving()">
+          {{ saving() ? 'Creating...' : 'Create Organization' }}
+        </ui-button>
+      </div>
+    </form>
+  </ui-modal>
+
+  <!-- Delete Confirmation Modal -->
+  <ui-modal
+    [open]="showDeleteModal()"
+    title="Delete Organization"
+    (closed)="closeDeleteModal()"
+  >
+    <p class="text-sm text-gray-500">
+      Are you sure you want to delete the organization "{{ selectedOrg()?.name }}"?
+      This will permanently delete all associated tenants, members, and configurations.
+      This action cannot be undone.
+    </p>
+    <div class="mt-4 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeDeleteModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmDelete()">
+        Delete
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Provision Organization Modal -->
+  <ui-modal
+    [open]="showProvisionModal()"
+    title="Provision Organization"
+    size="lg"
+    (closed)="closeProvisionModal()"
+  >
+    @if (provisionResult(); as result) {
+      <!-- Success view -->
+      <div class="space-y-4">
+        <div class="rounded-md bg-green-50 p-4">
+          <div class="flex">
+            <ui-icon name="check-circle" class="h-5 w-5 text-green-400" />
+            <div class="ml-3">
+              <h3 class="text-sm font-medium text-green-800">Organization provisioned successfully</h3>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-md bg-gray-50 p-4 space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Organization</span>
+            <span class="font-medium text-gray-900">{{ result.organizationName }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Tenant</span>
+            <span class="font-medium text-gray-900">{{ result.tenantIdentifier }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Admin</span>
+            <span class="font-medium text-gray-900">{{ result.adminEmail }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">User</span>
+            <span class="font-medium text-gray-900">{{ result.isNewUser ? 'Created' : 'Existing' }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Welcome Email</span>
+            <span class="font-medium" [class]="result.welcomeEmailSent ? 'text-green-700' : 'text-amber-700'">
+              {{ result.welcomeEmailSent ? 'Sent' : 'Not sent' }}
+            </span>
+          </div>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <ui-button (clicked)="closeProvisionModal()">Done</ui-button>
+        </div>
+      </div>
+    } @else {
+      <!-- Form view -->
+      <form (ngSubmit)="onProvision()" class="space-y-6">
+        <!-- Organization Section -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">Organization</h3>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+              <input
+                type="text"
+                [(ngModel)]="provisionData.name"
+                name="provName"
+                required
+                (blur)="autoFillTenant()"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Slug *</label>
+              <input
+                type="text"
+                [ngModel]="provisionData.slug"
+                name="provSlug"
+                (input)="onProvisionSlugInput($event)"
+                (blur)="autoFillTenant()"
+                required
+                placeholder="my-organization"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                [(ngModel)]="provisionData.description"
+                name="provDescription"
+                rows="2"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              ></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Max Members</label>
+                <input
+                  type="number"
+                  [(ngModel)]="provisionData.maxMembers"
+                  name="provMaxMembers"
+                  min="0"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="mt-0.5 text-xs text-gray-500">0 = unlimited</p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Max Tenants</label>
+                <input
+                  type="number"
+                  [(ngModel)]="provisionData.maxTenants"
+                  name="provMaxTenants"
+                  min="0"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="mt-0.5 text-xs text-gray-500">0 = unlimited</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tenant Section -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">Tenant</h3>
+          <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Tenant Name</label>
+                <input
+                  type="text"
+                  [(ngModel)]="provisionData.tenantName"
+                  name="provTenantName"
+                  placeholder="Defaults to org name"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Identifier *</label>
+                <input
+                  type="text"
+                  [ngModel]="provisionData.tenantIdentifier"
+                  name="provTenantIdentifier"
+                  (input)="onProvisionTenantIdentifierInput($event)"
+                  required
+                  placeholder="my-org"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Environment</label>
+              <select
+                [(ngModel)]="provisionData.tenantEnvironment"
+                name="provTenantEnvironment"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              >
+                <option value="Production">Production</option>
+                <option value="Staging">Staging</option>
+                <option value="UAT">UAT</option>
+                <option value="QA">QA</option>
+                <option value="Development">Development</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Admin User Section -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">Admin User</h3>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+              <input
+                type="email"
+                [(ngModel)]="provisionData.adminEmail"
+                name="provAdminEmail"
+                required
+                placeholder="admin@example.com"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-0.5 text-xs text-gray-500">
+                If the user already exists, they will be assigned as admin without creating a new account.
+              </p>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                <input
+                  type="text"
+                  [(ngModel)]="provisionData.adminFirstName"
+                  name="provAdminFirstName"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                <input
+                  type="text"
+                  [(ngModel)]="provisionData.adminLastName"
+                  name="provAdminLastName"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-2 border-t border-gray-200">
+          <ui-button type="button" variant="secondary" (clicked)="closeProvisionModal()">
+            Cancel
+          </ui-button>
+          <ui-button type="submit" [disabled]="saving()">
+            {{ saving() ? 'Provisioning...' : 'Provision Organization' }}
+          </ui-button>
+        </div>
+      </form>
+    }
+  </ui-modal>
+</div>

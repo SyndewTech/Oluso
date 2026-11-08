@@ -2,7 +2,7 @@
 @using Oluso.UI.ViewModels
 @model Oluso.UI.Pages.Account.RegisterModel
 @{
-    ViewData["Title"] = "Create Account";
+    ViewData["Title"] = Localizer["signup_title"].Value;
 }
 
 @section Styles {
@@ -29,8 +29,8 @@
     }
 
     <div class="auth-card">
-        <h1 class="auth-title">Create Account</h1>
-        <p class="auth-subtitle">Fill in your details to get started</p>
+        <h1 class="auth-title">@Localizer["signup_title"]</h1>
+        <p class="auth-subtitle">@Localizer["signup_fill_details"]</p>
 
         @if (!string.IsNullOrEmpty(Model.ErrorMessage))
         {
@@ -46,14 +46,14 @@
             <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
 
             <div class="form-group">
-                <label for="email">Email Address</label>
+                <label for="email">@Localizer["signup_email_label"]</label>
                 <input type="email"
                        id="email"
                        name="Input.Email"
                        class="form-control @(Model.ValidationErrors.ContainsKey("email") ? "is-invalid" : "")"
                        value="@Model.Input.Email"
                        autofocus
-                       autocomplete="email"
+                       autocomplete="@(Model.RequireUsername ? "email" : "username")"
                        required />
                 @if (Model.ValidationErrors.TryGetValue("email", out var emailError))
                 {
@@ -64,7 +64,7 @@
             @if (Model.RequireUsername)
             {
                 <div class="form-group">
-                    <label for="username">Username</label>
+                    <label for="username">@Localizer["signup_username_label"]</label>
                     <input type="text"
                            id="username"
                            name="Input.Username"
@@ -81,7 +81,7 @@
 
             <div class="form-row">
                 <div class="form-group form-group-half">
-                    <label for="firstName">First Name</label>
+                    <label for="firstName">@Localizer["signup_first_name_label"]</label>
                     <input type="text"
                            id="firstName"
                            name="Input.FirstName"
@@ -95,7 +95,7 @@
                 </div>
 
                 <div class="form-group form-group-half">
-                    <label for="lastName">Last Name</label>
+                    <label for="lastName">@Localizer["signup_last_name_label"]</label>
                     <input type="text"
                            id="lastName"
                            name="Input.LastName"
@@ -110,7 +110,7 @@
             </div>
 
             <div class="form-group">
-                <label for="password">Password</label>
+                <label for="password">@Localizer["signup_password_label"]</label>
                 <input type="password"
                        id="password"
                        name="Input.Password"
@@ -122,12 +122,12 @@
                     <div class="invalid-feedback">@passwordError</div>
                 }
                 <div class="password-requirements">
-                    <small>Password must be at least 8 characters with uppercase, lowercase, number, and special character</small>
+                    <small>@Localizer["signup_password_requirements"]</small>
                 </div>
             </div>
 
             <div class="form-group">
-                <label for="confirmPassword">Confirm Password</label>
+                <label for="confirmPassword">@Localizer["signup_confirm_password_label"]</label>
                 <input type="password"
                        id="confirmPassword"
                        name="Input.ConfirmPassword"
@@ -150,7 +150,10 @@
                            value="true"
                            @(Model.Input.AcceptTerms ? "checked" : "") />
                     <label class="form-check-label" for="acceptTerms">
-                        I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>
+                        @Localizer["signup_terms_prefix"]
+                        <a href="@(string.IsNullOrEmpty(Model.TermsUrl) ? "/terms" : Model.TermsUrl)" target="_blank" rel="noopener">@Localizer["signup_terms_link"]</a>
+                        @Localizer["terms_acceptance_review_and"]
+                        <a href="@(string.IsNullOrEmpty(Model.PrivacyUrl) ? "/privacy" : Model.PrivacyUrl)" target="_blank" rel="noopener">@Localizer["signup_privacy_link"]</a>
                     </label>
                     @if (Model.ValidationErrors.TryGetValue("acceptTerms", out var termsError))
                     {
@@ -159,32 +162,36 @@
                 </div>
             }
 
-            <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+            <button type="submit" class="btn btn-primary btn-block">@Localizer["signup_button"]</button>
         </form>
 
         <hr class="auth-divider" />
         <p class="text-center">
-            Already have an account? <a href="/account/login?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Sign in</a>
+            @Localizer["signup_signin_prefix"] <a href="/account/login?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">@Localizer["signup_signin_link"]</a>
         </p>
 
         @if (Model.ExternalProviders?.Any() == true)
         {
             <div class="divider">
-                <span>or sign up with</span>
+                <span>@Localizer["signup_or_sign_up_with"]</span>
             </div>
 
             <div class="external-providers">
                 @foreach (var provider in Model.ExternalProviders)
                 {
+                    var ptype = Oluso.UI.ViewModels.ProviderCss.TypeToken(provider.ProviderType);
+                    var sslug = Oluso.UI.ViewModels.ProviderCss.SchemeSlug(provider.AuthenticationScheme);
                     <form method="post" asp-page-handler="ExternalLogin" class="external-form">
                         <input type="hidden" name="provider" value="@provider.AuthenticationScheme" />
                         <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
                         <input type="hidden" name="providerType" value="@provider.ProviderType" />
-                        <button type="submit" class="btn btn-outline btn-block btn-external">
-                            @if (!string.IsNullOrEmpty(provider.IconUrl))
+                        <button type="submit" class="btn btn-outline btn-block btn-external provider-@ptype provider-scheme-@sslug" data-provider="@ptype" data-scheme="@provider.AuthenticationScheme">
+                            @await Html.PartialAsync("Journey/_ProviderIcon", new Oluso.UI.ViewModels.ProviderIconModel
                             {
-                                <img src="@provider.IconUrl" alt="" class="provider-icon" />
-                            }
+                                ProviderType = provider.ProviderType,
+                                IconUrl = provider.IconUrl,
+                                DisplayName = provider.DisplayName
+                            })
                             @provider.DisplayName
                         </button>
                     </form>
@@ -194,283 +201,6 @@
     </div>
 </div>
 
-<style>
-/* Oluṣọ Brand Colors */
-:root {
-    --oluso-primary: #f97316;
-    --oluso-primary-hover: #ea580c;
-    --oluso-primary-dark: #c2410c;
-    --oluso-primary-light: rgba(249, 115, 22, 0.1);
-    --oluso-accent: #14b8a6;
-}
-
-.auth-container {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    background: linear-gradient(135deg, var(--background-start, #0f172a) 0%, var(--background-end, #1e293b) 100%);
-}
-
-.auth-container::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-image:
-        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
-        radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
-    pointer-events: none;
-    z-index: 0;
-}
-
-.auth-logo {
-    margin-bottom: 2rem;
-    position: relative;
-    z-index: 1;
-}
-
-.auth-logo img {
-    max-height: 60px;
-    width: auto;
-}
-
-.auth-card {
-    background: rgba(255, 255, 255, 0.98);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 16px;
-    padding: 2.5rem;
-    width: 100%;
-    max-width: 480px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    position: relative;
-    z-index: 1;
-    animation: cardSlideUp 0.5s ease-out;
-}
-
-@@keyframes cardSlideUp {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.auth-title {
-    font-size: 1.75rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #1a1a2e;
-}
-
-.auth-subtitle {
-    color: #6c757d;
-    margin-bottom: 1.5rem;
-}
-
-.form-group {
-    margin-bottom: 1.25rem;
-}
-
-.form-row {
-    display: flex;
-    gap: 1rem;
-}
-
-.form-group-half {
-    flex: 1;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: #374151;
-}
-
-.form-control {
-    display: block;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    font-size: 1rem;
-    line-height: 1.5;
-    color: #1a1a2e;
-    background-color: #f9fafb;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: var(--primary-color, var(--oluso-primary));
-    box-shadow: 0 0 0 3px var(--primary-light, var(--oluso-primary-light));
-}
-
-.form-control.is-invalid {
-    border-color: #dc3545;
-}
-
-.invalid-feedback {
-    color: #dc3545;
-    font-size: 0.875rem;
-    margin-top: 0.25rem;
-}
-
-.d-block {
-    display: block;
-}
-
-.password-requirements {
-    margin-top: 0.5rem;
-    color: #6c757d;
-}
-
-.form-check {
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-}
-
-.form-check-input {
-    width: 1.125rem;
-    height: 1.125rem;
-    margin-top: 0.25rem;
-    accent-color: var(--primary-color, var(--oluso-primary));
-}
-
-.form-check-label a {
-    color: var(--primary-color, var(--oluso-primary));
-}
-
-.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 500;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s ease-in-out;
-    border: none;
-}
-
-.btn-block {
-    display: flex;
-    width: 100%;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--primary-color, var(--oluso-primary)) 0%, var(--oluso-primary-dark) 100%);
-    color: white;
-    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
-}
-
-.btn-primary:hover {
-    background: linear-gradient(135deg, var(--primary-hover, var(--oluso-primary-hover)) 0%, var(--oluso-primary-dark) 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
-}
-
-.btn-outline {
-    background: white;
-    border: 1px solid #d1d5db;
-    color: #374151;
-}
-
-.btn-outline:hover {
-    background: #f9fafb;
-    border-color: #9ca3af;
-}
-
-.auth-divider {
-    margin: 1.5rem 0;
-    border: none;
-    border-top: 1px solid #e5e7eb;
-}
-
-.text-center {
-    text-align: center;
-}
-
-.divider {
-    display: flex;
-    align-items: center;
-    text-align: center;
-    margin: 1.5rem 0;
-}
-
-.divider::before,
-.divider::after {
-    content: '';
-    flex: 1;
-    border-bottom: 1px solid #e5e7eb;
-}
-
-.divider span {
-    padding: 0 1rem;
-    color: #6c757d;
-    font-size: 0.875rem;
-}
-
-.external-providers {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.external-form {
-    margin: 0;
-}
-
-.btn-external {
-    gap: 0.5rem;
-}
-
-.provider-icon {
-    width: 20px;
-    height: 20px;
-}
-
-.alert {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-bottom: 1.5rem;
-}
-
-.alert-danger {
-    background-color: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
-}
-
-.alert-icon {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-}
-
-@@media (max-width: 480px) {
-    .form-row {
-        flex-direction: column;
-        gap: 0;
-    }
-}
-</style>
 
 @section Scripts {
     <script>
@@ -486,7 +216,7 @@
                     var submitBtn = form.querySelector('button[type="submit"]');
                     if (submitBtn) {
                         submitBtn.disabled = true;
-                        submitBtn.innerHTML = '<span class="spinner"></span> Creating account...';
+                        submitBtn.innerHTML = '<span class="spinner"></span> @Localizer["signup_creating_account"].Value';
                     }
                 });
             }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Oluso.Core.Domain.Entities;
+using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.UserJourneys;
 
 namespace Oluso.EntityFramework.Stores;
@@ -14,12 +15,34 @@ public class JourneyPolicyStore : IJourneyPolicyStore
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
         WriteIndented = false
     };
 
-    public JourneyPolicyStore(IOlusoDbContext context)
+    private readonly ITenantContext _tenantContext;
+    private readonly IJourneyStepSecretProtector? _secretProtector;
+
+    public JourneyPolicyStore(
+        IOlusoDbContext context,
+        ITenantContext tenantContext,
+        IJourneyStepSecretProtector? secretProtector = null)
     {
         _context = context;
+        _tenantContext = tenantContext;
+        _secretProtector = secretProtector;
+    }
+
+    /// <summary>
+    /// The policies the current tenant names by slug: its own, then the global ones.
+    /// Slugs are unique per tenant, so another tenant's policy with the same slug is
+    /// never in reach — even where the tenant query filter is off (no current tenant).
+    /// </summary>
+    private IQueryable<JourneyPolicyEntity> WithSlug(string slug)
+    {
+        var tenantId = _tenantContext.TenantId;
+        return _context.JourneyPolicies
+            .Where(p => p.Slug == slug && (p.TenantId == tenantId || p.TenantId == null))
+            .OrderBy(p => p.TenantId == null ? 1 : 0);
     }
 
     public async Task<JourneyPolicy?> GetAsync(string policyId, CancellationToken cancellationToken = default)
@@ -33,6 +56,22 @@ public class JourneyPolicyStore : IJourneyPolicyStore
             .FirstOrDefaultAsync(p => p.Id == policyId, cancellationToken);
 
         return entity != null ? MapToPolicy(entity) : null;
+    }
+
+    public async Task<JourneyPolicy?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default)
+    {
+        var entity = await WithSlug(slug).FirstOrDefaultAsync(cancellationToken);
+
+        return entity != null ? MapToPolicy(entity) : null;
+    }
+
+    public Task<bool> IsSlugTakenAsync(string slug, string? exceptPolicyId = null, CancellationToken cancellationToken = default)
+    {
+        // A global policy is seen by every tenant, so its slug must be free in all of them.
+        var holders = _tenantContext.TenantId == null
+            ? _context.JourneyPolicies.IgnoreQueryFilters().Where(p => p.Slug == slug)
+            : WithSlug(slug);
+        return holders.AnyAsync(p => p.Id != exceptPolicyId, cancellationToken);
     }
 
     public async Task<JourneyPolicy?> GetByTypeAsync(JourneyType type, CancellationToken cancellationToken = default)
@@ -91,6 +130,11 @@ public class JourneyPolicyStore : IJourneyPolicyStore
 
     public async Task SaveAsync(JourneyPolicy policy, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(policy.Slug))
+        {
+            throw new ArgumentException($"Journey policy {policy.Id} has no slug.", nameof(policy));
+        }
+
         var entity = await _context.JourneyPolicies
             .FirstOrDefaultAsync(p => p.Id == policy.Id, cancellationToken);
 
@@ -119,11 +163,43 @@ public class JourneyPolicyStore : IJourneyPolicyStore
         }
     }
 
-    private static JourneyPolicy MapToPolicy(JourneyPolicyEntity entity)
+    /// <summary>
+    /// Decrypts step secrets so every caller — journey execution and the admin
+    /// API alike — works with plaintext. Redaction for API responses happens at
+    /// the controller, not here.
+    /// </summary>
+    private IList<JourneyPolicyStep> UnprotectSteps(IList<JourneyPolicyStep> steps)
+    {
+        _secretProtector?.Unprotect(steps);
+        return steps;
+    }
+
+    /// <summary>
+    /// Encrypts step secrets on a copy. The caller's policy object stays
+    /// plaintext, so a save doesn't leave ciphertext in an object the request
+    /// goes on to serialise back to the client.
+    /// </summary>
+    private List<JourneyPolicyStep> ProtectedCopy(IEnumerable<JourneyPolicyStep>? steps)
+    {
+        var list = steps?.ToList() ?? new List<JourneyPolicyStep>();
+        if (_secretProtector == null || list.Count == 0)
+        {
+            return list;
+        }
+
+        var copy = JsonSerializer.Deserialize<List<JourneyPolicyStep>>(
+            JsonSerializer.Serialize(list, JsonOptions), JsonOptions) ?? list;
+
+        _secretProtector.Protect(copy);
+        return copy;
+    }
+
+    private JourneyPolicy MapToPolicy(JourneyPolicyEntity entity)
     {
         return new JourneyPolicy
         {
             Id = entity.Id,
+            Slug = entity.Slug!,
             Name = entity.Name,
             TenantId = entity.TenantId,
             Type = Enum.TryParse<JourneyType>(entity.Type, out var type) ? type : JourneyType.SignIn,
@@ -131,7 +207,7 @@ public class JourneyPolicyStore : IJourneyPolicyStore
             Priority = entity.Priority,
             Description = entity.Description,
             Version = entity.Version,
-            Steps = DeserializeList<JourneyPolicyStep>(entity.Steps) ?? new List<JourneyPolicyStep>(),
+            Steps = UnprotectSteps(DeserializeList<JourneyPolicyStep>(entity.Steps) ?? new List<JourneyPolicyStep>()),
             Conditions = DeserializeList<JourneyPolicyCondition>(entity.Conditions),
             OutputClaims = DeserializeList<ClaimMapping>(entity.OutputClaims),
             Session = Deserialize<SessionConfiguration>(entity.SessionConfig),
@@ -139,6 +215,8 @@ public class JourneyPolicyStore : IJourneyPolicyStore
             DefaultStepTimeoutSeconds = entity.DefaultStepTimeoutSeconds,
             MaxJourneyDurationMinutes = entity.MaxJourneyDurationMinutes,
             Tags = entity.Tags?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
+            OwnerModule = entity.OwnerModule,
+            Sharing = Enum.IsDefined(typeof(JourneySharing), entity.Sharing) ? (JourneySharing)entity.Sharing : JourneySharing.Private,
             // Data collection journey properties
             RequiresAuthentication = entity.RequiresAuthentication,
             PersistSubmissions = entity.PersistSubmissions,
@@ -153,16 +231,17 @@ public class JourneyPolicyStore : IJourneyPolicyStore
         };
     }
 
-    private static void MapToEntity(JourneyPolicy policy, JourneyPolicyEntity entity)
+    private void MapToEntity(JourneyPolicy policy, JourneyPolicyEntity entity)
     {
         entity.Name = policy.Name;
         entity.TenantId = policy.TenantId;
+        entity.Slug = policy.Slug;
         entity.Type = policy.Type.ToString();
         entity.Enabled = policy.Enabled;
         entity.Priority = policy.Priority;
         entity.Description = policy.Description;
         entity.Version = policy.Version;
-        entity.Steps = Serialize(policy.Steps);
+        entity.Steps = Serialize(ProtectedCopy(policy.Steps));
         entity.Conditions = Serialize(policy.Conditions);
         entity.OutputClaims = Serialize(policy.OutputClaims);
         entity.SessionConfig = Serialize(policy.Session);
@@ -170,6 +249,8 @@ public class JourneyPolicyStore : IJourneyPolicyStore
         entity.DefaultStepTimeoutSeconds = policy.DefaultStepTimeoutSeconds;
         entity.MaxJourneyDurationMinutes = policy.MaxJourneyDurationMinutes;
         entity.Tags = policy.Tags != null ? string.Join(',', policy.Tags) : null;
+        entity.OwnerModule = string.IsNullOrWhiteSpace(policy.OwnerModule) ? null : policy.OwnerModule.Trim();
+        entity.Sharing = (int)policy.Sharing;
         // Data collection journey properties
         entity.RequiresAuthentication = policy.RequiresAuthentication;
         entity.PersistSubmissions = policy.PersistSubmissions;

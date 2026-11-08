@@ -6,7 +6,8 @@ namespace Oluso.Core.UserJourneys;
 public interface IJourneyPolicyStore
 {
     /// <summary>
-    /// Gets a policy by ID (alias for GetByIdAsync)
+    /// Gets a policy by ID (alias for GetByIdAsync). IDs are what the platform stores;
+    /// clients name a policy by <see cref="JourneyPolicy.Slug"/> (<see cref="GetBySlugAsync"/>).
     /// </summary>
     Task<JourneyPolicy?> GetAsync(string policyId, CancellationToken cancellationToken = default);
 
@@ -14,6 +15,21 @@ public interface IJourneyPolicyStore
     /// Gets a policy by ID
     /// </summary>
     Task<JourneyPolicy?> GetByIdAsync(string policyId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the policy a client names by slug (<c>?policy=</c>, share links, the public
+    /// API): the current tenant's, else a global one. Slugs are unique per tenant, so
+    /// another tenant's policy with the same slug is never returned.
+    /// </summary>
+    Task<JourneyPolicy?> GetBySlugAsync(string slug, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Whether this slug is unavailable to a policy in the current tenant: the tenant or
+    /// a global policy already uses it (other than <paramref name="exceptPolicyId"/>, the
+    /// policy being renamed). Global policies are seen by every tenant, so a global slug
+    /// must be free in all of them.
+    /// </summary>
+    Task<bool> IsSlugTakenAsync(string slug, string? exceptPolicyId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a policy by type (returns first matching enabled policy)
@@ -47,6 +63,14 @@ public interface IJourneyPolicyStore
 public class JourneyPolicy
 {
     public required string Id { get; init; }
+
+    /// <summary>
+    /// The handle clients use to name this policy (<c>?policy=</c>, share links, the public
+    /// API). Unique within a tenant and against global policies; for policies that predate
+    /// slugs it equals <see cref="Id"/>.
+    /// </summary>
+    public required string Slug { get; set; }
+
     public required string Name { get; set; }
     public string? TenantId { get; init; }
     public JourneyType Type { get; set; } = JourneyType.SignIn;
@@ -100,6 +124,18 @@ public class JourneyPolicy
     public IList<string>? Tags { get; set; }
 
     /// <summary>
+    /// The module that owns this journey (its module key), or null for a platform journey. A module journey's
+    /// answers go only to that module (<see cref="IJourneyResultSink"/>); the platform keeps no copy of them.
+    /// </summary>
+    public string? OwnerModule { get; set; }
+
+    /// <summary>Whether other modules may use this module journey. Ignored for a platform journey.</summary>
+    public JourneySharing Sharing { get; set; } = JourneySharing.Private;
+
+    /// <summary>True when a module owns this journey, so its answers never reach the platform.</summary>
+    public bool IsModuleOwned => !string.IsNullOrEmpty(OwnerModule);
+
+    /// <summary>
     /// Whether this journey requires authentication (false for waitlists, surveys, etc.)
     /// </summary>
     public bool RequiresAuthentication { get; set; } = true;
@@ -139,28 +175,34 @@ public class JourneyPolicy
     /// </summary>
     public string? SuccessMessage { get; set; }
 
+    /// <summary>
+    /// Comma-separated list of origins allowed to embed this journey
+    /// </summary>
+    public string? AllowedOrigins { get; set; }
+
+    /// <summary>
+    /// Public API key required for accessing this journey
+    /// </summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// Whether API key is required for public access
+    /// </summary>
+    public bool RequireApiKey { get; set; }
+
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
-/// <summary>
-/// UI customization for the journey
-/// </summary>
-public class JourneyUiConfiguration
-{
-    public string? Title { get; set; }
-    public string? LogoUrl { get; set; }
-    public string? BackgroundColor { get; set; }
-    public string? PrimaryColor { get; set; }
-    public string? CustomCss { get; set; }
-    public IDictionary<string, string>? Localization { get; set; }
 
-    /// <summary>
-    /// Layout width for the journey container.
-    /// Options: "narrow" (460px), "medium" (600px), "wide" (900px), "full" (100%)
-    /// Default is "narrow".
-    /// </summary>
-    public string? Layout { get; set; }
+/// <summary>Who may use a module-owned journey.</summary>
+public enum JourneySharing
+{
+    /// <summary>Only the owning module.</summary>
+    Private = 0,
+
+    /// <summary>The owning module and any other module; each run's answers go to the module that started it.</summary>
+    Shared = 1,
 }
 
 /// <summary>
@@ -219,6 +261,13 @@ public class JourneyPolicyStep
     public IList<StepCondition>? Conditions { get; set; }
 
     /// <summary>
+    /// Optional shell width for this step (narrow / medium / wide / full).
+    /// Overrides the policy-level <see cref="JourneyUiConfiguration.Layout"/>
+    /// for this step only. Null = use the policy default.
+    /// </summary>
+    public string? Layout { get; set; }
+
+    /// <summary>
     /// Next step ID on success (null = next in order)
     /// </summary>
     public string? OnSuccess { get; set; }
@@ -244,9 +293,12 @@ public class JourneyPolicyStep
     public int? TimeoutSeconds { get; set; }
 
     /// <summary>
-    /// Number of retry attempts allowed for this step
+    /// Failed attempts allowed at this step (wrong codes or passwords) before the journey fails.
+    /// 0 uses the platform default (<see cref="DefaultMaxFailedAttempts"/>).
     /// </summary>
     public int MaxRetries { get; set; } = 0;
+
+    public const int DefaultMaxFailedAttempts = 5;
 
     /// <summary>
     /// Whether to skip this step if it has already been completed in this session
@@ -300,15 +352,6 @@ public enum StepType
     CustomPage
 }
 
-/// <summary>
-/// A condition for policy matching
-/// </summary>
-public class JourneyPolicyCondition
-{
-    public required string Type { get; init; }
-    public required string Operator { get; init; }
-    public required string Value { get; init; }
-}
 
 /// <summary>
 /// Context for matching journey policies
@@ -323,111 +366,5 @@ public class JourneyPolicyMatchContext
     public IDictionary<string, string>? AdditionalParameters { get; init; }
 }
 
-/// <summary>
-/// Condition for step execution
-/// </summary>
-public class StepCondition
-{
-    /// <summary>
-    /// Type of condition (e.g., "claim", "context", "expression")
-    /// </summary>
-    public required string Type { get; init; }
 
-    /// <summary>
-    /// Field or path to evaluate
-    /// </summary>
-    public required string Field { get; init; }
-
-    /// <summary>
-    /// Comparison operator (eq, ne, gt, lt, contains, exists, regex)
-    /// </summary>
-    public required string Operator { get; init; }
-
-    /// <summary>
-    /// Value to compare against
-    /// </summary>
-    public string? Value { get; init; }
-
-    /// <summary>
-    /// Logical operator for combining with other conditions (and, or)
-    /// </summary>
-    public string LogicalOperator { get; set; } = "and";
-
-    /// <summary>
-    /// Whether to negate the condition result
-    /// </summary>
-    public bool Negate { get; set; } = false;
-}
-
-/// <summary>
-/// Session configuration for user journeys
-/// </summary>
-public class SessionConfiguration
-{
-    /// <summary>
-    /// Session lifetime in minutes
-    /// </summary>
-    public int SessionLifetimeMinutes { get; set; } = 60;
-
-    /// <summary>
-    /// Maximum session lifetime regardless of activity
-    /// </summary>
-    public int MaxSessionLifetimeMinutes { get; set; } = 1440;
-
-    /// <summary>
-    /// Whether to extend session on activity
-    /// </summary>
-    public bool SlidingExpiration { get; set; } = true;
-
-    /// <summary>
-    /// Whether session survives browser close
-    /// </summary>
-    public bool PersistentSession { get; set; } = false;
-
-    /// <summary>
-    /// Require re-authentication after this many minutes
-    /// </summary>
-    public int? RequireReauthAfterMinutes { get; set; }
-
-    /// <summary>
-    /// Single sign-on mode for this journey
-    /// </summary>
-    public SsoMode SsoMode { get; set; } = SsoMode.Enabled;
-
-    /// <summary>
-    /// Cookie name for this journey's session
-    /// </summary>
-    public string? CookieName { get; set; }
-
-    /// <summary>
-    /// Cookie same-site mode
-    /// </summary>
-    public string CookieSameSite { get; set; } = "Lax";
-}
-
-/// <summary>
-/// Single sign-on mode
-/// </summary>
-public enum SsoMode
-{
-    /// <summary>SSO is enabled - user stays logged in across clients</summary>
-    Enabled,
-    /// <summary>SSO is disabled - each client requires separate login</summary>
-    Disabled,
-    /// <summary>SSO only within the same tenant</summary>
-    TenantScoped,
-    /// <summary>SSO only within the same client</summary>
-    ClientScoped
-}
-
-/// <summary>
-/// Claim mapping for output claims
-/// </summary>
-public class ClaimMapping
-{
-    public string SourceType { get; set; } = null!;
-    public string SourcePath { get; set; } = null!;
-    public string TargetClaimType { get; set; } = null!;
-    public string? DefaultValue { get; set; }
-}
 

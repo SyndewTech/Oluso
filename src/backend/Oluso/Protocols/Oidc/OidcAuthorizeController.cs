@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Core.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Protocols;
 
@@ -8,7 +11,7 @@ namespace Oluso.Protocols.Oidc;
 /// OIDC Authorization endpoint controller.
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
-public class OidcAuthorizeController : ControllerBase
+public class OidcAuthorizeController : OidcControllerBase
 {
     private readonly IOidcProtocolService _protocol;
     private readonly IAuthenticationCoordinator _coordinator;
@@ -104,15 +107,23 @@ public class OidcAuthorizeController : ControllerBase
         // Get session ID from claims
         var sessionId = user.FindFirst("sid")?.Value;
 
-        // Build claims dictionary from user's claims
+        // Only what describes the session goes with the code (idp, tenant). The user's claims come from
+        // the profile service at the token endpoint, for the granted scopes: the cookie carries every
+        // profile claim (and upstream provider tokens), which the client was not necessarily granted.
         var claims = new Dictionary<string, object>();
         foreach (var claim in user.Claims)
         {
-            // Skip claims that are handled separately or are internal
-            if (claim.Type is "sub" or "sid" or "auth_time" or "amr" or "acr" or "iat" or "exp" or "nbf" or "iss" or "aud")
-                continue;
+            if (Core.Protocols.AuthorizationCodes.SessionClaims.Contains(claim.Type))
+            {
+                claims[claim.Type] = claim.Value;
+            }
+        }
 
-            claims[claim.Type] = claim.Value;
+        // "Remember me" made the cookie persistent; carry that into the tokens.
+        var cookieAuth = await HttpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        if (cookieAuth.Properties?.IsPersistent == true)
+        {
+            claims[ReservedClaimKeys.RememberMe] = "true";
         }
 
         // Get auth_time from claims

@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Services;
 using Oluso.Enterprise.Saml.Configuration;
 using Oluso.Enterprise.Saml.IdentityProvider;
 using Oluso.Enterprise.Saml.ServiceProvider;
+using Oluso.Enterprise.Saml.Stores;
 
 namespace Oluso.Enterprise.Saml.Protocol;
 
@@ -20,14 +22,20 @@ public class SamlProtocolService : ISamlProtocolService
     private readonly IOlusoUserService _userService;
     private readonly IProtocolStateStore _stateStore;
     private readonly ILogger<SamlProtocolService> _logger;
+    private readonly ITenantContext _tenantContext;
+    private readonly ISamlServiceProviderStore _serviceProviders;
 
     public SamlProtocolService(
         ISamlServiceProvider serviceProvider,
         ISamlIdentityProvider identityProvider,
         IOlusoUserService userService,
         IProtocolStateStore stateStore,
-        ILogger<SamlProtocolService> logger)
+        ILogger<SamlProtocolService> logger,
+        ITenantContext tenantContext,
+        ISamlServiceProviderStore serviceProviders)
     {
+        _serviceProviders = serviceProviders;
+        _tenantContext = tenantContext;
         _serviceProvider = serviceProvider;
         _identityProvider = identityProvider;
         _userService = userService;
@@ -92,6 +100,14 @@ public class SamlProtocolService : ISamlProtocolService
                 context.Properties["saml_relay_state"] = relayState ?? "";
                 context.Properties["saml_name_id_format"] = result.NameIdFormat ?? "";
             }
+
+            // The tenant decides journey or standard pages for SAML sign-ins too.
+            if (_tenantContext.Tenant is { } tenant)
+            {
+                context.Properties["TenantId"] = tenant.Id;
+                context.Properties["TenantUseJourneyFlow"] = tenant.UseJourneyFlow;
+                context.Properties["TenantJourneyFallbackToStandard"] = tenant.JourneyFallbackToStandard;
+            }
             else
             {
                 context.Properties["saml_error"] = result.Error ?? "Invalid SAML request";
@@ -134,7 +150,7 @@ public class SamlProtocolService : ISamlProtocolService
                 ["name_id_format"] = samlRequest.NameIdFormat ?? ""
             }
         };
-        var stateKey = await _stateStore.StoreAsync(state, TimeSpan.FromMinutes(10), cancellationToken);
+        var stateKey = await _stateStore.StoreAsync(state, cancellationToken: cancellationToken);
 
         // Build auth requirement
         var authRequirement = new AuthenticationRequirement
@@ -168,6 +184,14 @@ public class SamlProtocolService : ISamlProtocolService
         {
             _logger.LogError("Missing SP issuer or ACS URL in context");
             return new BadRequestObjectResult(new { error = "invalid_state", error_description = "Missing SAML request context" });
+        }
+
+        var denial = await SamlUserAccess.FindDenialAsync(
+            _serviceProviders, _userService, spIssuer, nameIdFormat, authResult.UserId, cancellationToken);
+        if (denial != null)
+        {
+            _logger.LogWarning("No SAML assertion for user {UserId} to SP {SpEntityId}: {Reason}", authResult.UserId, spIssuer, denial);
+            return await BuildErrorResponseAsync(context, "access_denied", denial, cancellationToken);
         }
 
         // Get user claims
@@ -272,7 +296,7 @@ public class SamlProtocolService : ISamlProtocolService
                 ["idp_name"] = idpName
             }
         };
-        var stateCorrelationId = await _stateStore.StoreAsync(state, TimeSpan.FromMinutes(10), cancellationToken);
+        var stateCorrelationId = await _stateStore.StoreAsync(state, cancellationToken: cancellationToken);
 
         // Create AuthnRequest
         var authnRequest = await _serviceProvider.CreateAuthnRequestAsync(new SamlAuthnRequestParams

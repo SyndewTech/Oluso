@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Events;
+using Oluso.Core.Services;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,6 +15,7 @@ namespace Oluso.EntityFramework.Stores;
 public class WebhookSubscriptionStore : IWebhookSubscriptionStore
 {
     private readonly IOlusoDbContext _context;
+    private readonly IKeyEncryptionService _encryption;
     private readonly ILogger<WebhookSubscriptionStore> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -23,9 +25,11 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
 
     public WebhookSubscriptionStore(
         IOlusoDbContext context,
+        IKeyEncryptionService encryption,
         ILogger<WebhookSubscriptionStore> logger)
     {
         _context = context;
+        _encryption = encryption;
         _logger = logger;
     }
 
@@ -41,7 +45,10 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
             .OrderByDescending(e => e.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        return endpoints.Select(MapToDto).ToList();
+        var results = new List<WebhookEndpoint>(endpoints.Count);
+        foreach (var ep in endpoints)
+            results.Add(await MapToDtoAsync(ep));
+        return results;
     }
 
     public async Task<WebhookEndpoint?> GetEndpointAsync(
@@ -52,7 +59,7 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
             .Include(e => e.EventSubscriptions)
             .FirstOrDefaultAsync(e => e.Id == endpointId, cancellationToken);
 
-        return endpoint != null ? MapToDto(endpoint) : null;
+        return endpoint != null ? await MapToDtoAsync(endpoint) : null;
     }
 
     public async Task<WebhookEndpoint> CreateEndpointAsync(
@@ -60,9 +67,10 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
         CreateWebhookEndpoint dto,
         CancellationToken cancellationToken = default)
     {
-        // Generate a secure secret
+        // Generate a secure secret and encrypt for HMAC signing at dispatch time
         var secret = GenerateSecret();
         var secretHash = HashSecret(secret);
+        var encryptedSecret = await _encryption.EncryptAsync(secret, cancellationToken);
 
         var endpoint = new WebhookEndpointEntity
         {
@@ -71,11 +79,16 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
             Description = dto.Description,
             Url = dto.Url,
             SecretHash = secretHash,
+            SigningSecretEncrypted = encryptedSecret,
             Enabled = dto.Enabled,
             ApiVersion = dto.ApiVersion,
             HeadersJson = dto.Headers != null
                 ? JsonSerializer.Serialize(dto.Headers, JsonOptions)
-                : null
+                : null,
+            AuthType = (int)dto.AuthType,
+            AuthCredential = dto.AuthCredential,
+            ClientId = string.IsNullOrWhiteSpace(dto.ClientId) ? null : dto.ClientId.Trim(),
+            SkipOwnClientEvents = dto.SkipOwnClientEvents
         };
 
         // Add event subscriptions
@@ -96,7 +109,7 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
             endpoint.Id, tenantId);
 
         // Return with the plain secret (only time it's visible)
-        var result = MapToDto(endpoint);
+        var result = await MapToDtoAsync(endpoint);
         return result with { Secret = secret };
     }
 
@@ -116,6 +129,11 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
         if (dto.Enabled.HasValue) endpoint.Enabled = dto.Enabled.Value;
         if (dto.ApiVersion != null) endpoint.ApiVersion = dto.ApiVersion;
         if (dto.Headers != null) endpoint.HeadersJson = JsonSerializer.Serialize(dto.Headers, JsonOptions);
+        if (dto.AuthType.HasValue) endpoint.AuthType = (int)dto.AuthType.Value;
+        if (dto.AuthCredential != null) endpoint.AuthCredential = dto.AuthCredential;
+        if (dto.ClientId != null) endpoint.ClientId = string.IsNullOrWhiteSpace(dto.ClientId) ? null : dto.ClientId.Trim();
+        if (dto.SkipOwnClientEvents.HasValue) endpoint.SkipOwnClientEvents = dto.SkipOwnClientEvents.Value;
+
 
         if (dto.EventTypes != null)
         {
@@ -134,7 +152,7 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
         endpoint.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
 
-        return MapToDto(endpoint);
+        return await MapToDtoAsync(endpoint);
     }
 
     public async Task DeleteEndpointAsync(
@@ -174,6 +192,7 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
 
         var secret = GenerateSecret();
         endpoint.SecretHash = HashSecret(secret);
+        endpoint.SigningSecretEncrypted = await _encryption.EncryptAsync(secret, cancellationToken);
         endpoint.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -199,7 +218,10 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
                        e.EventSubscriptions.Any(s => s.EventType == eventType && s.Enabled))
             .ToListAsync(cancellationToken);
 
-        return endpoints.Select(MapToDto).ToList();
+        var results = new List<WebhookEndpoint>(endpoints.Count);
+        foreach (var ep in endpoints)
+            results.Add(await MapToDtoAsync(ep));
+        return results;
     }
 
     public async Task UpdateEventSubscriptionsAsync(
@@ -392,11 +414,25 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
         return Convert.ToBase64String(hash);
     }
 
-    private WebhookEndpoint MapToDto(WebhookEndpointEntity endpoint)
+    private async Task<WebhookEndpoint> MapToDtoAsync(WebhookEndpointEntity endpoint)
     {
         var headers = !string.IsNullOrEmpty(endpoint.HeadersJson)
             ? JsonSerializer.Deserialize<Dictionary<string, string>>(endpoint.HeadersJson, JsonOptions)
             : null;
+
+        // Decrypt the signing secret for HMAC use by the dispatcher
+        string? signingSecret = null;
+        if (!string.IsNullOrEmpty(endpoint.SigningSecretEncrypted))
+        {
+            try
+            {
+                signingSecret = await _encryption.DecryptAsync(endpoint.SigningSecretEncrypted);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to decrypt signing secret for endpoint {EndpointId}", endpoint.Id);
+            }
+        }
 
         return new WebhookEndpoint
         {
@@ -405,14 +441,20 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
             Name = endpoint.Name,
             Description = endpoint.Description,
             Url = endpoint.Url,
-            Secret = null, // Never return the secret hash
+            Secret = signingSecret, // Decrypted for HMAC signing by the dispatcher
             Enabled = endpoint.Enabled,
             EventTypes = endpoint.EventSubscriptions
                 .Where(s => s.Enabled)
                 .Select(s => s.EventType)
                 .ToList(),
             Headers = headers,
+            AuthType = (WebhookAuthType)endpoint.AuthType,
+            AuthCredential = endpoint.AuthCredential, // Dispatcher needs the credential for outbound auth
             ApiVersion = endpoint.ApiVersion,
+            ClientId = endpoint.ClientId,
+            SkipOwnClientEvents = endpoint.SkipOwnClientEvents,
+            SensitiveDataAuthorizedAt = endpoint.SensitiveDataAuthorizedAt,
+            SensitiveDataAuthorizedBy = endpoint.SensitiveDataAuthorizedBy,
             CreatedAt = endpoint.CreatedAt,
             UpdatedAt = endpoint.UpdatedAt,
             Stats = new WebhookEndpointStats
@@ -433,6 +475,7 @@ public class WebhookSubscriptionStore : IWebhookSubscriptionStore
         EndpointId = delivery.EndpointId,
         EventType = delivery.EventType,
         PayloadId = delivery.PayloadId,
+        TenantId = delivery.TenantId,
         Payload = delivery.Payload,
         Status = (WebhookDeliveryStatus)delivery.Status,
         HttpStatus = delivery.HttpStatus,

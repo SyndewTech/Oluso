@@ -2,9 +2,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Locale;
 
 namespace Oluso.Authentication;
 
@@ -17,6 +19,7 @@ public class TenantPasswordValidator : IPasswordValidator<OlusoUser>
     private readonly ITenantSettingsProvider _tenantSettingsProvider;
     private readonly ILogger<TenantPasswordValidator> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IPasswordHistoryStore _passwordHistory;
 
     // Common weak passwords to block (can be extended)
     private static readonly HashSet<string> CommonPasswords = new(StringComparer.OrdinalIgnoreCase)
@@ -31,76 +34,122 @@ public class TenantPasswordValidator : IPasswordValidator<OlusoUser>
     public TenantPasswordValidator(
         ITenantSettingsProvider tenantSettingsProvider,
         ILogger<TenantPasswordValidator> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IPasswordHistoryStore passwordHistory)
     {
         _tenantSettingsProvider = tenantSettingsProvider;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _passwordHistory = passwordHistory;
+    }
+
+    /// <summary>Named HttpClient for the Pwned Passwords range API (see <see cref="AddPwnedPasswordsClient"/>).</summary>
+    public const string PwnedPasswordsClient = "Oluso.PwnedPasswords";
+
+    /// <summary>
+    /// Registers the Pwned Passwords client: a short timeout, so a slow API can't stall a
+    /// password change, and response padding, so response sizes don't hint at the range queried.
+    /// </summary>
+    public static IServiceCollection AddPwnedPasswordsClient(IServiceCollection services)
+    {
+        services.AddHttpClient(PwnedPasswordsClient, client =>
+        {
+            client.BaseAddress = new Uri("https://api.pwnedpasswords.com/");
+            client.Timeout = TimeSpan.FromSeconds(5);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Oluso-PasswordValidator");
+            client.DefaultRequestHeaders.Add("Add-Padding", "true");
+        });
+        return services;
+    }
+
+    /// <summary>Outcome of a breached-password lookup.</summary>
+    public enum BreachCheckResult
+    {
+        NotBreached,
+        Breached,
+
+        /// <summary>The service couldn't be reached or answered with an error.</summary>
+        Unavailable
     }
 
     /// <summary>
-    /// Checks if a password has been exposed in known data breaches using the Have I Been Pwned API.
-    /// Uses k-anonymity: only the first 5 characters of the SHA-1 hash are sent to the API,
-    /// so the actual password is never transmitted.
+    /// Checks if a password has been exposed in known data breaches using the Have I Been Pwned
+    /// Pwned Passwords API. Uses k-anonymity: only the first 5 characters of the SHA-1 hash are
+    /// sent, so the password is never transmitted. A slow or failing API reports
+    /// <see cref="BreachCheckResult.Unavailable"/>; the tenant policy decides what that means
+    /// (<see cref="TenantPasswordSettings.RejectWhenBreachCheckUnavailable"/>).
     /// </summary>
-    /// <param name="password">The password to check</param>
-    /// <returns>True if the password appears in breach databases, false otherwise</returns>
-    private async Task<bool> IsPasswordInBreachAsync(string password)
+    private async Task<BreachCheckResult> CheckBreachAsync(string password)
     {
         try
         {
-            // SHA-1 hash the password
             var sha1Hash = ComputeSha1Hash(password);
-
-            // Split into prefix (first 5 chars) and suffix (remaining chars)
             var prefix = sha1Hash[..5];
-            var newPref = sha1Hash.Substring(0, 5);
-            var newSuffix = sha1Hash.Substring(5);
             var suffix = sha1Hash[5..];
 
-            // Query the HIBP API with the prefix (k-anonymity)
-            using var httpClient = _httpClientFactory.CreateClient();
-            httpClient.DefaultRequestHeaders.Add("User-Agent", "Oluso-PasswordValidator");
-
-            var response = await httpClient.GetAsync($"https://api.pwnedpasswords.com/range/{prefix}");
+            var httpClient = _httpClientFactory.CreateClient(PwnedPasswordsClient);
+            using var response = await httpClient.GetAsync($"range/{prefix}");
 
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Have I Been Pwned API returned {StatusCode}", response.StatusCode);
-                return false; // Don't block users if API is unavailable
+                return BreachCheckResult.Unavailable;
             }
 
             var responseBody = await response.Content.ReadAsStringAsync();
 
-            // Response format: each line is "SUFFIX:COUNT" (suffix is uppercase)
-            // Check if our password's suffix appears in the response
-            var lines = responseBody.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
+            // Each line is "SUFFIX:COUNT". Padding lines have a count of 0 and are not breaches.
+            foreach (var line in responseBody.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 var parts = line.Split(':');
-                if (parts.Length >= 1 && parts[0].Trim().Equals(suffix, StringComparison.OrdinalIgnoreCase))
+                if (parts.Length == 2
+                    && parts[0].Trim().Equals(suffix, StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(parts[1].Trim(), out var count)
+                    && count > 0)
                 {
-                    // Password found in breach database
-                    if (parts.Length >= 2 && int.TryParse(parts[1].Trim(), out var count))
-                    {
-                        _logger.LogInformation("Password found in {Count} breaches", count);
-                    }
-                    return true;
+                    _logger.LogInformation("Password found in {Count} breaches", count);
+                    return BreachCheckResult.Breached;
                 }
             }
 
-            return false;
+            return BreachCheckResult.NotBreached;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning(ex, "Error checking Have I Been Pwned API");
-            return false; // Don't block users if there's an error
+            _logger.LogWarning(ex, "Have I Been Pwned API could not be reached");
+            return BreachCheckResult.Unavailable;
         }
     }
 
     /// <summary>
-    /// Computes the SHA-1 hash of a string and returns it as an uppercase hex string.
+    /// True when <paramref name="password"/> matches the user's current password or, with a
+    /// history policy, one of their last <see cref="TenantPasswordSettings.PasswordHistoryCount"/>
+    /// passwords. The current password always counts when either history or expiry is on —
+    /// otherwise an expired password could simply be set again.
     /// </summary>
+    private async Task<bool> IsReusedAsync(UserManager<OlusoUser> manager, OlusoUser user, string password, TenantPasswordSettings settings)
+    {
+        var historyCount = Math.Max(settings.PasswordHistoryCount, 0);
+        if (historyCount == 0 && settings.PasswordExpirationDays <= 0)
+        {
+            return false;
+        }
+
+        var hashes = new List<string>();
+        if (!string.IsNullOrEmpty(user.PasswordHash))
+        {
+            hashes.Add(user.PasswordHash);
+        }
+        if (historyCount > 0 && !string.IsNullOrEmpty(user.Id))
+        {
+            var recent = await _passwordHistory.GetRecentHashesAsync(user.Id, historyCount);
+            hashes.AddRange(recent.Where(h => !string.Equals(h, user.PasswordHash, StringComparison.Ordinal)));
+        }
+
+        return hashes.Any(hash =>
+            manager.PasswordHasher.VerifyHashedPassword(user, hash, password) != PasswordVerificationResult.Failed);
+    }
+
     private static string ComputeSha1Hash(string input)
     {
         var bytes = Encoding.UTF8.GetBytes(input);
@@ -119,7 +168,9 @@ public class TenantPasswordValidator : IPasswordValidator<OlusoUser>
             });
         }
 
-        var settings = await _tenantSettingsProvider.GetPasswordSettingsAsync();
+        var settings = string.IsNullOrEmpty(user.TenantId)
+            ? await _tenantSettingsProvider.GetPasswordSettingsAsync()
+            : await _tenantSettingsProvider.GetPasswordSettingsAsync(user.TenantId);
         var errors = new List<IdentityError>();
 
         // Minimum length
@@ -233,17 +284,39 @@ public class TenantPasswordValidator : IPasswordValidator<OlusoUser>
             }
         }
 
+        if (await IsReusedAsync(manager, user, password, settings))
+        {
+            errors.Add(new IdentityError
+            {
+                Code = "PasswordReused",
+                Description = settings.PasswordHistoryCount > 0
+                    ? UiStringDefaults.Resolve("password_error_reused_history", settings.PasswordHistoryCount)
+                    : UiStringDefaults.Resolve("password_error_reused_current")
+            });
+        }
+
         // Check against Have I Been Pwned breach database
         if (settings.CheckBreachedPasswords)
         {
-            var isBreached = await IsPasswordInBreachAsync(password);
-            if (isBreached)
+            switch (await CheckBreachAsync(password))
             {
-                errors.Add(new IdentityError
-                {
-                    Code = "PasswordBreached",
-                    Description = "This password has appeared in a known data breach. Please choose a different password."
-                });
+                case BreachCheckResult.Breached:
+                    errors.Add(new IdentityError
+                    {
+                        Code = "PasswordBreached",
+                        Description = UiStringDefaults.Resolve("password_error_breached")
+                    });
+                    break;
+                case BreachCheckResult.Unavailable when settings.RejectWhenBreachCheckUnavailable:
+                    errors.Add(new IdentityError
+                    {
+                        Code = "PasswordBreachCheckUnavailable",
+                        Description = UiStringDefaults.Resolve("password_error_breach_check_unavailable")
+                    });
+                    break;
+                case BreachCheckResult.Unavailable:
+                    _logger.LogWarning("Breached-password check unavailable; accepting the password as the tenant policy allows");
+                    break;
             }
         }
 

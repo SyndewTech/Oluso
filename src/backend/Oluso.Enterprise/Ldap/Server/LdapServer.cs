@@ -146,7 +146,7 @@ public class LdapServer : ILdapServer
         {
             try
             {
-                var cert = new X509Certificate2(
+                var cert = X509CertificateLoader.LoadPkcs12FromFile(
                     _options.SslCertificatePath,
                     _options.SslCertificatePassword,
                     X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
@@ -517,31 +517,6 @@ internal class LdapConnection
             };
         }
 
-        // Check for global admin bind
-        if (!string.IsNullOrEmpty(_options.AdminDn) &&
-            request.Name.Equals(_options.AdminDn, StringComparison.OrdinalIgnoreCase))
-        {
-            var adminPassword = request.GetSimplePassword();
-            if (adminPassword == _options.AdminPassword)
-            {
-                _isAuthenticated = true;
-                _boundDn = request.Name;
-                _boundTenantId = null; // Admin has access to all tenants
-                return new BindResponse
-                {
-                    MessageId = request.MessageId,
-                    ResultCode = LdapResultCode.Success
-                };
-            }
-
-            return new BindResponse
-            {
-                MessageId = request.MessageId,
-                ResultCode = LdapResultCode.InvalidCredentials,
-                DiagnosticMessage = "Invalid admin credentials"
-            };
-        }
-
         // Check for service account bind (DN contains ou=services)
         if (request.Name.Contains("ou=services", StringComparison.OrdinalIgnoreCase))
         {
@@ -550,6 +525,17 @@ internal class LdapConnection
 
         // Parse user DN to extract username and tenant
         var (username, tenantId) = ParseUserDn(request.Name);
+
+        // Check for per-tenant admin bind
+        if (!string.IsNullOrEmpty(tenantId))
+        {
+            var tenantAdminResult = await TryTenantAdminBindAsync(request, tenantId, cancellationToken);
+            if (tenantAdminResult != null)
+            {
+                return tenantAdminResult;
+            }
+        }
+
         if (string.IsNullOrEmpty(username))
         {
             return new BindResponse
@@ -563,7 +549,6 @@ internal class LdapConnection
         // Authenticate against Identity
         using var scope = _scopeFactory.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<OlusoUser>>();
-        var signInManager = scope.ServiceProvider.GetRequiredService<SignInManager<OlusoUser>>();
 
         // Find user
         var usersQuery = userManager.Users.Where(u =>
@@ -596,23 +581,36 @@ internal class LdapConnection
             };
         }
 
-        // Check password
-        var password = request.GetSimplePassword();
-        var result = await signInManager.CheckPasswordSignInAsync(user, password ?? "", lockoutOnFailure: true);
-
-        if (!result.Succeeded)
+        // Check if account is locked out
+        if (await userManager.IsLockedOutAsync(user))
         {
-            var diagnostic = result.IsLockedOut ? "Account is locked" :
-                             result.IsNotAllowed ? "Sign in not allowed" :
-                             "Invalid credentials";
+            return new BindResponse
+            {
+                MessageId = request.MessageId,
+                ResultCode = LdapResultCode.InvalidCredentials,
+                DiagnosticMessage = "Account is locked"
+            };
+        }
+
+        // Check password (using UserManager instead of SignInManager to avoid HttpContext requirement)
+        var password = request.GetSimplePassword();
+        var passwordValid = await userManager.CheckPasswordAsync(user, password ?? "");
+
+        if (!passwordValid)
+        {
+            // Record failed attempt for lockout
+            await userManager.AccessFailedAsync(user);
 
             return new BindResponse
             {
                 MessageId = request.MessageId,
                 ResultCode = LdapResultCode.InvalidCredentials,
-                DiagnosticMessage = diagnostic
+                DiagnosticMessage = "Invalid credentials"
             };
         }
+
+        // Reset lockout on successful login
+        await userManager.ResetAccessFailedCountAsync(user);
 
         _isAuthenticated = true;
         _boundDn = BuildUserDn(user);
@@ -663,6 +661,57 @@ internal class LdapConnection
 
         _logger.LogInformation("LDAP bind successful for service account {AccountId} ({AccountName})",
             account.Id, account.Name);
+
+        return new BindResponse
+        {
+            MessageId = request.MessageId,
+            ResultCode = LdapResultCode.Success
+        };
+    }
+
+    private async Task<BindResponse?> TryTenantAdminBindAsync(BindRequest request, string tenantId, CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var ldapSettings = scope.ServiceProvider.GetService<ILdapTenantSettingsService>();
+        if (ldapSettings == null)
+        {
+            return null;
+        }
+
+        var tenantSettings = await ldapSettings.GetSettingsAsync(tenantId, cancellationToken);
+
+        // Check if tenant has a configured admin DN
+        if (string.IsNullOrEmpty(tenantSettings.AdminDn) || string.IsNullOrEmpty(tenantSettings.AdminPasswordHash))
+        {
+            return null;
+        }
+
+        // Check if the bind DN matches the tenant admin DN
+        if (!request.Name.Equals(tenantSettings.AdminDn, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        // Verify password using Identity's password hasher
+        var password = request.GetSimplePassword();
+        var passwordHasher = new PasswordHasher<object>();
+        var result = passwordHasher.VerifyHashedPassword(null!, tenantSettings.AdminPasswordHash, password ?? "");
+        if (result == PasswordVerificationResult.Failed)
+        {
+            _logger.LogWarning("LDAP tenant admin bind failed for tenant {TenantId}", tenantId);
+            return new BindResponse
+            {
+                MessageId = request.MessageId,
+                ResultCode = LdapResultCode.InvalidCredentials,
+                DiagnosticMessage = "Invalid admin credentials"
+            };
+        }
+
+        _isAuthenticated = true;
+        _boundDn = request.Name;
+        _boundTenantId = tenantId;
+
+        _logger.LogInformation("LDAP bind successful for tenant admin, tenant {TenantId}", tenantId);
 
         return new BindResponse
         {

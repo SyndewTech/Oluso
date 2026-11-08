@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Interfaces;
 
 namespace Oluso.Core.Api;
@@ -18,6 +19,7 @@ namespace Oluso.Core.Api;
 /// </summary>
 [ApiController]
 [Authorize(Policy = "ServiceApi")]
+[ApiExplorerSettings(GroupName = "service")]
 public abstract class ServiceBaseController : ControllerBase
 {
     private readonly ITenantContext _tenantContext;
@@ -53,9 +55,7 @@ public abstract class ServiceBaseController : ControllerBase
     /// <summary>
     /// Checks if the client has a specific scope
     /// </summary>
-    protected bool HasScope(string scope) =>
-        User.FindAll("scope").Any(c => c.Value == scope) ||
-        User.FindFirst("scope")?.Value?.Split(' ').Contains(scope) == true;
+    protected bool HasScope(string scope) => User.HasGrantedScope(scope);
 
     /// <summary>
     /// Checks if the client has all of the specified scopes
@@ -72,13 +72,7 @@ public abstract class ServiceBaseController : ControllerBase
     /// <summary>
     /// Gets all scopes granted to the client
     /// </summary>
-    protected IEnumerable<string> GetScopes()
-    {
-        // Handle both space-separated and multiple claims
-        var scopeClaims = User.FindAll("scope").Select(c => c.Value).ToList();
-
-        return scopeClaims.SelectMany(s => s.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Distinct();
-    }
+    protected IEnumerable<string> GetScopes() => User.GetGrantedScopes();
 
     /// <summary>
     /// Gets the JWT ID (jti claim) for idempotency checks

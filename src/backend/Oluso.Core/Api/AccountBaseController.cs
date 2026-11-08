@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Interfaces;
 using System.Text.Json;
 
@@ -18,6 +19,7 @@ namespace Oluso.Core.Api;
 /// </summary>
 [ApiController]
 [Authorize(Policy = "AccountApi")]
+[ApiExplorerSettings(GroupName = "account")]
 public abstract class AccountBaseController : ControllerBase
 {
     private readonly ITenantContext _tenantContext;
@@ -79,33 +81,7 @@ public abstract class AccountBaseController : ControllerBase
     /// <summary>
     /// Gets all tenant IDs the user belongs to (for multi-tenant users)
     /// </summary>
-    protected IReadOnlyList<string> GetUserTenantIds()
-    {
-        // Check for tenant_ids array claim (multi-tenant users)
-        var tenantIdsClaim = User.FindFirst("tenant_ids")?.Value;
-        if (!string.IsNullOrEmpty(tenantIdsClaim))
-        {
-            try
-            {
-                var tenants = JsonSerializer.Deserialize<string[]>(tenantIdsClaim);
-                if (tenants != null)
-                    return tenants;
-            }
-            catch
-            {
-                // Fall through to single tenant
-            }
-        }
-
-        // Check for multiple tenant_id claims
-        var multiTenantClaims = User.FindAll("tenant_id").Select(c => c.Value).ToList();
-        if (multiTenantClaims.Count > 0)
-            return multiTenantClaims;
-
-        // Single tenant from primary claim
-        var singleTenant = User.FindFirst("tenant_id")?.Value;
-        return singleTenant != null ? new[] { singleTenant } : Array.Empty<string>();
-    }
+    protected IReadOnlyList<string> GetUserTenantIds() => User.GetAllowedTenantIds();
 
     /// <summary>
     /// Whether the current user belongs to multiple tenants

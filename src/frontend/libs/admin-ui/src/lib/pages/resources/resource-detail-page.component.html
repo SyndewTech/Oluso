@@ -1,0 +1,441 @@
+@if (loading()) {
+  <div class="flex items-center justify-center h-64">
+    <div class="text-gray-500">Loading...</div>
+  </div>
+} @else if (isNew()) {
+  <!-- Create New Resource -->
+  <div class="space-y-6">
+    <div class="flex items-center gap-4">
+      <ui-button variant="ghost" (clicked)="onBack()">
+        <ui-icon name="arrow-left" class="h-4 w-4 mr-2" />
+        Back
+      </ui-button>
+      <h1 class="text-2xl font-bold text-gray-900">Create Resource</h1>
+    </div>
+
+    <ui-card>
+      <div class="px-4 py-5 sm:p-6 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Resource URI *</label>
+          <input
+            type="text"
+            [(ngModel)]="formData.uri"
+            (ngModelChange)="onUriChange()"
+            (blur)="onUriBlur()"
+            [class]="'mt-1 block w-full rounded-md shadow-sm sm:text-sm ' +
+              (uriError
+                ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
+                : 'border-gray-300 focus:border-primary-500 focus:ring-primary-500')"
+            placeholder="e.g., https://api.example.com/v1"
+          />
+          @if (uriError) {
+            <p class="mt-1 text-xs text-red-600">{{ uriError }}</p>
+          } @else {
+            <p class="mt-1 text-xs text-gray-500">
+              Absolute URI identifying this protected resource (RFC 8707). Must not contain a fragment.
+            </p>
+          }
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Display Name</label>
+          <input
+            type="text"
+            [(ngModel)]="formData.displayName"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+            placeholder="e.g., My API"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Description</label>
+          <textarea
+            [(ngModel)]="formData.description"
+            rows="3"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+          ></textarea>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.enabled"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Enabled</span>
+          </label>
+
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.showInDiscoveryDocument"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Show in Discovery Document</span>
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-4">
+          <ui-button variant="secondary" (clicked)="onBack()">
+            Cancel
+          </ui-button>
+          <ui-button [disabled]="!formData.uri || saving()" (clicked)="onCreate()">
+            {{ saving() ? 'Creating...' : 'Create Resource' }}
+          </ui-button>
+        </div>
+      </div>
+    </ui-card>
+  </div>
+} @else if (!resource()) {
+  <div class="text-center py-8 text-gray-500">Resource not found</div>
+} @else {
+  <!-- View/Edit Resource -->
+  <div class="space-y-6">
+    <!-- Plugin slot: before header -->
+    <ui-page-slot-host
+      pageId="resource-detail"
+      slotId="before-header"
+      [data]="{ resource: resource() }"
+    />
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <ui-button variant="ghost" (clicked)="onBack()">
+          <ui-icon name="arrow-left" class="h-4 w-4 mr-2" />
+          Back
+        </ui-button>
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">{{ resource()!.displayName || 'Resource' }}</h1>
+          <p class="text-sm text-gray-500 break-all">{{ resource()!.uri }}</p>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <ui-button variant="secondary" (clicked)="openEditModal()">
+          <ui-icon name="pencil" class="h-4 w-4 mr-2" />
+          Edit
+        </ui-button>
+        <ui-button variant="danger" (clicked)="openDeleteModal()">
+          Delete
+        </ui-button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <!-- Basic Information -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Basic Information</h3>
+          <dl class="space-y-4">
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Resource URI</dt>
+              <dd class="mt-1 text-sm text-gray-900 break-all">{{ resource()!.uri }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Display Name</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ resource()!.displayName || '-' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Description</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ resource()!.description || '-' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Status</dt>
+              <dd class="mt-1">
+                <ui-badge [variant]="resource()!.enabled ? 'success' : 'danger'">
+                  {{ resource()!.enabled ? 'Enabled' : 'Disabled' }}
+                </ui-badge>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </ui-card>
+
+      <!-- Settings -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Settings</h3>
+          <dl class="space-y-4">
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Show in Discovery Document</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ resource()!.showInDiscoveryDocument ? 'Yes' : 'No' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Created</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ formatDate(resource()!.created) }}</dd>
+            </div>
+            @if (resource()!.updated) {
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Last Updated</dt>
+                <dd class="mt-1 text-sm text-gray-900">{{ formatDate(resource()!.updated!) }}</dd>
+              </div>
+            }
+          </dl>
+        </div>
+      </ui-card>
+
+      <!-- Allowed Scopes -->
+      <ui-card class="lg:col-span-2">
+        <div class="px-4 py-5 sm:p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-medium text-gray-900">Allowed Scopes</h3>
+            <ui-button variant="secondary" size="sm" (clicked)="openScopeModal()">
+              <ui-icon name="plus" class="h-4 w-4 mr-2" />
+              Add Scope
+            </ui-button>
+          </div>
+          <p class="text-sm text-gray-500 mb-4">
+            Scopes that are valid for this resource. If empty, all scopes are allowed.
+            Clients can request these scopes when using the resource parameter.
+          </p>
+          @if (resource()!.allowedScopes && resource()!.allowedScopes.length > 0) {
+            <div class="border rounded-md divide-y">
+              @for (scope of resource()!.allowedScopes; track scope) {
+                <div class="flex items-center justify-between p-3">
+                  <span class="text-sm text-gray-900">{{ scope }}</span>
+                  <ui-button variant="ghost" size="sm" [disabled]="saving()" (clicked)="removeScope(scope)">
+                    <ui-icon name="trash" class="h-4 w-4 text-red-500" />
+                  </ui-button>
+                </div>
+              }
+            </div>
+          } @else {
+            <div class="text-center py-8 text-gray-500">
+              No scope restrictions. All scopes are allowed for this resource.
+            </div>
+          }
+        </div>
+      </ui-card>
+
+      <!-- User Claims -->
+      <ui-card class="lg:col-span-2">
+        <div class="px-4 py-5 sm:p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-medium text-gray-900">User Claims</h3>
+            <ui-button variant="secondary" size="sm" (clicked)="openClaimsModal()">
+              <ui-icon name="pencil" class="h-4 w-4 mr-2" />
+              Edit Claims
+            </ui-button>
+          </div>
+          <p class="text-sm text-gray-500 mb-4">
+            Claims that will be included in access tokens for this resource.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            @if (resource()!.userClaims && resource()!.userClaims.length > 0) {
+              @for (claim of resource()!.userClaims; track claim) {
+                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800">
+                  {{ claim }}
+                </span>
+              }
+            } @else {
+              <span class="text-sm text-gray-500">No claims configured</span>
+            }
+          </div>
+        </div>
+      </ui-card>
+    </div>
+
+    <!-- Plugin detail sections -->
+    <ui-detail-section-host
+      entityType="resource"
+      [entityId]="resource()!.id.toString()"
+      [data]="{ resource: resource() }"
+    />
+
+    <!-- Plugin slot: after content -->
+    <ui-page-slot-host
+      pageId="resource-detail"
+      slotId="after-content"
+      [data]="{ resource: resource() }"
+    />
+  </div>
+
+  <!-- Delete Modal -->
+  <ui-modal
+    [open]="showDeleteModal()"
+    title="Delete Resource"
+    (closed)="closeDeleteModal()"
+  >
+    <p class="text-gray-600">
+      Are you sure you want to delete the resource <strong class="break-all">{{ resource()!.uri }}</strong>?
+      This action cannot be undone.
+    </p>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeDeleteModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmDelete()">
+        Delete
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Edit Modal -->
+  <ui-modal
+    [open]="showEditModal()"
+    title="Edit Resource"
+    (closed)="closeEditModal()"
+  >
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Resource URI</label>
+        <p class="mt-1 text-sm text-gray-500 break-all">{{ resource()!.uri }}</p>
+        <p class="text-xs text-gray-400">URI cannot be changed after creation</p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Display Name</label>
+        <input
+          type="text"
+          [(ngModel)]="editFormData.displayName"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Description</label>
+        <textarea
+          [(ngModel)]="editFormData.description"
+          rows="3"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        ></textarea>
+      </div>
+
+      <div class="flex flex-wrap gap-4">
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.enabled"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Enabled</span>
+        </label>
+
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.showInDiscoveryDocument"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Show in Discovery</span>
+        </label>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-4">
+        <ui-button variant="secondary" (clicked)="closeEditModal()">
+          Cancel
+        </ui-button>
+        <ui-button [disabled]="saving()" (clicked)="onUpdate()">
+          {{ saving() ? 'Saving...' : 'Save Changes' }}
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+
+  <!-- Add Scope Modal -->
+  <ui-modal
+    [open]="showScopeModal()"
+    title="Add Scope to Resource"
+    (closed)="closeScopeModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500">
+        Select a scope to add to this resource. Clients can then request this scope when using the resource parameter.
+      </p>
+      @if (unassignedScopes.length > 0) {
+        <div class="max-h-64 overflow-y-auto space-y-2">
+          @for (scope of unassignedScopes; track scope.name) {
+            <button
+              type="button"
+              (click)="addScope(scope.name)"
+              [disabled]="saving()"
+              class="w-full text-left p-3 rounded-md border border-gray-200 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <div class="font-medium text-gray-900">{{ scope.name }}</div>
+              @if (scope.displayName) {
+                <div class="text-sm text-gray-500">{{ scope.displayName }}</div>
+              }
+              @if (scope.description) {
+                <div class="text-xs text-gray-400 mt-1">{{ scope.description }}</div>
+              }
+            </button>
+          }
+        </div>
+      } @else {
+        <div class="text-center py-8 text-gray-500">
+          All available scopes are already assigned to this resource.
+        </div>
+      }
+    </div>
+  </ui-modal>
+
+  <!-- Edit Claims Modal -->
+  <ui-modal
+    [open]="showClaimsModal()"
+    title="Edit User Claims"
+    (closed)="closeClaimsModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500">
+        Add or remove claims that will be included in access tokens for this resource.
+      </p>
+
+      <!-- Add new claim -->
+      <div class="flex gap-2">
+        <input
+          type="text"
+          [(ngModel)]="newClaim"
+          (keydown)="onClaimKeydown($event)"
+          placeholder="Enter claim type (e.g., sub, email, role)"
+          class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        />
+        <ui-button [disabled]="!newClaim || saving()" (clicked)="addClaim()">
+          <ui-icon name="plus" class="h-4 w-4 mr-1" />
+          Add
+        </ui-button>
+      </div>
+
+      <!-- Current claims -->
+      <div class="border rounded-md divide-y max-h-64 overflow-y-auto">
+        @if (resource()!.userClaims && resource()!.userClaims.length > 0) {
+          @for (claim of resource()!.userClaims; track claim) {
+            <div class="flex items-center justify-between p-3">
+              <span class="text-sm text-gray-900">{{ claim }}</span>
+              <ui-button variant="ghost" size="sm" [disabled]="saving()" (clicked)="removeClaim(claim)">
+                <ui-icon name="trash" class="h-4 w-4 text-red-500" />
+              </ui-button>
+            </div>
+          }
+        } @else {
+          <div class="p-4 text-center text-sm text-gray-500">
+            No claims configured yet
+          </div>
+        }
+      </div>
+
+      <!-- Common claims suggestions -->
+      <div class="text-xs text-gray-500">
+        <p class="font-medium mb-1">Common claims:</p>
+        <div class="flex flex-wrap gap-1">
+          @for (claim of commonClaims; track claim) {
+            <button
+              type="button"
+              (click)="selectCommonClaim(claim)"
+              class="px-2 py-0.5 bg-gray-100 rounded text-gray-600 hover:bg-gray-200"
+            >
+              {{ claim }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <ui-button variant="secondary" (clicked)="closeClaimsModal()">
+          Done
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+}

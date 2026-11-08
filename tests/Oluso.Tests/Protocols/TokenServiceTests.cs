@@ -2,7 +2,6 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using FluentAssertions;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Moq;
@@ -19,11 +18,12 @@ public class TokenServiceTests
     private readonly Mock<ISigningCredentialStore> _signingCredentialStoreMock;
     private readonly Mock<IPersistedGrantStore> _grantStoreMock;
     private readonly Mock<IResourceStore> _resourceStoreMock;
-    private readonly Mock<ITenantContext> _tenantContextMock;
     private readonly Mock<ITenantSettingsProvider> _tenantSettingsMock;
     private readonly Mock<IClaimsProviderRegistry> _claimsProviderRegistryMock;
-    private readonly Mock<IConfiguration> _configurationMock;
+    private readonly Mock<IIssuerResolver> _issuerResolverMock;
     private readonly Mock<ILogger<TokenService>> _loggerMock;
+    private readonly Mock<ITenantContext> _tenantContextMock = new();
+    private readonly Mock<ITenantStore> _tenantStoreMock = new();
     private readonly TokenService _tokenService;
     private readonly SigningCredentials _signingCredentials;
 
@@ -32,10 +32,9 @@ public class TokenServiceTests
         _signingCredentialStoreMock = new Mock<ISigningCredentialStore>();
         _grantStoreMock = new Mock<IPersistedGrantStore>();
         _resourceStoreMock = new Mock<IResourceStore>();
-        _tenantContextMock = new Mock<ITenantContext>();
         _tenantSettingsMock = new Mock<ITenantSettingsProvider>();
         _claimsProviderRegistryMock = new Mock<IClaimsProviderRegistry>();
-        _configurationMock = new Mock<IConfiguration>();
+        _issuerResolverMock = new Mock<IIssuerResolver>();
         _loggerMock = new Mock<ILogger<TokenService>>();
 
         // Setup default signing credentials
@@ -48,7 +47,9 @@ public class TokenServiceTests
             .ReturnsAsync(_signingCredentials);
 
         // Setup default issuer
-        _configurationMock.Setup(x => x["Oluso:IssuerUri"]).Returns("https://test.oluso.io");
+        _issuerResolverMock
+            .Setup(x => x.GetIssuerAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://test.oluso.io");
 
         // Setup default tenant settings
         _tenantSettingsMock
@@ -60,10 +61,6 @@ public class TokenServiceTests
                 DefaultRefreshTokenLifetime = 2592000
             });
 
-        // Setup default no-tenant context
-        _tenantContextMock.Setup(x => x.HasTenant).Returns(false);
-        _tenantContextMock.Setup(x => x.TenantId).Returns((string?)null);
-
         // Setup empty claims provider
         _claimsProviderRegistryMock
             .Setup(x => x.GetAllClaimsAsync(It.IsAny<ClaimsProviderContext>(), It.IsAny<CancellationToken>()))
@@ -72,12 +69,66 @@ public class TokenServiceTests
         _tokenService = new TokenService(
             _signingCredentialStoreMock.Object,
             _grantStoreMock.Object,
-            _resourceStoreMock.Object,
-            _tenantContextMock.Object,
             _tenantSettingsMock.Object,
             _claimsProviderRegistryMock.Object,
-            _configurationMock.Object,
+            _issuerResolverMock.Object,
+            new IdentityScopeClaimResolver(_resourceStoreMock.Object),
+            new AudienceResolver(_resourceStoreMock.Object, _tenantSettingsMock.Object),
+            _tenantContextMock.Object,
+            _tenantStoreMock.Object,
             _loggerMock.Object);
+    }
+
+    private static TokenCreationRequest TokenFor(string? tenantId)
+    {
+        var request = new TokenCreationRequest { ClientId = "a-client", Scopes = new List<string> { "api" }, Lifetime = 3600 };
+        if (tenantId != null) request.Claims["tenant_id"] = tenantId;
+        return request;
+    }
+
+    private SigningCredentials NewCredentials(string kid) =>
+        new(new RsaSecurityKey(RSA.Create(2048)) { KeyId = kid }, SecurityAlgorithms.RsaSha256);
+
+    [Fact]
+    public async Task A_platform_token_requested_through_a_tenant_is_signed_and_issued_by_the_platform()
+    {
+        _tenantContextMock.Setup(x => x.TenantId).Returns("default");
+        var platform = new Tenant { Id = Oluso.Core.PlatformConstants.TenantId, Identifier = Oluso.Core.PlatformConstants.TenantId };
+        _tenantStoreMock.Setup(x => x.GetByIdAsync(Oluso.Core.PlatformConstants.TenantId, It.IsAny<CancellationToken>())).ReturnsAsync(platform);
+        _signingCredentialStoreMock
+            .Setup(x => x.GetSigningCredentialsAsync(Oluso.Core.PlatformConstants.TenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(NewCredentials("platform-key"));
+        _issuerResolverMock.Setup(x => x.GetIssuerForTenantAsync(platform, It.IsAny<CancellationToken>())).ReturnsAsync("https://platform.oluso.io");
+
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(await _tokenService.CreateAccessTokenAsync(TokenFor(Oluso.Core.PlatformConstants.TenantId)));
+
+        jwt.Header.Kid.Should().Be("platform-key");
+        jwt.Issuer.Should().Be("https://platform.oluso.io");
+    }
+
+    [Theory]
+    [InlineData("default", "default")]
+    [InlineData(null, "default")]
+    [InlineData("_platform", "default")]
+    [InlineData(null, null)]
+    public async Task A_token_for_the_routed_tenant_or_routed_to_the_platform_uses_the_routed_signer(string? routed, string? tokenTenant)
+    {
+        _tenantContextMock.Setup(x => x.TenantId).Returns(routed);
+
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(await _tokenService.CreateAccessTokenAsync(TokenFor(tokenTenant)));
+
+        jwt.Header.Kid.Should().Be("test-key-id");
+        jwt.Issuer.Should().Be("https://test.oluso.io");
+    }
+
+    [Fact]
+    public async Task A_token_for_one_tenant_is_never_signed_through_another()
+    {
+        _tenantContextMock.Setup(x => x.TenantId).Returns("tenant-b");
+
+        var act = () => _tokenService.CreateAccessTokenAsync(TokenFor("tenant-a"));
+
+        (await act.Should().ThrowAsync<InvalidOperationException>()).Which.Message.Should().Contain("tenant-a");
     }
 
     [Fact]
@@ -194,16 +245,15 @@ public class TokenServiceTests
     [Fact]
     public async Task CreateAccessTokenAsync_WithTenant_IncludesTenantIdClaim()
     {
-        // Arrange
-        _tenantContextMock.Setup(x => x.HasTenant).Returns(true);
-        _tenantContextMock.Setup(x => x.TenantId).Returns("tenant-xyz");
-
+        // Arrange — tenant_id flows through claims (from profile service or grant handler),
+        // NOT from _tenantContext which is the request routing context.
         var request = new TokenCreationRequest
         {
             SubjectId = "user-123",
             ClientId = "test-client",
             Scopes = new List<string> { "openid" },
-            Lifetime = 3600
+            Lifetime = 3600,
+            Claims = new Dictionary<string, object> { ["tenant_id"] = "tenant-xyz" }
         };
 
         // Act
@@ -343,15 +393,14 @@ public class TokenServiceTests
     [Fact]
     public async Task CreateRefreshTokenAsync_WithTenant_IncludesTenantInGrant()
     {
-        // Arrange
-        _tenantContextMock.Setup(x => x.HasTenant).Returns(true);
-        _tenantContextMock.Setup(x => x.TenantId).Returns("tenant-xyz");
-
+        // Arrange — tenant flows through claims (from profile service or grant handler),
+        // NOT from _tenantContext routing context.
         var request = new TokenCreationRequest
         {
             SubjectId = "user-123",
             ClientId = "test-client",
-            Scopes = new List<string> { "offline_access" }
+            Scopes = new List<string> { "offline_access" },
+            Claims = new Dictionary<string, object> { ["tenant_id"] = "tenant-xyz" }
         };
 
         PersistedGrant? storedGrant = null;
@@ -517,5 +566,146 @@ public class TokenServiceTests
         // Should have the original subject, not the duplicate
         jwt.Subject.Should().Be("user-123");
         jwt.Claims.Should().Contain(c => c.Type == "unique_claim" && c.Value == "value");
+    }
+
+    [Fact]
+    public async Task The_id_token_from_a_code_carries_how_the_user_signed_in()
+    {
+        _resourceStoreMock.Setup(x => x.FindResourcesByScopeNamesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Resource>());
+        _tenantSettingsMock.Setup(x => x.GetProtocolSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantProtocolSettings());
+        var grant = new Oluso.Core.Protocols.GrantResult
+        {
+            SubjectId = "user-123",
+            SessionId = "session-1",
+            Scopes = new List<string> { "openid" },
+            Amr = new List<string> { "fido2", "hwk" },
+            Acr = "urn:oluso:passkey"
+        };
+        var request = new Oluso.Core.Protocols.Models.TokenRequest
+        {
+            GrantType = "authorization_code",
+            Client = new Oluso.Core.Protocols.Models.ValidatedClient { ClientId = "spa", AccessTokenLifetime = 3600, IdentityTokenLifetime = 300 }
+        };
+
+        var response = await _tokenService.CreateTokenResponseAsync(grant, request);
+
+        var idToken = new JwtSecurityTokenHandler().ReadJwtToken(response.IdToken);
+        idToken.Claims.Where(c => c.Type == "amr").Select(c => c.Value).Should().Equal("fido2", "hwk");
+        idToken.Claims.Should().Contain(c => c.Type == "acr" && c.Value == "urn:oluso:passkey");
+        idToken.Claims.Should().Contain(c => c.Type == "sid" && c.Value == "session-1");
+    }
+
+    [Fact]
+    public async Task A_refresh_token_keeps_how_the_user_signed_in()
+    {
+        _resourceStoreMock.Setup(x => x.FindResourcesByScopeNamesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Resource>());
+        _tenantSettingsMock.Setup(x => x.GetProtocolSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantProtocolSettings());
+        PersistedGrant? stored = null;
+        _grantStoreMock.Setup(x => x.StoreAsync(It.IsAny<PersistedGrant>(), It.IsAny<CancellationToken>()))
+            .Callback<PersistedGrant, CancellationToken>((g, _) => stored = g)
+            .Returns(Task.CompletedTask);
+
+        await _tokenService.CreateTokenResponseAsync(
+            new Oluso.Core.Protocols.GrantResult
+            {
+                SubjectId = "user-123",
+                Scopes = new List<string> { "openid", "offline_access" },
+                Amr = new List<string> { "fido2", "hwk" },
+                Acr = "urn:oluso:passkey"
+            },
+            new Oluso.Core.Protocols.Models.TokenRequest
+            {
+                GrantType = "authorization_code",
+                Client = new Oluso.Core.Protocols.Models.ValidatedClient
+                {
+                    ClientId = "spa", AccessTokenLifetime = 3600, IdentityTokenLifetime = 300, AllowOfflineAccess = true,
+                    AbsoluteRefreshTokenLifetime = 86400, SlidingRefreshTokenLifetime = 3600
+                }
+            });
+
+        stored.Should().NotBeNull();
+        var data = System.Text.Json.JsonSerializer.Deserialize<Oluso.Protocols.Grants.RefreshTokenData>(stored!.Data)!;
+        data.Amr.Should().Equal("fido2", "hwk");
+        data.Acr.Should().Be("urn:oluso:passkey");
+    }
+
+    private async Task<Oluso.Core.Protocols.Models.TokenResponse> RespondAsync(
+        IEnumerable<string> scopes, IEnumerable<string> clientGrantTypes, string grantType = "authorization_code",
+        TenantProtocolSettings? protocol = null, bool allowOfflineAccess = false)
+    {
+        _resourceStoreMock.Setup(x => x.FindResourcesByScopeNamesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Resource>());
+        _tenantSettingsMock.Setup(x => x.GetProtocolSettingsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(protocol ?? new TenantProtocolSettings());
+        _grantStoreMock.Setup(x => x.StoreAsync(It.IsAny<PersistedGrant>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        return await _tokenService.CreateTokenResponseAsync(
+            new Oluso.Core.Protocols.GrantResult { SubjectId = "user-123", SessionId = "sid-1", Scopes = scopes.ToList() },
+            new Oluso.Core.Protocols.Models.TokenRequest
+            {
+                GrantType = grantType,
+                Client = new Oluso.Core.Protocols.Models.ValidatedClient
+                {
+                    ClientId = "matrix-client", AccessTokenLifetime = 300, IdentityTokenLifetime = 300,
+                    AllowOfflineAccess = allowOfflineAccess, AllowedGrantTypes = clientGrantTypes.ToList(),
+                    AbsoluteRefreshTokenLifetime = 86400, SlidingRefreshTokenLifetime = 3600
+                }
+            });
+    }
+
+    [Theory]
+    [InlineData("urn:matrix:client:api:*", "authorization_code")]
+    [InlineData("urn:matrix:client:api:*", "urn:ietf:params:oauth:grant-type:device_code")]
+    [InlineData("urn:matrix:org.matrix.msc2967.client:api:*", "authorization_code")]
+    public async Task A_matrix_api_scope_earns_a_refresh_token_without_offline_access(string apiScope, string grantType)
+    {
+        var response = await RespondAsync(
+            new[] { "openid", apiScope, "urn:matrix:client:device:ABCDEF" },
+            new[] { grantType, "refresh_token" }, grantType);
+
+        response.RefreshToken.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task A_matrix_api_scope_earns_no_refresh_token_when_the_client_may_not_refresh()
+    {
+        var response = await RespondAsync(new[] { "openid", "urn:matrix:client:api:*" }, new[] { "authorization_code" });
+
+        response.RefreshToken.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_matrix_api_scope_earns_no_refresh_token_when_the_tenant_turns_it_off()
+    {
+        var response = await RespondAsync(
+            new[] { "openid", "urn:matrix:client:api:*" }, new[] { "authorization_code", "refresh_token" },
+            protocol: new TenantProtocolSettings { RefreshImplyingScopes = new List<string>() });
+
+        response.RefreshToken.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task A_tenant_can_name_its_own_refresh_implying_scopes()
+    {
+        var response = await RespondAsync(
+            new[] { "openid", "chat" }, new[] { "authorization_code", "refresh_token" },
+            protocol: new TenantProtocolSettings { RefreshImplyingScopes = new List<string> { "chat" } });
+
+        response.RefreshToken.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Other_scopes_still_need_offline_access_for_a_refresh_token()
+    {
+        var without = await RespondAsync(new[] { "openid", "api" }, new[] { "authorization_code", "refresh_token" });
+        var with = await RespondAsync(new[] { "openid", "api", "offline_access" }, new[] { "authorization_code", "refresh_token" },
+            allowOfflineAccess: true);
+
+        without.RefreshToken.Should().BeNull();
+        with.RefreshToken.Should().NotBeNullOrEmpty();
     }
 }

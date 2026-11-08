@@ -34,6 +34,9 @@ public class PasswordChangeStepHandler : IStepHandler
             return StepHandlerResult.Fail("user_not_found", "User not found");
         }
 
+        // What the user signs in with, for the form's hidden username field.
+        var accountName = string.IsNullOrWhiteSpace(user.Email) ? user.Username : user.Email;
+
         // Check if form was submitted
         var currentPassword = context.GetInput("currentPassword");
         var newPassword = context.GetInput("newPassword");
@@ -57,7 +60,8 @@ public class PasswordChangeStepHandler : IStepHandler
                 RequireLowercase = requireLowercase,
                 RequireDigit = requireDigit,
                 RequireSpecialChar = requireSpecialChar,
-                TenantName = tenantContext.Tenant?.Name
+                TenantName = tenantContext.Tenant?.Name,
+                Username = accountName
             });
         }
 
@@ -67,7 +71,8 @@ public class PasswordChangeStepHandler : IStepHandler
             return StepHandlerResult.ShowUi("Journey/_PasswordChange", new PasswordChangeViewModel
             {
                 ErrorMessage = "New password and confirmation do not match",
-                RequireCurrentPassword = context.GetConfig("requireCurrentPassword", true)
+                RequireCurrentPassword = context.GetConfig("requireCurrentPassword", true),
+                Username = accountName
             });
         }
 
@@ -78,7 +83,8 @@ public class PasswordChangeStepHandler : IStepHandler
             return StepHandlerResult.ShowUi("Journey/_PasswordChange", new PasswordChangeViewModel
             {
                 ErrorMessage = string.Join(". ", validationErrors),
-                RequireCurrentPassword = context.GetConfig("requireCurrentPassword", true)
+                RequireCurrentPassword = context.GetConfig("requireCurrentPassword", true),
+                Username = accountName
             });
         }
 
@@ -92,13 +98,14 @@ public class PasswordChangeStepHandler : IStepHandler
                 tenantContext.TenantId,
                 cancellationToken);
 
-            if (!verifyResult.Succeeded)
+            if (!verifyResult.CredentialsVerified)
             {
                 logger.LogWarning("Password change failed: invalid current password for user {UserId}", user.Id);
                 return StepHandlerResult.ShowUi("Journey/_PasswordChange", new PasswordChangeViewModel
                 {
                     ErrorMessage = "Current password is incorrect",
-                    RequireCurrentPassword = true
+                    RequireCurrentPassword = true,
+                    Username = accountName
                 });
             }
         }
@@ -110,8 +117,9 @@ public class PasswordChangeStepHandler : IStepHandler
             logger.LogError("Password change failed for user {UserId}: {Error}", user.Id, changeResult.Error);
             return StepHandlerResult.ShowUi("Journey/_PasswordChange", new PasswordChangeViewModel
             {
-                ErrorMessage = changeResult.ErrorDescription ?? "Failed to change password",
-                RequireCurrentPassword = context.GetConfig("requireCurrentPassword", true)
+                ErrorMessage = changeResult.MessageOr("Failed to change password"),
+                RequireCurrentPassword = context.GetConfig("requireCurrentPassword", true),
+                Username = accountName
             });
         }
 
@@ -129,6 +137,9 @@ public class PasswordChangeStepHandler : IStepHandler
         }
 
         context.SetData("password_changed_at", DateTime.UtcNow);
+
+        // Drop credentials from input now that they've been consumed.
+        SensitiveInputs.Scrub(context.Input?.Values);
 
         return StepHandlerResult.Success(new Dictionary<string, object>
         {
@@ -180,6 +191,9 @@ public class PasswordChangeViewModel
 {
     public string? ErrorMessage { get; set; }
     public string? SuccessMessage { get; set; }
+
+    /// <summary>Why the user is being asked to change their password (e.g. it expired).</summary>
+    public string? NoticeMessage { get; set; }
     public bool RequireCurrentPassword { get; set; } = true;
     public int MinPasswordLength { get; set; } = 8;
     public bool RequireUppercase { get; set; } = true;
@@ -187,4 +201,10 @@ public class PasswordChangeViewModel
     public bool RequireDigit { get; set; } = true;
     public bool RequireSpecialChar { get; set; }
     public string? TenantName { get; set; }
+
+    /// <summary>
+    /// The account's sign-in name, rendered as a visually hidden username field so password
+    /// managers save the new password against the right login.
+    /// </summary>
+    public string? Username { get; set; }
 }

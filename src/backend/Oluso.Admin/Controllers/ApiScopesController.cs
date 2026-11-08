@@ -1,9 +1,14 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Admin.Controllers.Service;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Services;
+using Oluso.Admin.Dto.Scopes;
 
 namespace Oluso.Admin.Controllers;
 
@@ -30,15 +35,20 @@ public class ApiScopesController : AdminBaseController
     }
 
     /// <summary>
-    /// Get all API scopes
+    /// Get all API scopes with pagination
     /// </summary>
     [HttpGet]
     [RequirePermission(AdminPermissions.ScopesRead)]
-    public async Task<ActionResult<IEnumerable<ApiScopeDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<ApiScopeDto>>> GetAll(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken cancellationToken = default)
     {
         var scopes = await _resourceStore.GetAllApiScopesAsync(cancellationToken);
-        var dtos = scopes.Select(MapToDto);
-        return Ok(dtos);
+        var allDtos = scopes.Select(MapToDto).ToList();
+
+        var items = allDtos.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Ok(PagedResult<ApiScopeDto>.Create(items, allDtos.Count, page, pageSize));
     }
 
     /// <summary>
@@ -79,6 +89,17 @@ public class ApiScopesController : AdminBaseController
         [FromBody] CreateApiScopeRequest request,
         CancellationToken cancellationToken)
     {
+        // The oluso: namespace is platform-owned. Letting an admin mint a scope
+        // in it would let a tenant-defined name satisfy the Service API policy.
+        if (ServiceScopes.IsReserved(request.Name))
+        {
+            return BadRequest(new
+            {
+                error = $"'{ServiceScopes.ReservedPrefix}' is a reserved scope namespace. "
+                    + "Grant Service API access on the client instead — the scopes are created for you."
+            });
+        }
+
         var existingScopes = await _resourceStore.FindApiScopesByNameAsync(new[] { request.Name }, cancellationToken);
         if (existingScopes.Any())
         {
@@ -90,6 +111,12 @@ public class ApiScopesController : AdminBaseController
         if (claimValidationError != null)
         {
             return BadRequest(new { error = claimValidationError });
+        }
+
+        var prefixError = ValidatePrefixSettings(request.IsPrefix == true, request.SuffixPattern, request.SuffixMaxLength);
+        if (prefixError != null)
+        {
+            return BadRequest(new { error = prefixError });
         }
 
         var scope = new ApiScope
@@ -104,6 +131,7 @@ public class ApiScopesController : AdminBaseController
             UserClaims = request.UserClaims?.Select(c => new ApiScopeClaim { Type = c }).ToList()
                 ?? new List<ApiScopeClaim>()
         };
+        SetPrefix(scope, request.IsPrefix == true, request.SuffixPattern, request.SuffixMaxLength);
 
         var created = await _resourceStore.AddApiScopeAsync(scope, cancellationToken);
 
@@ -131,12 +159,20 @@ public class ApiScopesController : AdminBaseController
     [RequirePermission(AdminPermissions.ScopesWrite)]
     public async Task<ActionResult<ApiScopeDto>> Update(
         int id,
-        [FromBody] UpdateApiScopeRequest request,
+        [FromBody] ApiScopeDto request,
         CancellationToken cancellationToken)
     {
         var existing = await _resourceStore.GetApiScopeByIdAsync(id, cancellationToken);
         if (existing == null)
             return NotFound();
+
+        if (existing.NonEditable)
+        {
+            return BadRequest(new
+            {
+                error = $"API scope '{existing.Name}' is managed by Oluso and cannot be edited."
+            });
+        }
 
         // Validate user claims don't contain protected claim types
         var claimValidationError = ValidateUserClaims(request.UserClaims);
@@ -145,20 +181,31 @@ public class ApiScopesController : AdminBaseController
             return BadRequest(new { error = claimValidationError });
         }
 
-        if (request.DisplayName != null) existing.DisplayName = request.DisplayName;
-        if (request.Description != null) existing.Description = request.Description;
-        if (request.Required.HasValue) existing.Required = request.Required.Value;
-        if (request.Emphasize.HasValue) existing.Emphasize = request.Emphasize.Value;
-        if (request.ShowInDiscoveryDocument.HasValue) existing.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument.Value;
-        if (request.Enabled.HasValue) existing.Enabled = request.Enabled.Value;
-
-        if (request.UserClaims != null)
+        if (request.IsPrefix.HasValue)
         {
-            existing.UserClaims.Clear();
-            foreach (var claim in request.UserClaims)
+            var prefixError = ValidatePrefixSettings(request.IsPrefix.Value, request.SuffixPattern, request.SuffixMaxLength);
+            if (prefixError != null)
             {
-                existing.UserClaims.Add(new ApiScopeClaim { Type = claim });
+                return BadRequest(new { error = prefixError });
             }
+        }
+
+        existing.DisplayName = request.DisplayName;
+        existing.Description = request.Description;
+        existing.Required = request.Required;
+        existing.Emphasize = request.Emphasize;
+        existing.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument;
+        existing.Enabled = request.Enabled;
+
+        if (request.IsPrefix.HasValue)
+        {
+            SetPrefix(existing, request.IsPrefix.Value, request.SuffixPattern, request.SuffixMaxLength);
+        }
+
+        existing.UserClaims.Clear();
+        foreach (var claim in request.UserClaims)
+        {
+            existing.UserClaims.Add(new ApiScopeClaim { Type = claim });
         }
 
         var updated = await _resourceStore.UpdateApiScopeAsync(existing, cancellationToken);
@@ -191,6 +238,17 @@ public class ApiScopesController : AdminBaseController
         if (existing == null)
             return NotFound();
 
+        // Deleting a managed scope would break every client that holds it —
+        // token issuance rejects scopes with no ApiScope row. Turn Service API
+        // access off on the client instead.
+        if (existing.NonEditable)
+        {
+            return BadRequest(new
+            {
+                error = $"API scope '{existing.Name}' is managed by Oluso and cannot be deleted."
+            });
+        }
+
         await _resourceStore.DeleteApiScopeAsync(id, cancellationToken);
 
         _logger.LogInformation("Deleted API scope: {Name}", existing.Name);
@@ -220,8 +278,67 @@ public class ApiScopesController : AdminBaseController
         Emphasize = scope.Emphasize,
         ShowInDiscoveryDocument = scope.ShowInDiscoveryDocument,
         Enabled = scope.Enabled,
-        UserClaims = scope.UserClaims.Select(c => c.Type).ToList()
+        UserClaims = scope.UserClaims.Select(c => c.Type).ToList(),
+        NonEditable = scope.NonEditable,
+        IsPrefix = ApiScopePrefixes.IsPrefix(scope),
+        SuffixPattern = PropertyValue(scope, ApiScopePrefixes.SuffixPatternProperty),
+        SuffixMaxLength = int.TryParse(PropertyValue(scope, ApiScopePrefixes.SuffixMaxLengthProperty), out var max) ? max : null
     };
+
+    /// <summary>
+    /// Marks or unmarks <paramref name="scope"/> as a prefix scope (<see cref="ApiScopePrefixes"/>) and sets its suffix
+    /// rule: an empty pattern or a null length removes that property, and so does turning the prefix off.
+    /// </summary>
+    private static void SetPrefix(ApiScope scope, bool prefix, string? suffixPattern, int? suffixMaxLength)
+    {
+        SetProperty(scope, ApiScopePrefixes.MatchProperty, prefix ? ApiScopePrefixes.PrefixMatch : null);
+        SetProperty(scope, ApiScopePrefixes.SuffixPatternProperty,
+            prefix && !string.IsNullOrWhiteSpace(suffixPattern) ? suffixPattern : null);
+        SetProperty(scope, ApiScopePrefixes.SuffixMaxLengthProperty,
+            prefix && suffixMaxLength.HasValue ? suffixMaxLength.Value.ToString(CultureInfo.InvariantCulture) : null);
+    }
+
+    /// <summary>Sets property <paramref name="key"/> to <paramref name="value"/>, or removes it when null.</summary>
+    private static void SetProperty(ApiScope scope, string key, string? value)
+    {
+        var existing = scope.Properties
+            .Where(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (value == null)
+        {
+            foreach (var property in existing)
+            {
+                scope.Properties.Remove(property);
+            }
+        }
+        else if (existing.Count == 0)
+        {
+            scope.Properties.Add(new ApiScopeProperty { Key = key, Value = value });
+        }
+        else
+        {
+            existing[0].Value = value;
+        }
+    }
+
+    private static string? PropertyValue(ApiScope scope, string key) =>
+        scope.Properties.FirstOrDefault(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase))?.Value;
+
+    /// <summary>
+    /// The error for a prefix scope's suffix rule, or null: the pattern must compile (it is anchored and matched with a
+    /// timeout at request time, see <see cref="ApiScopePrefixes.TryCompilePattern"/>) and the length must be positive.
+    /// Nothing is checked when the scope isn't a prefix scope, since the settings are then dropped.
+    /// </summary>
+    private static string? ValidatePrefixSettings(bool prefix, string? suffixPattern, int? suffixMaxLength)
+    {
+        if (!prefix)
+            return null;
+        if (!string.IsNullOrWhiteSpace(suffixPattern) && !ApiScopePrefixes.TryCompilePattern(suffixPattern, out _))
+            return "The allowed suffix pattern is not a valid regular expression.";
+        if (suffixMaxLength is <= 0)
+            return "The maximum suffix length must be a positive number.";
+        return null;
+    }
 
     /// <summary>
     /// Validates that user claims don't contain protected claim types.
@@ -248,43 +365,3 @@ public class ApiScopesController : AdminBaseController
         return null;
     }
 }
-
-#region DTOs
-
-public class ApiScopeDto
-{
-    public int Id { get; set; }
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool Required { get; set; }
-    public bool Emphasize { get; set; }
-    public bool ShowInDiscoveryDocument { get; set; }
-    public bool Enabled { get; set; }
-    public List<string> UserClaims { get; set; } = new();
-}
-
-public class CreateApiScopeRequest
-{
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Required { get; set; }
-    public bool? Emphasize { get; set; }
-    public bool? ShowInDiscoveryDocument { get; set; }
-    public bool? Enabled { get; set; }
-    public List<string>? UserClaims { get; set; }
-}
-
-public class UpdateApiScopeRequest
-{
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Required { get; set; }
-    public bool? Emphasize { get; set; }
-    public bool? ShowInDiscoveryDocument { get; set; }
-    public bool? Enabled { get; set; }
-    public List<string>? UserClaims { get; set; }
-}
-
-#endregion

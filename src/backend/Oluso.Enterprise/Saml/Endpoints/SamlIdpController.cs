@@ -7,8 +7,10 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
 using Oluso.Core.Services;
+using Oluso.Enterprise.Saml.Events;
 using Oluso.Enterprise.Saml.IdentityProvider;
 using Oluso.Enterprise.Saml.Services;
+using Oluso.Enterprise.Saml.Stores;
 
 namespace Oluso.Enterprise.Saml.Endpoints;
 
@@ -25,6 +27,7 @@ public class SamlIdpController : ControllerBase
     private readonly IOlusoEventService _eventService;
     private readonly ITenantContext _tenantContext;
     private readonly ISamlTenantSettingsService _samlSettings;
+    private readonly ISamlServiceProviderStore _serviceProviders;
     private readonly ILogger<SamlIdpController> _logger;
 
     public SamlIdpController(
@@ -33,8 +36,10 @@ public class SamlIdpController : ControllerBase
         IOlusoEventService eventService,
         ITenantContext tenantContext,
         ISamlTenantSettingsService samlSettings,
+        ISamlServiceProviderStore serviceProviders,
         ILogger<SamlIdpController> logger)
     {
+        _serviceProviders = serviceProviders;
         _samlIdp = samlIdp;
         _userService = userService;
         _eventService = eventService;
@@ -209,6 +214,16 @@ public class SamlIdpController : ControllerBase
         if (string.IsNullOrEmpty(userId))
         {
             return Unauthorized();
+        }
+
+        var denial = await SamlUserAccess.FindDenialAsync(
+            _serviceProviders, _userService, authnRequest.Issuer!, authnRequest.NameIdFormat, userId, cancellationToken);
+        if (denial != null)
+        {
+            _logger.LogWarning("No SAML assertion for user {UserId} to SP {SpEntityId}: {Reason}", userId, authnRequest.Issuer, denial);
+            var refusal = await _samlIdp.CreateErrorResponseAsync(
+                authnRequest.Issuer!, authnRequest.Id, "urn:oasis:names:tc:SAML:2.0:status:RequestDenied", denial, cancellationToken);
+            return Content(GenerateAutoPostForm(refusal), "text/html");
         }
 
         var userClaims = await _userService.GetClaimsAsync(userId, cancellationToken);

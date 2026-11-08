@@ -1,0 +1,21 @@
+@page "/account/org-handoff/expired"
+@model Oluso.UI.Pages.Account.OrgSignInExpiredModel
+@{
+    ViewData["Title"] = Localizer["org_signin_expired_title"].Value;
+}
+
+<div class="auth-container">
+    <div class="auth-card">
+        <h1 class="auth-title">@Localizer["org_signin_expired_title"]</h1>
+        <p class="auth-subtitle">@Localizer["org_signin_expired_message"]</p>
+
+        @if (!string.IsNullOrEmpty(Model.RestartUrl))
+        {
+            <a href="@Model.RestartUrl" class="btn btn-primary btn-block">@Localizer["org_signin_expired_restart"]</a>
+        }
+        else
+        {
+            <p class="help-text">@Localizer["org_signin_expired_return_to_app"]</p>
+        }
+    </div>
+</div>

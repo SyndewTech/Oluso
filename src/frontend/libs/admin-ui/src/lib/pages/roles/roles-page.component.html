@@ -1,0 +1,450 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Roles</h1>
+      <p class="mt-1 text-sm text-gray-500">Manage user roles and permissions</p>
+    </div>
+    <ui-button (clicked)="openCreateModal()">
+      <ui-icon name="plus" class="h-4 w-4 mr-2" />
+      Add Role
+    </ui-button>
+  </div>
+
+  <ui-card>
+    <div class="max-w-md">
+      <ui-input
+        label="Search"
+        placeholder="Filter by name..."
+        [ngModel]="searchTerm()"
+        (ngModelChange)="searchTerm.set($event)"
+      />
+    </div>
+  </ui-card>
+
+  <!-- Roles Table -->
+  <ui-card [padding]="false">
+    @if (loading()) {
+      <div class="flex items-center justify-center h-64">
+        <div class="text-gray-500">Loading...</div>
+      </div>
+    } @else if (visibleRoles().length === 0) {
+      <div class="flex flex-col items-center justify-center h-64 text-gray-500">
+        <ui-icon name="shield-check" class="h-12 w-12 mb-4" />
+        <p>No roles configured yet</p>
+        <ui-button class="mt-4" (clicked)="openCreateModal()">Add your first role</ui-button>
+      </div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Name
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Description
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Type
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Permissions
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Created
+              </th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            @for (role of visibleRoles(); track role.id) {
+              <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div>
+                    <div class="font-medium text-gray-900">{{ role.displayName || role.name }}</div>
+                    @if (role.displayName) {
+                      <div class="text-xs text-gray-500">{{ role.name }}</div>
+                    }
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-500">
+                  {{ role.description || '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="getRoleTypeVariant(role)">
+                    {{ getRoleTypeLabel(role) }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ role.permissions?.length || 0 }} permissions
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(role.createdAt) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right">
+                  <div class="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      (click)="openUsersModal(role)"
+                      class="p-1 text-gray-400 hover:text-gray-600"
+                      title="View users"
+                    >
+                      <ui-icon name="users" class="h-4 w-4" />
+                    </button>
+                    @if (!role.isSystemRole) {
+                      <button
+                        type="button"
+                        (click)="openEditModal(role)"
+                        class="p-1 text-gray-400 hover:text-primary-600"
+                        title="Edit role"
+                      >
+                        <ui-icon name="pencil" class="h-4 w-4" />
+                      </button>
+                    }
+                    @if (role.isDeletable) {
+                      <button
+                        type="button"
+                        (click)="openDeleteModal(role)"
+                        class="p-1 text-gray-400 hover:text-red-600"
+                        title="Delete role"
+                      >
+                        <ui-icon name="trash" class="h-4 w-4" />
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </ui-card>
+</div>
+
+<!-- Create/Edit Modal -->
+<ui-modal
+  [open]="showCreateEditModal()"
+  [title]="selectedRole() ? 'Edit Role' : 'Create Role'"
+  (closed)="closeCreateEditModal()"
+>
+  <div class="space-y-4">
+    @if (selectedRole(); as role) {
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Role ID</label>
+        <div class="mt-1 flex items-center gap-2">
+          <code class="flex-1 truncate rounded-md bg-gray-100 px-3 py-2 font-mono text-sm text-gray-800 select-all">{{ role.id }}</code>
+          <button
+            type="button"
+            (click)="copyRoleId(role.id)"
+            class="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            aria-label="Copy role ID"
+          >
+            <ui-icon name="clipboard" class="h-4 w-4" />
+            Copy
+          </button>
+        </div>
+        <p class="mt-1 text-xs text-gray-500">Use this ID when another system or a service client needs to refer to this role.</p>
+      </div>
+    }
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Name</label>
+      <input
+        type="text"
+        [(ngModel)]="formData.name"
+        [disabled]="!!selectedRole()"
+        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm disabled:bg-gray-100"
+      />
+      @if (!selectedRole()) {
+        <p class="mt-1 text-xs text-gray-500">Unique name for the role (cannot be changed later). Other systems refer to the role by its ID, shown once it's created.</p>
+      }
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Display Name</label>
+      <input
+        type="text"
+        [(ngModel)]="formData.displayName"
+        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        placeholder="Human-readable name"
+      />
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700">Description</label>
+      <textarea
+        [(ngModel)]="formData.description"
+        rows="2"
+        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+      ></textarea>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-2">
+        <ui-icon name="shield-check" class="h-4 w-4 inline mr-1" />
+        Permissions ({{ formData.permissions.length }} selected)
+      </label>
+      @if (loadingPermissions()) {
+        <div class="text-sm text-gray-500 p-4">Loading permissions...</div>
+      } @else if (permissionsData()?.categories && permissionsData()!.categories.length > 0) {
+        <!-- Search and Expand/Collapse Controls -->
+        <div class="mb-3 flex items-center gap-2">
+          <div class="flex-1 relative">
+            <ui-icon name="magnifying-glass" class="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              [(ngModel)]="permissionSearchTerm"
+              placeholder="Search permissions..."
+              class="pl-9 pr-8 w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+            />
+            @if (permissionSearchTerm) {
+              <button
+                type="button"
+                (click)="permissionSearchTerm = ''"
+                class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <ui-icon name="x-mark" class="h-4 w-4" />
+              </button>
+            }
+          </div>
+          <button
+            type="button"
+            (click)="expandAllCategories()"
+            class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+            title="Expand All"
+          >
+            <ui-icon name="chevron-down" class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            (click)="collapseAllCategories()"
+            class="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+            title="Collapse All"
+          >
+            <ui-icon name="chevron-up" class="h-4 w-4" />
+          </button>
+        </div>
+
+        <div class="border rounded-md max-h-64 overflow-y-auto">
+          @for (category of getFilteredCategories(); track category.name) {
+            <div class="border-b last:border-b-0">
+              <div
+                class="flex items-center px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                (click)="toggleCategory(category.name)"
+              >
+                <button
+                  type="button"
+                  class="mr-2 text-gray-400"
+                  (click)="$event.stopPropagation(); toggleCategory(category.name)"
+                >
+                  @if (isCategoryExpanded(category.name)) {
+                    <ui-icon name="chevron-down" class="h-4 w-4" />
+                  } @else {
+                    <ui-icon name="chevron-right" class="h-4 w-4" />
+                  }
+                </button>
+                <input
+                  type="checkbox"
+                  [checked]="isAllInCategorySelected(category)"
+                  [indeterminate]="isSomeInCategorySelected(category)"
+                  (change)="$event.stopPropagation(); toggleAllInCategory(category)"
+                  class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 mr-2"
+                />
+                <span class="font-medium text-sm text-gray-700 flex-1">{{ category.name }}</span>
+                <span class="text-xs text-gray-500">
+                  {{ getSelectedCountInCategory(category) }}/{{ category.permissions.length }}
+                </span>
+              </div>
+              @if (isCategoryExpanded(category.name)) {
+                <div class="px-3 py-2 space-y-1">
+                  @for (permission of category.permissions; track permission.name) {
+                    <label
+                      class="flex items-start space-x-2 text-sm py-1 px-2 hover:bg-gray-50 rounded cursor-pointer"
+                      [title]="permission.description"
+                    >
+                      <input
+                        type="checkbox"
+                        [checked]="formData.permissions.includes(permission.name)"
+                        (change)="togglePermission(permission.name)"
+                        class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <div class="flex-1 min-w-0">
+                        <div class="font-medium text-gray-900">
+                          {{ permission.displayName }}
+                          @if (permission.requiresSuperAdmin) {
+                            <span class="ml-2 text-xs bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">
+                              SuperAdmin
+                            </span>
+                          }
+                        </div>
+                        <div class="text-xs text-gray-500 truncate">{{ permission.name }}</div>
+                      </div>
+                    </label>
+                  }
+                </div>
+              }
+            </div>
+          }
+          @if (getFilteredCategories().length === 0 && permissionSearchTerm) {
+            <div class="text-center py-8 text-gray-500">
+              <ui-icon name="magnifying-glass" class="mx-auto h-8 w-8 text-gray-300" />
+              <p class="mt-2 text-sm">No permissions found matching "{{ permissionSearchTerm }}"</p>
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="text-sm text-gray-500 p-4 border rounded-md">No permissions available</div>
+      }
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-2">
+        Application entitlements ({{ formData.entitlements.length }} selected)
+      </label>
+      <p class="text-sm text-gray-500 mb-2">
+        Your own permissions, delivered to your applications in the
+        <code class="font-mono">entitlements</code> claim. They grant nothing inside Oluso.
+      </p>
+
+      @if (entitlements().length > 0) {
+        <div class="border rounded-md divide-y max-h-64 overflow-y-auto">
+          @for (group of entitlementGroups(); track group.name) {
+            <div class="p-3">
+              <h4 class="text-sm font-medium text-gray-700 mb-2">{{ group.name }}</h4>
+              <div class="space-y-2">
+                @for (entitlement of group.entitlements; track entitlement.id) {
+                  <label class="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 mt-0.5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                      [checked]="isEntitlementSelected(entitlement.name)"
+                      (change)="toggleEntitlement(entitlement.name)"
+                    />
+                    <span>
+                      <span class="text-gray-900">{{ entitlement.displayName }}</span>
+                      <span class="ml-2 font-mono text-xs text-gray-500">{{ entitlement.name }}</span>
+                      @if (!entitlement.enabled) {
+                        <span class="ml-2 text-xs text-amber-600">disabled — withheld from tokens</span>
+                      }
+                      @if (entitlement.description) {
+                        <span class="block text-gray-500">{{ entitlement.description }}</span>
+                      }
+                    </span>
+                  </label>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="text-sm text-gray-500 p-4 border rounded-md">
+          No entitlements defined yet. Add them under Entitlements to assign them here.
+        </div>
+      }
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-2">Claims</label>
+      <div class="space-y-2">
+        @for (claim of formData.claims; track $index) {
+          <div class="flex items-center gap-2 text-sm">
+            <span class="font-medium">{{ claim.type }}:</span>
+            <span class="text-gray-600">{{ claim.value }}</span>
+            <button
+              type="button"
+              (click)="removeClaim($index)"
+              class="text-red-500 hover:text-red-700"
+            >
+              <ui-icon name="trash" class="h-3 w-3" />
+            </button>
+          </div>
+        }
+        <div class="flex gap-2">
+          <input
+            type="text"
+            [(ngModel)]="newClaimType"
+            placeholder="Type"
+            class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+          />
+          <input
+            type="text"
+            [(ngModel)]="newClaimValue"
+            placeholder="Value"
+            class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+          />
+          <ui-button variant="secondary" (clicked)="addClaim()">Add</ui-button>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 pt-4">
+      <ui-button variant="secondary" (clicked)="closeCreateEditModal()">
+        Cancel
+      </ui-button>
+      <ui-button [disabled]="!formData.name || saving()" (clicked)="onSave()">
+        {{ saving() ? 'Saving...' : (selectedRole() ? 'Update Role' : 'Create Role') }}
+      </ui-button>
+    </div>
+  </div>
+</ui-modal>
+
+<!-- Delete Modal -->
+<ui-modal
+  [open]="showDeleteModal()"
+  title="Delete Role"
+  (closed)="closeDeleteModal()"
+>
+  <p class="text-gray-600">
+    Are you sure you want to delete the role "{{ selectedRole()?.displayName || selectedRole()?.name }}"?
+    This action cannot be undone.
+  </p>
+  @if (deleteError()) {
+    <p class="mt-3 text-sm text-red-600">{{ deleteError() }}</p>
+  }
+
+  <div class="mt-6 flex justify-end gap-3">
+    <ui-button variant="secondary" (clicked)="closeDeleteModal()">
+      Cancel
+    </ui-button>
+    <ui-button variant="danger" (clicked)="confirmDelete()">
+      Delete
+    </ui-button>
+  </div>
+</ui-modal>
+
+<!-- Users in Role Modal -->
+<ui-modal
+  [open]="showUsersModal()"
+  [title]="'Users in ' + (selectedRole()?.displayName || selectedRole()?.name || '')"
+  (closed)="closeUsersModal()"
+>
+  @if (loadingUsers()) {
+    <p class="text-sm text-gray-500">Loading users...</p>
+  } @else if (usersInRole().length > 0) {
+    <ul class="divide-y divide-gray-200">
+      @for (user of usersInRole(); track user.id) {
+        <li class="py-3 flex items-center justify-between">
+          <div>
+            <p class="font-medium text-gray-900">{{ user.displayName || user.userName }}</p>
+            <p class="text-sm text-gray-500">{{ user.email }}</p>
+          </div>
+          <ui-badge [variant]="user.isActive ? 'success' : 'danger'">
+            {{ user.isActive ? 'Active' : 'Inactive' }}
+          </ui-badge>
+        </li>
+      }
+    </ul>
+  } @else {
+    <p class="text-sm text-gray-500">No users have this role.</p>
+  }
+
+  <div class="mt-6 flex justify-end">
+    <ui-button variant="secondary" (clicked)="closeUsersModal()">
+      Close
+    </ui-button>
+  </div>
+</ui-modal>

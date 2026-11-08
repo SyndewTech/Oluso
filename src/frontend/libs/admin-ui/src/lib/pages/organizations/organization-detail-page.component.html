@@ -1,0 +1,419 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center gap-4">
+    <button
+      (click)="goBack()"
+      class="p-2 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+    >
+      <ui-icon name="arrow-left" class="h-5 w-5" />
+    </button>
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">
+        {{ organization()?.name }} Settings
+      </h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Manage organization settings, tenants, and members
+      </p>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="flex items-center justify-center h-64">
+      <div class="text-gray-500">Loading...</div>
+    </div>
+  } @else if (!organization()) {
+    <div class="text-center py-12">
+      <p class="text-gray-500">Organization not found</p>
+      <ui-button variant="secondary" (clicked)="goBack()" class="mt-4">
+        Back to Organizations
+      </ui-button>
+    </div>
+  } @else {
+    <!-- Tabs Navigation -->
+    <div class="border-b border-gray-200">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+        @for (tab of tabs; track tab.id) {
+          <button
+            (click)="setActiveTab(tab.id)"
+            [class]="'flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ' +
+              (activeTab() === tab.id
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')"
+          >
+            <ui-icon [name]="tab.icon" class="h-5 w-5" />
+            {{ tab.label }}
+          </button>
+        }
+      </nav>
+    </div>
+
+    <!-- General Tab -->
+    @if (activeTab() === 'general') {
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <h3 class="text-lg font-medium text-gray-900">Organization Details</h3>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Basic organization information</p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+              <input
+                type="text"
+                [(ngModel)]="orgData.name"
+                (ngModelChange)="onOrgChange()"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Slug</label>
+              <input
+                type="text"
+                [(ngModel)]="orgData.slug"
+                (ngModelChange)="onOrgChange()"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                [(ngModel)]="orgData.description"
+                (ngModelChange)="onOrgChange()"
+                rows="3"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              ></textarea>
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Enabled</p>
+                <p class="text-sm text-gray-500">Allow this organization to operate</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="orgData.enabled ?? true"
+                (ngModelChange)="orgData.enabled = $event; onOrgChange()"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+          </div>
+        </ui-card>
+
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <h3 class="text-lg font-medium text-gray-900">Branding & Limits</h3>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Logo, website, and resource limits</p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Logo URL</label>
+              <input
+                type="text"
+                [(ngModel)]="orgData.logoUrl"
+                (ngModelChange)="onOrgChange()"
+                placeholder="https://example.com/logo.png"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Website URL</label>
+              <input
+                type="text"
+                [(ngModel)]="orgData.websiteUrl"
+                (ngModelChange)="onOrgChange()"
+                placeholder="https://example.com"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Max Members</label>
+                <input
+                  type="number"
+                  [(ngModel)]="orgData.maxMembers"
+                  (ngModelChange)="onOrgChange()"
+                  min="0"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="mt-1 text-xs text-gray-500">0 = unlimited</p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Max Tenants</label>
+                <input
+                  type="number"
+                  [(ngModel)]="orgData.maxTenants"
+                  (ngModelChange)="onOrgChange()"
+                  min="0"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="mt-1 text-xs text-gray-500">0 = unlimited</p>
+              </div>
+            </div>
+          </div>
+        </ui-card>
+      </div>
+
+      <!-- Save Actions -->
+      <div class="flex justify-end items-center gap-2">
+        @if (hasChanges()) {
+          <span class="text-sm text-gray-500">You have unsaved changes</span>
+        }
+        <ui-button (clicked)="onSave()" [disabled]="!hasChanges() || saving()">
+          {{ saving() ? 'Saving...' : 'Save Settings' }}
+        </ui-button>
+      </div>
+    }
+
+    <!-- Features Tab -->
+    @if (activeTab() === 'features') {
+      <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-medium text-gray-900">Feature Entitlements</h3>
+            <p class="text-sm text-gray-500">
+              Control which modules this organization can access.
+              @if (!hasFeaturesConfigured()) {
+                <span class="text-amber-600 font-medium">
+                  No features configured — all modules are currently accessible.
+                </span>
+              }
+            </p>
+          </div>
+        </div>
+
+        @if (featuresLoading()) {
+          <div class="flex items-center justify-center h-32">
+            <div class="text-gray-500">Loading features...</div>
+          </div>
+        } @else {
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            @for (feature of features(); track feature.key) {
+              <div class="relative rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                <div class="flex items-start justify-between">
+                  <div class="flex-1 min-w-0 pr-4">
+                    <div class="flex items-center gap-2">
+                      <h4 class="text-sm font-semibold text-gray-900">{{ feature.displayName }}</h4>
+                      @if (feature.source === 'subscription') {
+                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">Subscription</span>
+                      }
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">{{ feature.description }}</p>
+                    <p class="mt-1 text-xs text-gray-400 font-mono">{{ feature.key }}</p>
+                    @if (feature.grantedAt && featureToggles[feature.key]) {
+                      <p class="mt-1 text-xs text-gray-400">
+                        Granted: {{ formatDate(feature.grantedAt) }}
+                      </p>
+                    }
+                    @if (feature.expiresAt && featureToggles[feature.key]) {
+                      <p class="mt-1 text-xs text-amber-600">
+                        Expires: {{ formatDate(feature.expiresAt) }}
+                      </p>
+                    }
+                  </div>
+                  <div class="flex-shrink-0">
+                    <label class="relative inline-flex items-center" [class.cursor-pointer]="feature.source !== 'subscription'" [class.opacity-60]="feature.source === 'subscription'">
+                      <input
+                        type="checkbox"
+                        [checked]="featureToggles[feature.key]"
+                        (change)="onFeatureToggle(feature.key, $any($event.target).checked)"
+                        [disabled]="feature.source === 'subscription'"
+                        class="sr-only peer"
+                      />
+                      <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
+                    </label>
+                  </div>
+                </div>
+                @if (featureToggles[feature.key]) {
+                  <div class="mt-3 pt-3 border-t border-gray-100">
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Max Seats</label>
+                    <input
+                      type="number"
+                      [value]="featureMaxSeats[feature.key] ?? ''"
+                      (input)="onFeatureMaxSeatsChange(feature.key, $any($event.target).value)"
+                      min="0"
+                      placeholder="Unlimited"
+                      class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <p class="mt-1 text-xs text-gray-400">Empty = unlimited seats</p>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Save Actions -->
+          <div class="flex justify-end items-center gap-2 pt-4">
+            @if (featuresHasChanges()) {
+              <span class="text-sm text-gray-500">You have unsaved changes</span>
+            }
+            <ui-button (clicked)="saveFeatures()" [disabled]="!featuresHasChanges() || featuresSaving()">
+              {{ featuresSaving() ? 'Saving...' : 'Save Features' }}
+            </ui-button>
+          </div>
+        }
+      </div>
+    }
+
+    <!-- Tenants Tab -->
+    @if (activeTab() === 'tenants') {
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-sm text-gray-500">Tenants belonging to this organization</p>
+        <ui-button (clicked)="openCreateTenantModal()">
+          <ui-icon name="plus" class="h-4 w-4 mr-2" />
+          Create Tenant
+        </ui-button>
+      </div>
+
+      <ui-data-table
+        [loading]="tenantsLoading()"
+        [empty]="tenants().length === 0"
+        emptyMessage="No tenants in this organization"
+        [searchable]="true"
+        searchPlaceholder="Search tenants by name or identifier..."
+        [paginated]="true"
+        [page]="tenantsPage()"
+        [pageSize]="tenantsPageSize"
+        [totalCount]="tenantsTotalCount()"
+        [totalPages]="tenantsTotalPages()"
+        (searchChange)="onTenantsSearch($event)"
+        (pageChange)="onTenantsPageChange($event)"
+      >
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Identifier</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            @for (tenant of tenants(); track tenant.id) {
+              <tr class="hover:bg-gray-50 cursor-pointer" (click)="goToTenantSettings(tenant)">
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="font-medium text-gray-900">{{ tenant.displayName || tenant.name }}</div>
+                  @if (tenant.displayName) {
+                    <div class="text-xs text-gray-500">{{ tenant.name }}</div>
+                  }
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <code class="text-sm bg-gray-100 px-2 py-0.5 rounded">{{ tenant.identifier }}</code>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="tenant.enabled ? 'success' : 'danger'">
+                    {{ tenant.enabled ? 'Enabled' : 'Disabled' }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(tenant.created) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right">
+                  <button
+                    (click)="goToTenantSettings(tenant); $event.stopPropagation()"
+                    class="p-1 text-gray-400 hover:text-blue-600"
+                    title="Tenant settings"
+                  >
+                    <ui-icon name="cog" class="h-4 w-4" />
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </ui-data-table>
+
+      <!-- Create Tenant Modal -->
+      <ui-modal
+        [open]="showCreateTenantModal()"
+        title="Create Tenant"
+        (closed)="closeCreateTenantModal()"
+      >
+        <form (ngSubmit)="createTenant()" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+            <input
+              type="text"
+              [(ngModel)]="tenantFormData.name"
+              name="tenantName"
+              required
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+            <input
+              type="text"
+              [(ngModel)]="tenantFormData.displayName"
+              name="tenantDisplayName"
+              placeholder="Human-readable name"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Identifier</label>
+            <input
+              type="text"
+              [ngModel]="tenantFormData.identifier"
+              name="tenantIdentifier"
+              (input)="onTenantIdentifierInput($event)"
+              placeholder="my-tenant"
+              required
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+            <p class="mt-1 text-xs text-gray-500">
+              URL-safe identifier (lowercase, alphanumeric and hyphens only)
+            </p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Environment</label>
+            <select
+              [(ngModel)]="tenantFormData.environment"
+              name="tenantEnvironment"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            >
+              @for (env of environments; track env) {
+                <option [value]="env">{{ env }}</option>
+              }
+            </select>
+            <p class="mt-1 text-xs text-gray-500">The deployment environment for this tenant</p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              [(ngModel)]="tenantFormData.description"
+              name="tenantDescription"
+              rows="2"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            ></textarea>
+          </div>
+
+          <div class="flex justify-end gap-3 pt-4">
+            <ui-button type="button" variant="secondary" (clicked)="closeCreateTenantModal()">
+              Cancel
+            </ui-button>
+            <ui-button type="submit" [disabled]="saving()">
+              {{ saving() ? 'Creating...' : 'Create Tenant' }}
+            </ui-button>
+          </div>
+        </form>
+      </ui-modal>
+    }
+
+    <!-- Members Tab -->
+    @if (activeTab() === 'members') {
+      <admin-org-members [orgId]="orgId()" />
+    }
+
+    <!-- Invitations Tab -->
+    @if (activeTab() === 'invitations') {
+      <admin-org-invitations [orgId]="orgId()" />
+    }
+  }
+</div>

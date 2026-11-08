@@ -8,6 +8,7 @@ using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Oluso.Enterprise.Saml.Configuration;
 using Oluso.Enterprise.Saml.ServiceProvider;
+using Oluso.UserJourneys.Steps;
 
 #pragma warning disable CS8604 // Possible null reference argument - IdP name validated upstream
 
@@ -17,8 +18,28 @@ namespace Oluso.Enterprise.Saml.Integration;
 /// Journey step handler for SAML 2.0 authentication.
 /// Uses Oluso.Core abstractions for user management.
 /// </summary>
-public class SamlStepHandler : IStepHandler
+public class SamlStepHandler : IPrimaryAuthenticationStep, IStepConfigurationTester
 {
+    /// <summary>Checks the chosen SAML identity provider exists and is enabled, or that any is.</summary>
+    public async Task<StepConfigurationTestResult> TestConfigurationAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
+    {
+        var idps = await context.ServiceProvider.GetRequiredService<ISamlServiceProvider>().GetConfiguredIdpsAsync(cancellationToken);
+        var name = context.GetConfig<string>("idpName");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            var enabled = idps.Where(i => i.Enabled).ToList();
+            return enabled.Count == 0
+                ? StepConfigurationTestResult.Failed("No SAML identity providers are enabled, so the step will be skipped")
+                : StepConfigurationTestResult.Passed($"{enabled.Count} enabled SAML identity provider(s) will be offered",
+                    enabled.Select(i => $"{i.DisplayName} ({i.EntityId})").ToArray());
+        }
+
+        var idp = idps.FirstOrDefault(i => i.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (idp == null) return StepConfigurationTestResult.Failed($"SAML identity provider '{name}' doesn't exist");
+        if (!idp.Enabled) return StepConfigurationTestResult.Failed($"SAML identity provider '{name}' is disabled");
+        return StepConfigurationTestResult.Passed($"{idp.DisplayName} is enabled", $"Entity ID: {idp.EntityId}");
+    }
+
     public string StepType => "saml";
 
     public async Task<StepHandlerResult> ExecuteAsync(
@@ -29,6 +50,19 @@ public class SamlStepHandler : IStepHandler
         var userService = context.ServiceProvider.GetRequiredService<IOlusoUserService>();
         var stateStore = context.ServiceProvider.GetRequiredService<IProtocolStateStore>();
         var logger = context.ServiceProvider.GetRequiredService<ILogger<SamlStepHandler>>();
+
+        // A SAML sign-in waiting for the person to confirm the account its email belongs to. The SAML response
+        // can't be replayed, so once linked the step completes from the account.
+        if (ExistingAccountLink.PendingProvider(context) is { } pendingProvider
+            && pendingProvider.StartsWith("saml:", StringComparison.OrdinalIgnoreCase))
+        {
+            var outcome = await ExistingAccountLink.ContinueAsync(context, cancellationToken);
+            if (outcome.Result != null)
+            {
+                return outcome.Result;
+            }
+            return await CompleteLinkedAsync(context, userService, outcome.LinkedUserId!, pendingProvider, logger, cancellationToken);
+        }
 
         // Check if this is a SAML response callback
         var samlResponse = context.GetInput("SAMLResponse");
@@ -84,7 +118,7 @@ public class SamlStepHandler : IStepHandler
         }
 
         // Show IdP selection UI
-        return StepHandlerResult.ShowUi("Journey/SamlIdpSelection", new SamlIdpSelectionViewModel
+        return StepHandlerResult.ShowUi("Journey/_SamlIdpSelection", new SamlIdpSelectionViewModel
         {
             TenantName = context.TenantId,
             IdentityProviders = availableIdps.Select(i => new SamlIdpDisplayInfo
@@ -120,13 +154,15 @@ public class SamlStepHandler : IStepHandler
             }
         };
 
-        var correlationId = await stateStore.StoreAsync(state, TimeSpan.FromMinutes(10), cancellationToken);
+        var correlationId = await stateStore.StoreAsync(state, cancellationToken: cancellationToken);
 
         var request = await samlSp.CreateAuthnRequestAsync(new SamlAuthnRequestParams
         {
             IdpName = idpName,
             ReturnUrl = callbackUrl,
-            RelayState = correlationId
+            RelayState = correlationId,
+            ForceAuthn = context.GetConfig("forceAuthn", false),
+            IsPassive = context.GetConfig("isPassive", false)
         }, cancellationToken);
 
         // Store IdP name in journey data
@@ -188,6 +224,21 @@ public class SamlStepHandler : IStepHandler
         var idpConfig = idpStore != null ? await idpStore.GetBySchemeAsync(idpName, cancellationToken) : null;
         var samlConfig = idpConfig?.GetConfiguration<Saml2ProviderConfiguration>();
 
+        // Access-control gate (admin-configured per-IdP). Mirrors the
+        // OIDC/OAuth path. Evaluated before proxy/provisioning so federation
+        // broker SAML logins are gated too.
+        if (samlConfig?.AccessControl != null)
+        {
+            var decision = ExternalAccessControlEvaluator.Evaluate(result.Principal, samlConfig.AccessControl);
+            if (decision != ExternalAccessControlEvaluator.Decision.Allow)
+            {
+                logger.LogWarning(
+                    "SAML login denied by IdP access control: idp={IdP} decision={Decision}",
+                    idpName, decision);
+                return StepHandlerResult.Failure("access_denied", "Access denied for this account.");
+            }
+        }
+
         // Check if proxy mode is enabled (no local user storage)
         var proxyMode = samlConfig?.ProxyMode ?? context.GetConfig("proxyMode", false);
         var storeUserLocally = samlConfig?.StoreUserLocally ?? !proxyMode;
@@ -202,7 +253,24 @@ public class SamlStepHandler : IStepHandler
                 $"saml:{idpName}",
                 result.Principal,
                 createIfNotExists: samlConfig?.AutoProvisionUsers ?? context.GetConfig("autoProvision", true),
-                cancellationToken);
+                clientId: context.ClientId,
+                cancellationToken: cancellationToken);
+
+            if (loginResult.Error == ProcessExternalLoginResult.AccountLinkRequired
+                && !string.IsNullOrEmpty(loginResult.ExistingUserId)
+                && result.Principal.FindFirst(ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } nameIdentifier)
+            {
+                if (!string.IsNullOrEmpty(relayState))
+                {
+                    await stateStore.RemoveAsync(relayState, cancellationToken);
+                }
+                if (result.SessionIndex != null)
+                {
+                    context.SetData(LinkSessionIndexKey, result.SessionIndex);
+                }
+                return await ExistingAccountLink.BeginAsync(
+                    context, loginResult.ExistingUserId, $"saml:{idpName}", nameIdentifier, cancellationToken);
+            }
 
             if (!loginResult.Succeeded)
             {
@@ -216,6 +284,42 @@ public class SamlStepHandler : IStepHandler
             if (user != null && !user.IsActive)
             {
                 return StepHandlerResult.Failure("user_deactivated", "Your account has been deactivated");
+            }
+
+            // Apply IdP DefaultRoles on first provision only. Additive —
+            // existing users keep all their roles even if the list is later
+            // edited.
+            if (loginResult.IsNewUser
+                && samlConfig?.DefaultRoles != null
+                && samlConfig.DefaultRoles.Count > 0)
+            {
+                var roleStore = context.ServiceProvider.GetService<IRoleStore>();
+                var appliedRoleNames = new List<string>();
+                if (roleStore != null)
+                {
+                    foreach (var roleId in samlConfig.DefaultRoles)
+                    {
+                        var role = await roleStore.GetByIdAsync(roleId, cancellationToken);
+                        if (role == null
+                            || string.IsNullOrEmpty(role.Name)
+                            || (role.TenantId != null && role.TenantId != context.TenantId))
+                        {
+                            logger.LogWarning(
+                                "Default role {RoleId} skipped on user {UserId}: not found or not in tenant {TenantId}",
+                                roleId, userId, context.TenantId);
+                            continue;
+                        }
+                        await context.ServiceProvider.GetRequiredService<IRoleGrantService>()
+                            .GrantAsync(role.Id, userId, null, RoleGrantActor.System($"SAML ({idpName})"), cancellationToken);
+                        appliedRoleNames.Add(role.Name);
+                    }
+                }
+                if (appliedRoleNames.Count > 0)
+                {
+                    logger.LogInformation(
+                        "Applied IdP default roles {Roles} to new user {UserId} (idp={IdP})",
+                        string.Join(",", appliedRoleNames), userId, idpName);
+                }
             }
 
             // Record successful login
@@ -298,6 +402,51 @@ public class SamlStepHandler : IStepHandler
         if (result.SessionIndex != null)
         {
             outputClaims["saml_session_index"] = result.SessionIndex;
+        }
+
+        return StepHandlerResult.Success(outputClaims);
+    }
+
+    private const string LinkSessionIndexKey = "saml_link_session_index";
+
+    /// <summary>
+    /// Signs in the account a SAML login was just linked to, after the person confirmed it by email.
+    /// </summary>
+    private static async Task<StepHandlerResult> CompleteLinkedAsync(
+        StepExecutionContext context,
+        IOlusoUserService userService,
+        string userId,
+        string idp,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var user = await userService.FindByIdAsync(userId, cancellationToken);
+        if (user == null || !user.IsActive)
+        {
+            return StepHandlerResult.Failure("user_deactivated", "Your account has been deactivated");
+        }
+
+        context.UserId = user.Id;
+        context.SetData("authenticated_at", DateTime.UtcNow);
+        context.SetData("auth_method", "saml");
+        context.SetData("idp", idp);
+        await userService.RecordLoginAsync(user.Id, cancellationToken);
+        logger.LogInformation("User {UserId} authenticated via SAML IdP {IdP} after linking it to their account", user.Id, idp);
+
+        var outputClaims = new Dictionary<string, object>
+        {
+            ["sub"] = user.Id,
+            ["idp"] = idp,
+            ["amr"] = new[] { "external", "saml" },
+            ["name"] = user.DisplayName ?? user.Username ?? "",
+            ["email"] = user.Email ?? "",
+            ["email_verified"] = user.EmailVerified
+        };
+
+        if (context.GetData<string>(LinkSessionIndexKey) is { Length: > 0 } sessionIndex)
+        {
+            outputClaims["saml_session_index"] = sessionIndex;
+            context.JourneyData.Remove(LinkSessionIndexKey);
         }
 
         return StepHandlerResult.Success(outputClaims);

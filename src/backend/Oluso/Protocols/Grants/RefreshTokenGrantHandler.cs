@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Oluso.Core;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
@@ -17,6 +18,9 @@ public class RefreshTokenGrantHandler : IGrantHandler
     private readonly IProfileService _profileService;
     private readonly IClientStore _clientStore;
     private readonly IOlusoUserService _userService;
+    private readonly ITenantStore _tenantStore;
+    private readonly ITenantContext _tenantContext;
+    private readonly IClientUserAccess _clientUserAccess;
 
     public string GrantType => OidcConstants.GrantTypes.RefreshToken;
 
@@ -24,21 +28,32 @@ public class RefreshTokenGrantHandler : IGrantHandler
         IPersistedGrantStore grantStore,
         IProfileService profileService,
         IClientStore clientStore,
-        IOlusoUserService userService)
+        IOlusoUserService userService,
+        ITenantStore tenantStore,
+        ITenantContext tenantContext,
+        IClientUserAccess clientUserAccess)
     {
+        _clientUserAccess = clientUserAccess;
         _grantStore = grantStore;
         _profileService = profileService;
         _clientStore = clientStore;
         _userService = userService;
+        _tenantStore = tenantStore;
+        _tenantContext = tenantContext;
     }
 
     public async Task<GrantResult> HandleAsync(TokenRequest request, CancellationToken cancellationToken = default)
     {
-        // RefreshToken presence is validated by TokenRequestValidator
         var client = request.Client!;
 
+        // Validate refresh token parameter is present
+        if (string.IsNullOrEmpty(request.RefreshToken))
+        {
+            return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Refresh token is missing");
+        }
+
         // Look up refresh token
-        var grant = await _grantStore.GetAsync(request.RefreshToken!, cancellationToken);
+        var grant = await _grantStore.GetAsync(request.RefreshToken, cancellationToken);
         if (grant == null)
         {
             return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Invalid refresh token");
@@ -108,6 +123,15 @@ public class RefreshTokenGrantHandler : IGrantHandler
             return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Refresh token has already been used");
         }
 
+        // A refresh token bound to a DPoP key is redeemed only with a proof signed by that key (RFC 9449 §5),
+        // so a copied token is useless and cannot be traded for unbound tokens. The token is left unspent.
+        if (!string.IsNullOrEmpty(tokenData.DPoPJkt)
+            && !string.Equals(tokenData.DPoPJkt, request.DPoPKeyThumbprint, StringComparison.Ordinal))
+        {
+            return GrantResult.Failure(OidcConstants.Errors.InvalidDPoPProof,
+                "This refresh token is bound to a DPoP key; present a DPoP proof signed by that key.");
+        }
+
         // Check if user is still active
         if (!string.IsNullOrEmpty(grant.SubjectId))
         {
@@ -118,7 +142,7 @@ public class RefreshTokenGrantHandler : IGrantHandler
                 return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "User is not active");
             }
 
-            // Validate user is still allowed to access this client (AllowedUsers/AllowedRoles)
+            // Validate user is still allowed to access this client
             var accessResult = await ValidateUserClientAccessAsync(client.ClientId, grant.SubjectId, cancellationToken);
             if (!accessResult.IsAllowed)
             {
@@ -127,12 +151,13 @@ public class RefreshTokenGrantHandler : IGrantHandler
             }
         }
 
-        // Handle scope reduction (client can request fewer scopes than original)
+        // Handle scope reduction (client can request fewer scopes than original). RFC 6749 §6: the request must
+        // not name a scope beyond the original grant, even one the server would have left out anyway.
         var effectiveScopes = tokenData.Scopes;
-        if (request.RequestedScopes.Any())
+        if (request.ScopesAsked.Any())
         {
             // Validate requested scopes are subset of original
-            var invalidScopes = request.RequestedScopes.Except(tokenData.Scopes).ToList();
+            var invalidScopes = request.ScopesAsked.Except(tokenData.Scopes).ToList();
             if (invalidScopes.Any())
             {
                 return GrantResult.Failure(
@@ -140,6 +165,77 @@ public class RefreshTokenGrantHandler : IGrantHandler
                     $"Requested scope(s) not in original grant: {string.Join(", ", invalidScopes)}");
             }
             effectiveScopes = request.RequestedScopes.ToList();
+        }
+
+        // RFC 8707 §2.2: a refresh may ask for any of the grant's resources, but no others.
+        // Checked before the token is consumed, so a refused request doesn't burn it.
+        var grantedResources = tokenData.Resources ?? new List<string>();
+        var resources = ResourceIndicators.Narrow(grantedResources.ToList(), request.Resource.ToList());
+        if (resources == null)
+        {
+            return GrantResult.Failure(OidcConstants.Errors.InvalidTarget,
+                "The requested resource was not part of the original grant");
+        }
+
+        // The tenant the new tokens are for: the one the request names, else the one this refresh token was
+        // issued for, so a switched session stays switched across refreshes. Checked and claimed before the token
+        // is consumed, so a refused switch leaves it usable.
+        var targetTenantId = request.Tenant
+            ?? tokenData.ClaimText("tenant_id");
+        if (request.Tenant != null)
+        {
+            var tenant = await _tenantStore.GetByIdAsync(request.Tenant, cancellationToken);
+            if (tenant == null || !tenant.Enabled)
+            {
+                return GrantResult.Failure(OidcConstants.Errors.InvalidRequest, "The requested tenant does not exist or is disabled");
+            }
+
+            // A tenant's own host issues only that tenant's tokens (they are signed with its key); a switch to
+            // another tenant goes through the platform.
+            var routedTenantId = _tenantContext.TenantId;
+            if (!string.IsNullOrEmpty(routedTenantId)
+                && routedTenantId != PlatformConstants.TenantId
+                && !string.Equals(routedTenantId, request.Tenant, StringComparison.OrdinalIgnoreCase))
+            {
+                return GrantResult.Failure(OidcConstants.Errors.InvalidRequest,
+                    "Tokens for another tenant are requested through the platform, not a tenant's host");
+            }
+        }
+
+        IDictionary<string, object> claims;
+        if ((request.Tenant != null || client.UpdateAccessTokenClaimsOnRefresh || tokenData.ClaimsNeedRebuild) && !string.IsNullOrEmpty(grant.SubjectId))
+        {
+            var fullClient = await _clientStore.FindClientByIdAsync(client.ClientId, cancellationToken)
+                ?? new Client { ClientId = client.ClientId };
+
+            // Fresh claims from the profile service. Authorize-parameter claims are request-scoped; on a
+            // claims-refresh there is no /authorize request to source them from.
+            claims = string.IsNullOrEmpty(targetTenantId)
+                ? await _profileService.GetProfileClaimsAsync(
+                    grant.SubjectId, fullClient, effectiveScopes.ToList(), "TokenEndpoint", "oidc",
+                    request.Resource, additionalData: null, cancellationToken)
+                : await _profileService.GetProfileClaimsForTenantAsync(
+                    grant.SubjectId, fullClient, effectiveScopes.ToList(), targetTenantId, "TokenEndpoint", "oidc",
+                    request.Resource, cancellationToken);
+            // Rebuilt claims describe the user; when they signed in still comes from the original sign-in.
+            foreach (var signInClaim in new[] { OidcConstants.StandardClaims.AuthTime, "max_age_requested" })
+            {
+                if (tokenData.ClaimText(signInClaim) is { } value) claims[signInClaim] = value;
+            }
+        }
+        else
+        {
+            // Use claims from the original token
+            claims = tokenData.ReadClaims();
+        }
+
+        if (request.Tenant != null)
+        {
+            var claimedTenant = claims.TryGetValue("tenant_id", out var claimed) ? claimed?.ToString() : null;
+            if (!string.Equals(claimedTenant, request.Tenant, StringComparison.OrdinalIgnoreCase))
+            {
+                return GrantResult.Failure(OidcConstants.Errors.AccessDenied, "The user has no access to the requested tenant");
+            }
         }
 
         // Handle token rotation based on client settings
@@ -162,29 +258,6 @@ public class RefreshTokenGrantHandler : IGrantHandler
             }
         }
 
-        // Get claims - either update them or use existing
-        IDictionary<string, object> claims;
-        if (client.UpdateAccessTokenClaimsOnRefresh && !string.IsNullOrEmpty(grant.SubjectId))
-        {
-            // Fetch the full client to pass to profile service
-            var fullClient = await _clientStore.FindClientByIdAsync(client.ClientId, cancellationToken);
-
-            // Fetch fresh claims from profile service
-            claims = await _profileService.GetProfileClaimsAsync(
-                grant.SubjectId,
-                fullClient ?? new Client { ClientId = client.ClientId },
-                effectiveScopes.ToList(),
-                "TokenEndpoint",
-                "oidc",
-                cancellationToken);
-        }
-        else
-        {
-            // Use claims from the original token
-            claims = tokenData.Claims?.ToDictionary(c => c.Key, c => (object)c.Value)
-                    ?? new Dictionary<string, object>();
-        }
-
         // Refresh permissions on token refresh only when the "permissions" scope is present
         // This picks up any role changes since the original token was issued
         var permissions = new List<string>();
@@ -199,17 +272,26 @@ public class RefreshTokenGrantHandler : IGrantHandler
         {
             SubjectId = grant.SubjectId,
             SessionId = grant.SessionId,
+            // The sign-in this refresh token came from, unchanged by refreshing.
+            Amr = tokenData.Amr?.ToList(),
+            Acr = tokenData.Acr,
             Scopes = effectiveScopes,
             Claims = claims,
-            Permissions = permissions
+            Permissions = permissions,
+            Resources = resources.ToList(),
+            GrantedResources = grantedResources.Count > 0 ? grantedResources.ToList() : resources.ToList(),
+            // RFC 6749 §6: asking for fewer scopes narrows this access token only; the rotated refresh token keeps the
+            // grant's, so one grant can mint tokens for different APIs (each asking for its own scopes).
+            GrantedScopes = tokenData.Scopes.ToList()
         };
 
         // Signal to token service about refresh token handling
         result.CustomData["refresh_token_usage"] = refreshTokenUsage;
         result.CustomData["original_refresh_token"] = request.RefreshToken;
 
-        // For OneTimeOnly, signal that a new refresh token should be issued
-        if (refreshTokenUsage == TokenUsage.OneTimeOnly)
+        // For OneTimeOnly, signal that a new refresh token should be issued. A tenant switch always gets one:
+        // the new token carries the tenant, which a reused token would not.
+        if (refreshTokenUsage == TokenUsage.OneTimeOnly || request.Tenant != null)
         {
             result.CustomData["rotate_refresh_token"] = true;
         }
@@ -235,54 +317,29 @@ public class RefreshTokenGrantHandler : IGrantHandler
     }
 
     /// <summary>
-    /// Validates that a user is still allowed to access a client based on AllowedUsers and AllowedRoles restrictions.
+    /// Whether the user may still have tokens for the client: its AllowedUsers, AllowedRoles, RequiredPermission and
+    /// RequireVerifiedEmail, all of which must be met. The permission is looked up in the user's tenant.
     /// </summary>
     private async Task<(bool IsAllowed, string? Reason)> ValidateUserClientAccessAsync(
         string clientId,
         string subjectId,
         CancellationToken cancellationToken)
     {
-        // Fetch full client entity to get AllowedUsers and AllowedRoles
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
         if (client == null)
         {
             return (false, "Client not found");
         }
 
-        var hasUserRestrictions = client.AllowedUsers.Count > 0;
-        var hasRoleRestrictions = client.AllowedRoles.Count > 0;
-
-        // No restrictions - allow all users
-        if (!hasUserRestrictions && !hasRoleRestrictions)
+        var restrictions = ClientUserRestrictions.From(client);
+        if (restrictions.IsEmpty)
         {
             return (true, null);
         }
 
-        // Check if user is in allowed users list
-        if (hasUserRestrictions && client.AllowedUsers.Any(au => au.SubjectId == subjectId))
-        {
-            return (true, null);
-        }
-
-        // Check if user has any of the allowed roles
-        if (hasRoleRestrictions)
-        {
-            var userRoles = await _userService.GetRolesAsync(subjectId, cancellationToken);
-            var allowedRoleNames = client.AllowedRoles.Select(r => r.Role).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (userRoles.Any(r => allowedRoleNames.Contains(r)))
-            {
-                return (true, null);
-            }
-        }
-
-        // User is not allowed
-        var reason = hasUserRestrictions && hasRoleRestrictions
-            ? "User is no longer authorized to access this application"
-            : hasUserRestrictions
-                ? "User is no longer in the allowed users list for this application"
-                : "User no longer has any of the required roles for this application";
-
-        return (false, reason);
+        var user = await _userService.FindByIdAsync(subjectId, cancellationToken);
+        var denial = await _clientUserAccess.FindDenialAsync(clientId, restrictions, subjectId, user?.TenantId, cancellationToken);
+        return (denial == null, denial);
     }
 }
 
@@ -291,8 +348,59 @@ public class RefreshTokenGrantHandler : IGrantHandler
 /// </summary>
 public class RefreshTokenData
 {
+    /// <summary>
+    /// <see cref="Claims"/> hold each claim as JSON in its own shape (text, list, object). Before this format every
+    /// value was stored as text, which turned a multi-valued claim such as <c>role</c> into a .NET type name.
+    /// </summary>
+    public const int JsonClaimsFormat = 2;
+
     public DateTime CreatedAt { get; set; }
     public ICollection<string> Scopes { get; set; } = new List<string>();
-    public IDictionary<string, string>? Claims { get; set; }
+    public IDictionary<string, JsonElement>? Claims { get; set; }
+    /// <summary>How <see cref="Claims"/> are stored: <see cref="JsonClaimsFormat"/>, or 0 for the older all-text form.</summary>
+    public int ClaimsFormat { get; set; }
     public string? AccessTokenHash { get; set; }
+
+    /// <summary>Thumbprint of the DPoP key the refresh token is bound to (RFC 9449), or null when unbound.</summary>
+    public string? DPoPJkt { get; set; }
+
+    /// <summary>Resource indicators of the grant (RFC 8707); null on tokens issued before they were kept.</summary>
+    public ICollection<string>? Resources { get; set; }
+
+    /// <summary>
+    /// How the user signed in (<c>amr</c>) and the authentication context (<c>acr</c>), so ID tokens issued on
+    /// refresh describe the same sign-in. <c>auth_time</c> travels in <see cref="Claims"/>.
+    /// </summary>
+    public ICollection<string>? Amr { get; set; }
+
+    public string? Acr { get; set; }
+
+    /// <summary>
+    /// True when the claims were stored in the older all-text form, where a multi-valued claim was lost. They are
+    /// rebuilt from the user's profile rather than carried into the next token.
+    /// </summary>
+    public bool ClaimsNeedRebuild => Claims is { Count: > 0 } && ClaimsFormat < JsonClaimsFormat;
+
+    /// <summary>The token's claims as stored, for storing with a refresh token.</summary>
+    public static Dictionary<string, JsonElement> StoreClaims(IDictionary<string, object> claims) =>
+        claims.ToDictionary(c => c.Key, c => JsonSerializer.SerializeToElement(c.Value ?? string.Empty));
+
+    /// <summary>
+    /// The stored claims in the shapes the token service writes: text as a string, a list of text as a string list,
+    /// anything else as its JSON.
+    /// </summary>
+    public Dictionary<string, object> ReadClaims() =>
+        Claims?.ToDictionary(c => c.Key, c => ClaimValue(c.Value)) ?? new Dictionary<string, object>();
+
+    /// <summary>A single-text claim's value, or null when absent or not text.</summary>
+    public string? ClaimText(string type) =>
+        Claims != null && Claims.TryGetValue(type, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static object ClaimValue(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? string.Empty,
+        JsonValueKind.Array when value.EnumerateArray().All(e => e.ValueKind == JsonValueKind.String) =>
+            value.EnumerateArray().Select(e => e.GetString() ?? string.Empty).ToList(),
+        _ => value.Clone(),
+    };
 }

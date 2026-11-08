@@ -1,0 +1,111 @@
+@model Oluso.UI.ViewModels.OtpCodeInputViewModel
+@*
+    One-time code entry: one box per digit, posted as a single "code" field. The first box takes the
+    browser/OS one-time-code autofill; typing advances, Backspace and the arrow keys move between boxes,
+    a pasted or autofilled code fills every box, and the enclosing form submits once the code is complete.
+    Place inside the code's <form>; its submit button stays disabled until every box is filled. With
+    AutoSubmit off the form waits for its button, for forms with other choices to make first.
+*@
+@{
+    var codeLength = Model.Length > 0 ? Model.Length : 6;
+    var groupId = "otp-" + Guid.NewGuid().ToString("N")[..8];
+}
+<div class="otp-input-group" id="@groupId" role="group" aria-label="@Localizer["otp_code_group_label"]">
+    @for (var i = 0; i < codeLength; i++)
+    {
+        <input type="text"
+               class="otp-digit"
+               inputmode="numeric"
+               pattern="[0-9]"
+               maxlength="@(i == 0 ? codeLength : 1)"
+               autocomplete="@(i == 0 ? "one-time-code" : "off")"
+               aria-label="@Localizer["otp_code_digit_label", i + 1, codeLength]"
+               @(i == 0 ? "autofocus" : "") />
+    }
+    <input type="hidden" name="@Model.FieldName" data-otp-code required />
+</div>
+
+
+<script>
+    (function () {
+        var group = document.getElementById(@Html.Raw(System.Text.Json.JsonSerializer.Serialize(groupId)));
+        var form = group && group.closest('form');
+        if (!form) return;
+        var inputs = Array.prototype.slice.call(group.querySelectorAll('.otp-digit'));
+        var hidden = group.querySelector('input[data-otp-code]');
+        var autoSubmit = @(Model.AutoSubmit ? "true" : "false");
+        var submitBtn = form.querySelector('button[type="submit"]');
+        var expected = inputs.length;
+        var submitted = false;
+
+        function sync() {
+            var value = inputs.map(function (i) { return i.value || ''; }).join('');
+            hidden.value = value;
+            inputs.forEach(function (i) { i.classList.toggle('filled', !!i.value); });
+            if (submitBtn) submitBtn.disabled = value.length !== expected;
+            return value;
+        }
+
+        function focusIndex(idx) {
+            if (idx < 0 || idx >= inputs.length) return;
+            inputs[idx].focus();
+            inputs[idx].select();
+        }
+
+        function fill(start, digits) {
+            for (var i = 0; i < digits.length && start + i < inputs.length; i++) {
+                inputs[start + i].value = digits.charAt(i);
+            }
+            var value = sync();
+            focusIndex(Math.min(start + digits.length, inputs.length - 1));
+            submitWhenComplete(value);
+        }
+
+        function submitWhenComplete(value) {
+            if (!autoSubmit || value.length !== expected || submitted) return;
+            submitted = true;
+            form.requestSubmit ? form.requestSubmit(submitBtn || undefined) : form.submit();
+        }
+
+        inputs.forEach(function (input, idx) {
+            input.addEventListener('input', function () {
+                var raw = (input.value || '').replace(/\D/g, '');
+                if (raw.length > 1) {
+                    fill(idx, raw);
+                    return;
+                }
+                input.value = raw;
+                var value = sync();
+                if (raw && idx < inputs.length - 1) focusIndex(idx + 1);
+                else submitWhenComplete(value);
+            });
+
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Backspace' && !input.value && idx > 0) {
+                    inputs[idx - 1].value = '';
+                    sync();
+                    focusIndex(idx - 1);
+                    e.preventDefault();
+                } else if (e.key === 'ArrowLeft' && idx > 0) {
+                    focusIndex(idx - 1);
+                    e.preventDefault();
+                } else if (e.key === 'ArrowRight' && idx < inputs.length - 1) {
+                    focusIndex(idx + 1);
+                    e.preventDefault();
+                }
+            });
+
+            input.addEventListener('paste', function (e) {
+                var digits = ((e.clipboardData || window.clipboardData).getData('text') || '').replace(/\D/g, '');
+                if (!digits) return;
+                e.preventDefault();
+                fill(idx, digits);
+            });
+
+            input.addEventListener('focus', function () { input.select(); });
+        });
+
+        form.addEventListener('submit', function () { submitted = true; });
+        sync();
+    })();
+</script>

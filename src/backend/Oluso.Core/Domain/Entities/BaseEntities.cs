@@ -12,6 +12,17 @@ public abstract class TenantEntity
 }
 
 /// <summary>
+/// Base entity with audit fields (no tenant isolation)
+/// </summary>
+public abstract class AuditableEntity
+{
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string? CreatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+}
+
+/// <summary>
 /// Base entity with tenant isolation and audit fields
 /// </summary>
 public abstract class AuditableTenantEntity : TenantEntity

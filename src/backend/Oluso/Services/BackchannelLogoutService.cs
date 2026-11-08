@@ -4,7 +4,9 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
 
@@ -12,28 +14,86 @@ namespace Oluso.Services;
 
 /// <summary>
 /// Implementation of backchannel logout per OpenID Connect Back-Channel Logout 1.0.
-/// Sends logout tokens to clients' backchannel logout URIs when a user logs out.
+/// Sends logout tokens to clients' backchannel logout URIs when a user logs out, and to the resource-server
+/// watchers (<see cref="IResourceServerLogoutNotifier"/>) for the ended sessions that hold their scopes.
 /// </summary>
-public class BackchannelLogoutService : IBackchannelLogoutService
+public class BackchannelLogoutService : IBackchannelLogoutService, IResourceServerLogoutNotifier
 {
     private readonly IClientStore _clientStore;
     private readonly IPersistedGrantStore _grantStore;
     private readonly ILogoutTokenGenerator _logoutTokenGenerator;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<BackchannelLogoutService> _logger;
+    private readonly ResourceServerLogoutOptions _resourceServers;
 
     public BackchannelLogoutService(
         IClientStore clientStore,
         IPersistedGrantStore grantStore,
         ILogoutTokenGenerator logoutTokenGenerator,
         IHttpClientFactory httpClientFactory,
-        ILogger<BackchannelLogoutService> logger)
+        ILogger<BackchannelLogoutService> logger,
+        IOptions<ResourceServerLogoutOptions>? resourceServers = null)
     {
         _clientStore = clientStore;
         _grantStore = grantStore;
         _logoutTokenGenerator = logoutTokenGenerator;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _resourceServers = resourceServers?.Value ?? new ResourceServerLogoutOptions();
+    }
+
+    public async Task NotifyAsync(IEnumerable<PersistedGrant> endedGrants, CancellationToken cancellationToken = default)
+    {
+        if (_resourceServers.Watchers.Count == 0)
+            return;
+
+        // One logout token per watcher and user session: grants of a session share its sid.
+        var sessions = endedGrants
+            .Where(g => !string.IsNullOrEmpty(g.SubjectId) && !string.IsNullOrEmpty(g.SessionId))
+            .Select(g => (Grant: g, Scopes: ScopesOf(g)))
+            .ToList();
+
+        foreach (var watcher in _resourceServers.Watchers)
+        {
+            var targets = sessions
+                .Where(s => s.Scopes.Any(watcher.Scopes.Contains))
+                .Select(s => (Subject: s.Grant.SubjectId!, Session: s.Grant.SessionId!))
+                .Distinct()
+                .ToList();
+            foreach (var (subject, session) in targets)
+            {
+                try
+                {
+                    await SendLogoutNotificationAsync(watcher.ClientId, subject, session, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Back-channel logout to resource server client {ClientId} for session {SessionId} failed",
+                        watcher.ClientId, session);
+                }
+            }
+        }
+    }
+
+    /// <summary>The scopes a stored grant (refresh or reference token) was issued for.</summary>
+    internal static IReadOnlyCollection<string> ScopesOf(PersistedGrant grant)
+    {
+        if (string.IsNullOrEmpty(grant.Data))
+            return Array.Empty<string>();
+        try
+        {
+            using var document = JsonDocument.Parse(grant.Data);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && (document.RootElement.TryGetProperty("Scopes", out var scopes) || document.RootElement.TryGetProperty("scopes", out scopes))
+                && scopes.ValueKind == JsonValueKind.Array)
+            {
+                return scopes.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String).Select(s => s.GetString()!).ToList();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return Array.Empty<string>();
     }
 
     public async Task<BackchannelLogoutResult> SendLogoutNotificationsAsync(
@@ -44,8 +104,13 @@ public class BackchannelLogoutService : IBackchannelLogoutService
         var result = new BackchannelLogoutResult();
 
         // Find all clients that have grants for this user
-        var grants = await _grantStore.GetAllAsync(
+        var grants = (await _grantStore.GetAllAsync(
             new PersistedGrantFilter { SubjectId = subjectId },
+            cancellationToken)).ToList();
+
+        // Resource servers watching the ended session(s): the session's own grants, or all the user's.
+        await NotifyAsync(
+            string.IsNullOrEmpty(sessionId) ? grants : grants.Where(g => g.SessionId == sessionId),
             cancellationToken);
 
         var clientIds = grants
@@ -219,6 +284,9 @@ public class LogoutTokenGenerator : ILogoutTokenGenerator
             notBefore: now,
             expires: now.AddMinutes(5), // Logout tokens should be short-lived
             signingCredentials: signingCredentials);
+
+        // Back-Channel Logout 1.0 §2.4: explicitly typed, so a logout token can't be mistaken for an ID token.
+        token.Header["typ"] = "logout+jwt";
 
         var tokenHandler = new JwtSecurityTokenHandler();
         var tokenString = tokenHandler.WriteToken(token);

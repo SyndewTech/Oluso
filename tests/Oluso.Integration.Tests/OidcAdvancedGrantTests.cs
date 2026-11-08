@@ -22,39 +22,7 @@ public class OidcAdvancedGrantTests : IntegrationTestBase
     #region PAR (Pushed Authorization Request) Tests - RFC 9126
 
     [Fact]
-    public async Task Par_EndpointExists()
-    {
-        // Arrange
-        var codeVerifier = GenerateCodeVerifier();
-        var codeChallenge = CreateCodeChallenge(codeVerifier);
-
-        var request = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["response_type"] = "code",
-            ["client_id"] = "test-client",
-            ["redirect_uri"] = "https://localhost/callback",
-            ["scope"] = "openid profile",
-            ["code_challenge"] = codeChallenge,
-            ["code_challenge_method"] = "S256",
-            ["state"] = Guid.NewGuid().ToString("N"),
-        });
-
-        // Act
-        var response = await Client.PostAsync("/connect/par", request);
-
-        // Assert - PAR endpoint should return a response (error or success)
-        // NotFound means endpoint isn't implemented yet
-        response.StatusCode.Should().BeOneOf(
-            HttpStatusCode.OK,
-            HttpStatusCode.Created,
-            HttpStatusCode.BadRequest,
-            HttpStatusCode.Unauthorized,
-            HttpStatusCode.NotFound
-        );
-    }
-
-    [Fact]
-    public async Task Par_WithValidRequest_ReturnsRequestUri()
+    public async Task Par_WithValidRequest_Returns201WithRequestUri()
     {
         // Arrange
         var codeVerifier = GenerateCodeVerifier();
@@ -65,7 +33,7 @@ public class OidcAdvancedGrantTests : IntegrationTestBase
             ["response_type"] = "code",
             ["client_id"] = "test-client",
             ["client_secret"] = "test-secret",
-            ["redirect_uri"] = "https://localhost/callback",
+            ["redirect_uri"] = "http://localhost:5100/signin-oidc",
             ["scope"] = "openid profile",
             ["code_challenge"] = codeChallenge,
             ["code_challenge_method"] = "S256",
@@ -75,42 +43,160 @@ public class OidcAdvancedGrantTests : IntegrationTestBase
         // Act
         var response = await Client.PostAsync("/connect/par", request);
 
-        // Assert
-        if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Created)
-        {
-            var content = await response.Content.ReadFromJsonAsync<JsonDocument>();
-            content.Should().NotBeNull();
+        // Assert — RFC 9126 §2.2: successful response MUST use 201 Created
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
 
-            // PAR response should contain request_uri
-            content!.RootElement.TryGetProperty("request_uri", out var requestUri).Should().BeTrue();
-            requestUri.GetString().Should().StartWith("urn:ietf:params:oauth:request_uri:");
+        var content = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        content.Should().NotBeNull();
 
-            // Should also contain expires_in
-            content.RootElement.TryGetProperty("expires_in", out _).Should().BeTrue();
-        }
+        // request_uri MUST use the urn:ietf:params:oauth:request_uri: prefix
+        content!.RootElement.TryGetProperty("request_uri", out var requestUri).Should().BeTrue();
+        requestUri.GetString().Should().StartWith("urn:ietf:params:oauth:request_uri:");
+
+        // expires_in MUST be a positive integer
+        content.RootElement.TryGetProperty("expires_in", out var expiresIn).Should().BeTrue();
+        expiresIn.GetInt32().Should().BeGreaterThan(0);
     }
 
     [Fact]
-    public async Task Par_WithoutClientAuthentication_ReturnsError()
+    public async Task Par_WithoutClientAuthentication_Returns401WithError()
     {
-        // Arrange - No client_secret
+        // Arrange — confidential client without client_secret
         var request = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["response_type"] = "code",
             ["client_id"] = "test-client",
-            ["redirect_uri"] = "https://localhost/callback",
+            ["redirect_uri"] = "http://localhost:5100/signin-oidc",
             ["scope"] = "openid",
         });
 
         // Act
         var response = await Client.PostAsync("/connect/par", request);
 
-        // Assert - Should require client authentication or return error
-        response.StatusCode.Should().BeOneOf(
-            HttpStatusCode.BadRequest,
-            HttpStatusCode.Unauthorized,
-            HttpStatusCode.NotFound // If not implemented
-        );
+        // Assert — RFC 9126 §4: client MUST be authenticated
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // RFC 9126 §2.3: error response follows RFC 6749 §5.2 format
+        var error = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        error.Should().NotBeNull();
+        error!.RootElement.TryGetProperty("error", out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Par_WithInvalidClientCredentials_Returns401()
+    {
+        // Arrange
+        var request = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = "test-client",
+            ["client_secret"] = "wrong-secret",
+            ["redirect_uri"] = "http://localhost:5100/signin-oidc",
+            ["scope"] = "openid",
+        });
+
+        // Act
+        var response = await Client.PostAsync("/connect/par", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var error = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        error!.RootElement.GetProperty("error").GetString().Should().Be("invalid_client");
+    }
+
+    [Fact]
+    public async Task Par_RejectsRequestUriParameter()
+    {
+        // Arrange — request_uri in a PAR request would be recursive (RFC 9126 §2.1)
+        var request = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = "test-client",
+            ["client_secret"] = "test-secret",
+            ["redirect_uri"] = "http://localhost:5100/signin-oidc",
+            ["scope"] = "openid",
+            ["request_uri"] = "urn:ietf:params:oauth:request_uri:some-value",
+        });
+
+        // Act
+        var response = await Client.PostAsync("/connect/par", request);
+
+        // Assert — must reject with invalid_request
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var error = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        error!.RootElement.GetProperty("error").GetString().Should().Be("invalid_request");
+    }
+
+    [Fact]
+    public async Task Par_WithJsonBody_Returns201()
+    {
+        // Arrange
+        var codeVerifier = GenerateCodeVerifier();
+        var codeChallenge = CreateCodeChallenge(codeVerifier);
+
+        var json = JsonSerializer.Serialize(new
+        {
+            client_id = "test-client",
+            client_secret = "test-secret",
+            response_type = "code",
+            redirect_uri = "http://localhost:5100/signin-oidc",
+            scope = "openid profile",
+            code_challenge = codeChallenge,
+            code_challenge_method = "S256",
+            state = Guid.NewGuid().ToString("N"),
+        });
+
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        // Act
+        var response = await Client.PostAsync("/connect/par", content);
+
+        // Assert — JSON body support per RFC 9126
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var result = await response.Content.ReadFromJsonAsync<JsonDocument>();
+        result!.RootElement.GetProperty("request_uri").GetString()
+            .Should().StartWith("urn:ietf:params:oauth:request_uri:");
+        result.RootElement.GetProperty("expires_in").GetInt32()
+            .Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Par_EachRequest_GeneratesUniqueRequestUri()
+    {
+        // Arrange
+        var codeVerifier = GenerateCodeVerifier();
+        var codeChallenge = CreateCodeChallenge(codeVerifier);
+
+        FormUrlEncodedContent MakeRequest() => new(new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = "test-client",
+            ["client_secret"] = "test-secret",
+            ["redirect_uri"] = "http://localhost:5100/signin-oidc",
+            ["scope"] = "openid",
+            ["code_challenge"] = codeChallenge,
+            ["code_challenge_method"] = "S256",
+            ["state"] = Guid.NewGuid().ToString("N"),
+        });
+
+        // Act
+        var response1 = await Client.PostAsync("/connect/par", MakeRequest());
+        var response2 = await Client.PostAsync("/connect/par", MakeRequest());
+
+        // Assert — each PAR must produce a distinct request_uri
+        response1.StatusCode.Should().Be(HttpStatusCode.Created);
+        response2.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var uri1 = (await response1.Content.ReadFromJsonAsync<JsonDocument>())!
+            .RootElement.GetProperty("request_uri").GetString();
+        var uri2 = (await response2.Content.ReadFromJsonAsync<JsonDocument>())!
+            .RootElement.GetProperty("request_uri").GetString();
+
+        uri1.Should().NotBe(uri2);
     }
 
     #endregion
@@ -412,11 +498,21 @@ public class OidcAdvancedGrantTests : IntegrationTestBase
         var response = await Client.GetAsync("/.well-known/openid-configuration");
         var discovery = await response.Content.ReadFromJsonAsync<JsonDocument>();
 
-        // Assert
-        if (discovery!.RootElement.TryGetProperty("pushed_authorization_request_endpoint", out var parEndpoint))
-        {
-            parEndpoint.GetString().Should().Contain("/connect/par");
-        }
+        // Assert — RFC 9126 §5: PAR endpoint MUST be advertised in discovery
+        var parEndpoint = discovery!.RootElement.GetProperty("pushed_authorization_request_endpoint").GetString();
+        parEndpoint.Should().Contain("/connect/par");
+    }
+
+    [Fact]
+    public async Task Discovery_IncludesRequirePushedAuthorizationRequests()
+    {
+        // Act
+        var response = await Client.GetAsync("/.well-known/openid-configuration");
+        var discovery = await response.Content.ReadFromJsonAsync<JsonDocument>();
+
+        // Assert — RFC 9126 §5: require_pushed_authorization_requests MUST be in discovery
+        discovery!.RootElement.TryGetProperty("require_pushed_authorization_requests", out _)
+            .Should().BeTrue();
     }
 
     [Fact]

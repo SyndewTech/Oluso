@@ -29,8 +29,26 @@ public class TenantStore : ITenantStore
         if (_context.Tenants == null)
             return null;
 
+        // Case-insensitive — Postgres's default collation is case-sensitive
+        // and "==" would translate to a case-sensitive SQL "=". A tenant
+        // stored as "Summitech" wouldn't match an incoming "summitech" from
+        // a subdomain or SSO landing form.
+        var normalized = identifier.ToLowerInvariant();
         return await _context.Tenants
-            .FirstOrDefaultAsync(t => t.Identifier == identifier, cancellationToken);
+            .FirstOrDefaultAsync(t => t.Identifier.ToLower() == normalized, cancellationToken);
+    }
+
+    public async Task<Tenant?> GetByCustomDomainAsync(string domain, CancellationToken cancellationToken = default)
+    {
+        if (_context.Tenants == null)
+            return null;
+
+        // DNS is case-insensitive — match accordingly so a Host header
+        // arriving as "Acme.Example.com" matches a CustomDomain stored
+        // as "acme.example.com".
+        var normalized = domain.ToLowerInvariant();
+        return await _context.Tenants
+            .FirstOrDefaultAsync(t => t.CustomDomain!.ToLower() == normalized && t.Enabled, cancellationToken);
     }
 
     public async Task<IEnumerable<Tenant>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -81,5 +99,36 @@ public class TenantStore : ITenantStore
             _context.Tenants.Remove(tenant);
             await _context.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    public async Task<(IReadOnlyList<Tenant> Items, int TotalCount)> SearchAsync(TenantSearchQuery query, CancellationToken cancellationToken = default)
+    {
+        if (_context.Tenants == null || query.OrganizationIds is { Count: 0 })
+            return (Array.Empty<Tenant>(), 0);
+
+        var tenants = _context.Tenants.AsQueryable();
+
+        if (query.OrganizationIds != null)
+            tenants = tenants.Where(t => query.OrganizationIds.Contains(t.OrganizationId));
+        if (query.Enabled is { } enabled)
+            tenants = tenants.Where(t => t.Enabled == enabled);
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim().ToLower();
+            tenants = tenants.Where(t =>
+                t.Name.ToLower().Contains(term)
+                || (t.DisplayName != null && t.DisplayName.ToLower().Contains(term))
+                || t.Identifier.ToLower().Contains(term)
+                || (t.Description != null && t.Description.ToLower().Contains(term)));
+        }
+
+        var total = await tenants.CountAsync(cancellationToken);
+        var items = await tenants
+            .OrderBy(t => t.Name)
+            .ThenBy(t => t.Identifier)
+            .Skip(Math.Max(0, query.Skip))
+            .Take(Math.Max(1, query.Take))
+            .ToListAsync(cancellationToken);
+        return (items, total);
     }
 }

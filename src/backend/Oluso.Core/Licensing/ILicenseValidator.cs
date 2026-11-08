@@ -112,13 +112,19 @@ public class LicenseInfo
 /// </summary>
 public class LicenseValidationResult
 {
+    /// <summary>Whether the license check passed</summary>
     public bool IsValid { get; set; }
+    /// <summary>Human-readable validation message (set on failure)</summary>
     public string? Message { get; set; }
+    /// <summary>The feature key that requires licensing</summary>
     public string? FeatureRequired { get; set; }
+    /// <summary>The minimum tier required for the requested feature</summary>
     public LicenseTier? RequiredTier { get; set; }
 
+    /// <summary>Creates a passing validation result</summary>
     public static LicenseValidationResult Valid() => new() { IsValid = true };
 
+    /// <summary>Creates a failing validation result</summary>
     public static LicenseValidationResult Invalid(string message, string? feature = null) => new()
     {
         IsValid = false,
@@ -126,6 +132,7 @@ public class LicenseValidationResult
         FeatureRequired = feature
     };
 
+    /// <summary>Creates a result indicating the current tier is insufficient</summary>
     public static LicenseValidationResult RequiresUpgrade(LicenseTier requiredTier, string message) => new()
     {
         IsValid = false,
@@ -304,16 +311,21 @@ public static class LicensedFeatures
 /// </summary>
 public class LicenseException : Exception
 {
+    /// <summary>The feature that triggered the license check</summary>
     public string? Feature { get; }
+    /// <summary>The minimum tier required for the feature</summary>
     public LicenseTier? RequiredTier { get; }
 
+    /// <summary>Creates a license exception with a message</summary>
     public LicenseException(string message) : base(message) { }
 
+    /// <summary>Creates a license exception for a specific feature</summary>
     public LicenseException(string message, string feature) : base(message)
     {
         Feature = feature;
     }
 
+    /// <summary>Creates a license exception indicating a tier upgrade is needed</summary>
     public LicenseException(string message, LicenseTier requiredTier) : base(message)
     {
         RequiredTier = requiredTier;

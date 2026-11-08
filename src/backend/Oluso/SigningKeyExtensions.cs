@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Oluso.Core.Domain.Entities;
+using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
 using Oluso.Keys;
 
@@ -34,6 +35,11 @@ public static class SigningKeyExtensions
             new KeyMaterialProviderRegistry(
                 sp.GetServices<IKeyMaterialProvider>(),
                 options.DefaultStorageProvider));
+
+        // Replace DevelopmentSigningCredentialStore with production SigningCredentialStore
+        // so that token signing uses managed keys (with usage tracking, rotation, etc.)
+        builder.Services.RemoveAll<ISigningCredentialStore>();
+        builder.Services.AddScoped<ISigningCredentialStore, SigningCredentialStore>();
 
         return builder;
     }

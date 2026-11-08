@@ -1,0 +1,63 @@
+@page "/account/org-signin"
+@model Oluso.UI.Pages.Account.OrgSignInModel
+@{
+    ViewData["Title"] = Localizer["org_signin_title"].Value;
+}
+
+<div class="auth-container">
+    <div class="auth-card">
+        <h1 class="auth-title">@Localizer["org_signin_title"]</h1>
+        <p class="auth-subtitle">@Localizer["org_signin_subtitle"]</p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorKey))
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Localizer[Model.ErrorKey]</span>
+            </div>
+        }
+
+        <form method="post" id="orgSignInForm" novalidate>
+            @if (!string.IsNullOrEmpty(Model.JourneyId))
+            {
+                <input type="hidden" name="journey" value="@Model.JourneyId" />
+            }
+            else
+            {
+                <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+            }
+
+            <div class="form-group">
+                <label for="identifier">@Localizer["org_signin_identifier_label"]</label>
+                <input type="text"
+                       id="identifier"
+                       name="Identifier"
+                       class="form-control"
+                       value="@Model.Identifier"
+                       placeholder="@Localizer["org_signin_identifier_placeholder"]"
+                       autocomplete="organization"
+                       autocapitalize="none"
+                       spellcheck="false"
+                       autofocus
+                       required />
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">@Localizer["org_signin_continue"]</button>
+        </form>
+
+        <div class="auth-links">
+            <a href="#" id="orgSignInBack">@Localizer["org_signin_back"]</a>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        document.getElementById('orgSignInBack')?.addEventListener('click', function (e) {
+            e.preventDefault();
+            history.back();
+        });
+    </script>
+}

@@ -1,13 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
     <!-- NuGet Package Metadata -->
     <PackageId>Oluso.Account</PackageId>
-    <Version>1.0.0</Version>
     <Description>Account API controllers for Oluso identity server. Provides REST endpoints for end-user self-service: profile, security settings, sessions, and connected applications.</Description>
     <PackageTags>oauth;oidc;identity;account;self-service;api</PackageTags>
 
@@ -21,11 +20,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Oluso.Account.Dto\Oluso.Account.Dto.csproj" />
     <ProjectReference Include="..\Oluso.Core\Oluso.Core.csproj" />
+    <ProjectReference Include="..\Oluso.Core.Generators\Oluso.Core.Generators.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

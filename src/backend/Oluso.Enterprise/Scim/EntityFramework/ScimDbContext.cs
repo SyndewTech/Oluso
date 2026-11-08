@@ -22,6 +22,8 @@ public class ScimDbContext : PluginDbContextBase<ScimDbContext>, ISeedableDbCont
     /// <inheritdoc />
     protected override string PluginName => PluginIdentifier;
 
+    protected override string? TablePrefix => "";
+
     /// <inheritdoc />
     /// <remarks>
     /// SCIM context has order 50 (after core, before other plugins at 100)
@@ -52,10 +54,14 @@ public class ScimDbContext : PluginDbContextBase<ScimDbContext>, ISeedableDbCont
     public DbSet<ScimProvisioningLog> ScimProvisioningLogs => Set<ScimProvisioningLog>();
     public DbSet<ScimResourceMapping> ScimResourceMappings => Set<ScimResourceMapping>();
     public DbSet<ScimAttributeMapping> ScimAttributeMappings => Set<ScimAttributeMapping>();
+    public DbSet<ScimProvider> ScimProviders => Set<ScimProvider>();
+    public DbSet<ScimProviderResourceMapping> ScimProviderResourceMappings => Set<ScimProviderResourceMapping>();
+    public DbSet<ScimProviderAttributeMapping> ScimProviderAttributeMappings => Set<ScimProviderAttributeMapping>();
+    public DbSet<ScimProviderOutboxItem> ScimProviderOutbox => Set<ScimProviderOutboxItem>();
+    public DbSet<ScimProviderLog> ScimProviderLogs => Set<ScimProviderLog>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyScimConfiguration();
     }
 
@@ -81,6 +87,11 @@ public static class ScimModelBuilderExtensions
         modelBuilder.ApplyConfiguration(new ScimProvisioningLogConfiguration());
         modelBuilder.ApplyConfiguration(new ScimResourceMappingConfiguration());
         modelBuilder.ApplyConfiguration(new ScimAttributeMappingConfiguration());
+        modelBuilder.ApplyConfiguration(new ScimProviderConfiguration());
+        modelBuilder.ApplyConfiguration(new ScimProviderResourceMappingConfiguration());
+        modelBuilder.ApplyConfiguration(new ScimProviderAttributeMappingConfiguration());
+        modelBuilder.ApplyConfiguration(new ScimProviderOutboxItemConfiguration());
+        modelBuilder.ApplyConfiguration(new ScimProviderLogConfiguration());
         return modelBuilder;
     }
 }

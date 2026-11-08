@@ -1,0 +1,617 @@
+<div class="space-y-6">
+  <!-- Page header -->
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+    <p class="mt-1 text-sm text-gray-500">Configure identity server settings</p>
+  </div>
+
+  @if (loading()) {
+    <div class="flex items-center justify-center h-64">
+      <div class="text-gray-500">Loading settings...</div>
+    </div>
+  } @else {
+    <!-- Tabs Navigation -->
+    <div class="border-b border-gray-200">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+        @for (tab of tabs(); track tab.id) {
+          <button
+            (click)="setActiveTab(tab.id)"
+            [class]="'flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ' +
+              (activeTab() === tab.id
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')"
+          >
+            <ui-icon [name]="tab.icon || 'menu'" class="h-5 w-5" />
+            {{ tab.label }}
+          </button>
+        }
+      </nav>
+    </div>
+
+    <!-- General Tab -->
+    @if (activeTab() === 'general') {
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <!-- Authentication Flow Settings -->
+        <ui-card class="lg:col-span-2">
+          <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-1">Authentication Flow Settings</h3>
+            <p class="text-sm text-gray-500 mb-4">Configure how users authenticate with your tenant</p>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Use Journey-Based Flow</p>
+                <p class="text-sm text-gray-500">Use step-by-step authentication journeys instead of standalone pages</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.tenantSettings?.useJourneyFlow ?? true"
+                (ngModelChange)="updateTenantSettings('useJourneyFlow', $event)"
+                class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+              />
+            </div>
+
+            @if (formData.tenantSettings?.useJourneyFlow ?? true) {
+              <div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Use standard pages when no journey applies</p>
+                  <p class="text-sm text-gray-500">
+                    When a sign-in doesn't name a journey and none is set up for it, show the standard sign-in or sign-up page.
+                    Leave off to stop with an error instead, so your journeys can't be bypassed. A journey that is named never falls back.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  [ngModel]="formData.tenantSettings?.journeyFallbackToStandard ?? false"
+                  (ngModelChange)="updateTenantSettings('journeyFallbackToStandard', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                  aria-label="Use standard pages when no journey applies"
+                />
+              </div>
+            }
+          </div>
+        </ui-card>
+
+        <!-- User Registration Settings -->
+        <ui-card class="lg:col-span-2">
+          <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-1">User Registration & Authentication</h3>
+            <p class="text-sm text-gray-500 mb-4">Configure self-service registration and which authentication methods are offered on the login page</p>
+
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Enable Local Login</p>
+                  <p class="text-sm text-gray-500">Show username and password fields on the login page. Disable to force users through external providers or passkey only</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [ngModel]="formData.tenantSettings?.enableLocalLogin ?? true"
+                  (ngModelChange)="updateTenantSettings('enableLocalLogin', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                />
+              </div>
+
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Enable Passkey</p>
+                  <p class="text-sm text-gray-500">Offer FIDO2/WebAuthn passkey sign-in. When off, the passkey option is hidden and passkey journey steps are skipped</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [ngModel]="formData.tenantSettings?.enablePasskey ?? true"
+                  (ngModelChange)="updateTenantSettings('enablePasskey', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                />
+              </div>
+
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Allow Self Registration</p>
+                  <p class="text-sm text-gray-500">Allow users to create accounts without admin intervention</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [ngModel]="formData.tenantSettings?.allowSelfRegistration ?? true"
+                  (ngModelChange)="updateTenantSettings('allowSelfRegistration', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                />
+              </div>
+
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Require Email Verification</p>
+                  <p class="text-sm text-gray-500">Users must verify their email before they can sign in</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [ngModel]="formData.tenantSettings?.requireEmailVerification ?? true"
+                  (ngModelChange)="updateTenantSettings('requireEmailVerification', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                />
+              </div>
+
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Require Terms Acceptance</p>
+                  <p class="text-sm text-gray-500">Users must accept terms of service during registration</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [ngModel]="formData.tenantSettings?.requireTermsAcceptance ?? false"
+                  (ngModelChange)="updateTenantSettings('requireTermsAcceptance', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Terms of Service URL
+                </label>
+                <input
+                  type="text"
+                  [ngModel]="formData.tenantSettings?.termsOfServiceUrl || ''"
+                  (ngModelChange)="updateTenantSettings('termsOfServiceUrl', $event || undefined)"
+                  placeholder="https://example.com/terms"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Privacy Policy URL
+                </label>
+                <input
+                  type="text"
+                  [ngModel]="formData.tenantSettings?.privacyPolicyUrl || ''"
+                  (ngModelChange)="updateTenantSettings('privacyPolicyUrl', $event || undefined)"
+                  placeholder="https://example.com/privacy"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Allowed Email Domains
+                </label>
+                <input
+                  type="text"
+                  [ngModel]="formData.tenantSettings?.allowedEmailDomains || ''"
+                  (ngModelChange)="updateTenantSettings('allowedEmailDomains', $event || undefined)"
+                  placeholder="company.com, partner.com"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                />
+                <p class="mt-1 text-xs text-gray-500">Comma-separated list of allowed email domains for registration (leave empty to allow all)</p>
+              </div>
+            </div>
+          </div>
+        </ui-card>
+
+        <!-- Signing Keys -->
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg font-medium text-gray-900 mb-1">Signing Keys</h3>
+            <p class="text-sm text-gray-500 mb-4">Manage token signing credentials</p>
+
+            <p class="text-sm text-gray-500 mb-4">
+              Current signing key: RS256 (auto-generated)
+            </p>
+            <ui-button variant="secondary" size="sm" (clicked)="navigateToSigningKeys()">
+              Manage Keys
+            </ui-button>
+          </div>
+        </ui-card>
+      </div>
+    }
+
+    <!-- Tokens Tab -->
+    @if (activeTab() === 'tokens') {
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-1">Token Settings</h3>
+          <p class="text-sm text-gray-500 mb-4">Configure token lifetimes and behavior</p>
+
+          <div class="space-y-4 max-w-md">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Default Access Token Lifetime (seconds)
+              </label>
+              <input
+                type="number"
+                [ngModel]="formData.tokenSettings.defaultAccessTokenLifetime"
+                (ngModelChange)="updateTokenSettings('defaultAccessTokenLifetime', $event)"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+              <p class="mt-1 text-xs text-gray-500">Default: 3600 (1 hour)</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Default Identity Token Lifetime (seconds)
+              </label>
+              <input
+                type="number"
+                [ngModel]="formData.tokenSettings.defaultIdentityTokenLifetime"
+                (ngModelChange)="updateTokenSettings('defaultIdentityTokenLifetime', $event)"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+              <p class="mt-1 text-xs text-gray-500">Default: 300 (5 minutes)</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Default Refresh Token Lifetime (seconds)
+              </label>
+              <input
+                type="number"
+                [ngModel]="formData.tokenSettings.defaultRefreshTokenLifetime"
+                (ngModelChange)="updateTokenSettings('defaultRefreshTokenLifetime', $event)"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+              <p class="mt-1 text-xs text-gray-500">Default: 2592000 (30 days)</p>
+            </div>
+          </div>
+        </div>
+      </ui-card>
+
+      <ui-card class="mt-6">
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-1">Account Email Links &amp; Codes</h3>
+          <p class="text-sm text-gray-500 mb-4">How long password-reset links, MFA codes and invitations stay valid. The emails state these values.</p>
+
+          <div class="space-y-4 max-w-md">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Password Reset &amp; Email Confirmation Links (minutes)</label>
+              <input
+                type="number" min="5" max="43200"
+                [ngModel]="formData.accountEmailSettings?.accountLinkLifetimeMinutes"
+                (ngModelChange)="updateAccountEmailSettings('accountLinkLifetimeMinutes', $event)"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+              <p class="mt-1 text-xs text-gray-500">Default: 1440 (1 day). Keep it at least as long as any password-reset journey step's code lifetime.</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">MFA Codes by Email or SMS (minutes)</label>
+              <input
+                type="number" min="1" max="60"
+                [ngModel]="formData.accountEmailSettings?.mfaCodeLifetimeMinutes"
+                (ngModelChange)="updateAccountEmailSettings('mfaCodeLifetimeMinutes', $event)"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+              <p class="mt-1 text-xs text-gray-500">Default: 10. Also how long the code sent to confirm a new email address stays valid.</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Organisation Invitations (days)</label>
+              <input
+                type="number" min="1" max="90"
+                [ngModel]="formData.accountEmailSettings?.invitationLifetimeDays"
+                (ngModelChange)="updateAccountEmailSettings('invitationLifetimeDays', $event)"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              />
+              <p class="mt-1 text-xs text-gray-500">Default: 7. Also used when an invitation is re-sent.</p>
+            </div>
+          </div>
+        </div>
+      </ui-card>
+    }
+
+    <!-- Security Tab -->
+    @if (activeTab() === 'security') {
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-1">Security Settings</h3>
+          <p class="text-sm text-gray-500 mb-4">Configure security policies</p>
+
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Require HTTPS</p>
+                <p class="text-sm text-gray-500">Enforce HTTPS for all endpoints</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.securitySettings.requireHttps"
+                (ngModelChange)="updateSecuritySettings('requireHttps', $event)"
+                class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+              />
+            </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Emit Static Claims</p>
+                <p class="text-sm text-gray-500">Include static claims in tokens</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.securitySettings.emitStaticClaims"
+                (ngModelChange)="updateSecuritySettings('emitStaticClaims', $event)"
+                class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+              />
+            </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Enable Backchannel Logout</p>
+                <p class="text-sm text-gray-500">Allow backchannel logout requests</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.securitySettings.enableBackchannelLogout"
+                (ngModelChange)="updateSecuritySettings('enableBackchannelLogout', $event)"
+                class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+              />
+            </div>
+          </div>
+        </div>
+      </ui-card>
+    }
+
+    <!-- CORS Tab -->
+    @if (activeTab() === 'cors') {
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-1">CORS Settings</h3>
+          <p class="text-sm text-gray-500 mb-4">Configure cross-origin resource sharing</p>
+
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Allow All Origins</p>
+                <p class="text-sm text-gray-500">Accept requests from any origin</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.corsSettings.allowAllOrigins"
+                (ngModelChange)="updateCorsSettings('allowAllOrigins', $event)"
+                class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Allowed Origins
+              </label>
+              <input
+                type="text"
+                [(ngModel)]="allowedOriginsInput"
+                (ngModelChange)="onAllowedOriginsChange()"
+                [disabled]="formData.corsSettings.allowAllOrigins"
+                placeholder="https://example.com, https://app.example.com"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm disabled:bg-gray-100"
+              />
+              <p class="mt-1 text-xs text-gray-500">Comma-separated list of allowed origins</p>
+            </div>
+          </div>
+        </div>
+      </ui-card>
+    }
+
+    <!-- Protocol Tab -->
+    @if (activeTab() === 'protocol') {
+      <!-- OAuth 2.1 Enforcement -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6 space-y-4">
+          <div class="flex items-center gap-2 mb-4">
+            <ui-icon name="shield" class="h-5 w-5 text-gray-400" />
+            <h3 class="text-lg font-medium text-gray-900">OAuth 2.1 Enforcement</h3>
+          </div>
+          <p class="text-sm text-gray-500 -mt-2 mb-4">Enforce the OAuth 2.1 security profile for this tenant</p>
+
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700">Enforce OAuth 2.1</p>
+              <p class="text-sm text-gray-500">Disables implicit grant, requires PKCE (S256 only), and blocks Resource Owner Password Credentials</p>
+            </div>
+            <input
+              type="checkbox"
+              [ngModel]="formData.protocolSettings?.enforceOAuth21 ?? false"
+              (ngModelChange)="updateProtocolSettings('enforceOAuth21', $event)"
+              class="h-4 w-4 text-primary-600 rounded"
+            />
+          </div>
+        </div>
+      </ui-card>
+
+      <!-- Dynamic Client Registration -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6 space-y-4">
+          <div class="flex items-center gap-2 mb-4">
+            <ui-icon name="server" class="h-5 w-5 text-gray-400" />
+            <h3 class="text-lg font-medium text-gray-900">Dynamic Client Registration</h3>
+          </div>
+          <p class="text-sm text-gray-500 -mt-2 mb-4">RFC 7591 - Allow clients to register dynamically</p>
+
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700">Enable Dynamic Client Registration</p>
+              <p class="text-sm text-gray-500">Allow OAuth clients to register via /connect/register</p>
+            </div>
+            <input
+              type="checkbox"
+              [ngModel]="formData.protocolSettings?.enableDynamicClientRegistration ?? false"
+              (ngModelChange)="updateProtocolSettings('enableDynamicClientRegistration', $event)"
+              class="h-4 w-4 text-primary-600 rounded"
+            />
+          </div>
+
+          @if (formData.protocolSettings?.enableDynamicClientRegistration) {
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Allow Open Registration</p>
+                <p class="text-sm text-gray-500">Allow unauthenticated registration (no access token required)</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.protocolSettings?.allowOpenDynamicRegistration ?? false"
+                (ngModelChange)="updateProtocolSettings('allowOpenDynamicRegistration', $event)"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Require PKCE</p>
+                <p class="text-sm text-gray-500">Require PKCE for dynamically registered clients</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="formData.protocolSettings?.dynamicRegistrationRequirePkce ?? true"
+                (ngModelChange)="updateProtocolSettings('dynamicRegistrationRequirePkce', $event)"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Max Redirect URIs</label>
+              <input
+                type="number"
+                [ngModel]="formData.protocolSettings?.dynamicRegistrationMaxRedirectUris ?? 10"
+                (ngModelChange)="updateProtocolSettings('dynamicRegistrationMaxRedirectUris', $event)"
+                min="1"
+                max="100"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Maximum number of redirect URIs per registered client</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Allowed Scopes</label>
+              <input
+                type="text"
+                [value]="getProtocolScopesString()"
+                (input)="onProtocolScopesInput($event)"
+                placeholder="openid, profile, email"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Comma-separated list of scopes DCR clients can request (empty = defaults)</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Allowed Grant Types</label>
+              <input
+                type="text"
+                [value]="getProtocolGrantTypesString()"
+                (input)="onProtocolGrantTypesInput($event)"
+                placeholder="authorization_code, refresh_token"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Comma-separated list of grant types DCR clients can use (empty = defaults)</p>
+            </div>
+
+            <!-- Initial Access Token Requirements (for protected registration) -->
+            @if (!formData.protocolSettings?.allowOpenDynamicRegistration) {
+              <div class="border-t pt-4 mt-4 space-y-4">
+                <div>
+                  <h4 class="text-sm font-medium text-gray-700 mb-1">Initial Access Token Requirements</h4>
+                  <p class="text-xs text-gray-500 mb-3">
+                    Configure requirements for tokens used to register clients. Leave empty to accept any valid token.
+                  </p>
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Required Scope</label>
+                  <input
+                    type="text"
+                    [ngModel]="formData.protocolSettings?.dynamicRegistrationRequiredScope ?? ''"
+                    (ngModelChange)="updateProtocolSettings('dynamicRegistrationRequiredScope', $event || undefined)"
+                    placeholder="client:register"
+                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Token must have this scope to register clients (empty = no scope requirement)</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Required Claim Name</label>
+                    <input
+                      type="text"
+                      [ngModel]="formData.protocolSettings?.dynamicRegistrationRequiredClaim ?? ''"
+                      (ngModelChange)="updateProtocolSettings('dynamicRegistrationRequiredClaim', $event || undefined)"
+                      placeholder="role"
+                      class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">Claim that must be present in token</p>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Required Claim Value</label>
+                    <input
+                      type="text"
+                      [ngModel]="formData.protocolSettings?.dynamicRegistrationRequiredClaimValue ?? ''"
+                      (ngModelChange)="updateProtocolSettings('dynamicRegistrationRequiredClaimValue', $event || undefined)"
+                      placeholder="admin"
+                      class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">Value the claim must have (empty = any value)</p>
+                  </div>
+                </div>
+              </div>
+            }
+          }
+        </div>
+      </ui-card>
+
+      <!-- Prefix Scopes -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6 space-y-4">
+          <div class="flex items-center gap-2 mb-4">
+            <ui-icon name="key" class="h-5 w-5 text-gray-400" />
+            <h3 class="text-lg font-medium text-gray-900">Prefix Scopes</h3>
+          </div>
+          <p class="text-sm text-gray-500 -mt-2 mb-4">API scopes that accept a client-chosen suffix after their name</p>
+
+          <div>
+            <label for="prefixScopeSuffixMaxLength" class="block text-sm font-medium text-gray-700 mb-1">
+              Default maximum suffix length for prefix scopes
+            </label>
+            <input
+              id="prefixScopeSuffixMaxLength"
+              data-testid="prefix-scope-suffix-max-length"
+              type="number"
+              [ngModel]="formData.protocolSettings?.prefixScopeSuffixMaxLength"
+              (ngModelChange)="updateProtocolSettings('prefixScopeSuffixMaxLength', $event)"
+              [min]="minPrefixScopeSuffixMaxLength"
+              [max]="maxPrefixScopeSuffixMaxLength"
+              step="1"
+              [attr.aria-invalid]="prefixScopeSuffixMaxLengthError() ? 'true' : null"
+              aria-describedby="prefixScopeSuffixMaxLengthHelp"
+              class="w-full sm:w-48 border rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              [class.border-gray-300]="!prefixScopeSuffixMaxLengthError()"
+              [class.border-red-500]="!!prefixScopeSuffixMaxLengthError()"
+            />
+            @if (prefixScopeSuffixMaxLengthError(); as error) {
+              <p class="mt-1 text-xs text-red-600" data-testid="prefix-scope-suffix-max-length-error">{{ error }}</p>
+            }
+            <p id="prefixScopeSuffixMaxLengthHelp" class="mt-1 text-xs text-gray-500">
+              Used by prefix scopes that don't set their own maximum. {{ minPrefixScopeSuffixMaxLength }}–{{ maxPrefixScopeSuffixMaxLength }} characters; default 256.
+            </p>
+          </div>
+        </div>
+      </ui-card>
+    }
+
+    <!-- Plugin Tab Content -->
+    @if (activePluginComponent()) {
+      <div class="plugin-tab-content">
+        <ng-container
+          *ngComponentOutlet="activePluginComponent(); injector: pluginInjector()"
+        ></ng-container>
+      </div>
+    }
+
+    <!-- Save Button (only for core tabs — plugin tabs have their own save) -->
+    @if (!activePluginComponent()) {
+      <div class="flex justify-end gap-2">
+        @if (hasChanges()) {
+          <span class="text-sm text-gray-500 self-center mr-2">You have unsaved changes</span>
+        }
+        <ui-button
+          [disabled]="!hasChanges() || saving() || !!prefixScopeSuffixMaxLengthError()"
+          (clicked)="onSave()"
+        >
+          {{ saving() ? 'Saving...' : 'Save Settings' }}
+        </ui-button>
+      </div>
+    }
+  }
+</div>

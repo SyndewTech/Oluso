@@ -39,6 +39,12 @@ public static class OidcConstants
         /// Enables client-side permission checks without database lookups.
         /// </summary>
         public const string Permissions = "permissions";
+
+        /// <summary>
+        /// The OpenID Connect identity scopes every client may be given without the organisation
+        /// registering them. A registered identity resource of the same name overrides its claims.
+        /// </summary>
+        public static readonly IReadOnlyList<string> StandardIdentity = new[] { OpenId, Profile, Email, Address, Phone };
     }
 
     public static class TokenTypes
@@ -49,6 +55,41 @@ public static class OidcConstants
         public const string Saml1 = "urn:ietf:params:oauth:token-type:saml1";
         public const string Saml2 = "urn:ietf:params:oauth:token-type:saml2";
         public const string Jwt = "urn:ietf:params:oauth:token-type:jwt";
+
+        /// <summary>
+        /// A one-time ticket from token exchange (RFC 8693): a short-lived signed JWT
+        /// (<see cref="JwtTypes.Ticket"/>) naming a subject for one audience client, which that client
+        /// redeems once at the token endpoint for its own tokens. Not an access token.
+        /// </summary>
+        public const string Ticket = "urn:oluso:params:oauth:token-type:ticket";
+    }
+
+    /// <summary>JWT <c>typ</c> header values of tokens this server signs.</summary>
+    public static class JwtTypes
+    {
+        /// <summary>A token-exchange ticket (<see cref="TokenTypes.Ticket"/>).</summary>
+        public const string Ticket = "oluso-ticket+jwt";
+
+        /// <summary>A back-channel logout token (OIDC Back-Channel Logout §2.4).</summary>
+        public const string Logout = "logout+jwt";
+
+        /// <summary>
+        /// Whether a JWT of this <c>typ</c> is one we sign for another purpose and must never be accepted as
+        /// an access token (resource authentication, token-exchange subject tokens).
+        /// </summary>
+        public static bool IsNotAccessToken(string? typ) =>
+            string.Equals(typ, Ticket, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(typ, Logout, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Client properties the token-exchange grant reads.</summary>
+    public static class TokenExchangeClientProperties
+    {
+        /// <summary>
+        /// Space-separated client ids this client may name as <c>audience</c> in a token exchange.
+        /// Without it the client may not name an audience (and may not request tickets).
+        /// </summary>
+        public const string Audiences = "token_exchange_audiences";
     }
 
     public static class Errors

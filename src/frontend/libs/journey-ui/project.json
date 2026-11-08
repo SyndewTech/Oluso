@@ -1,0 +1,48 @@
+{
+  "name": "journey-ui",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/journey-ui/src",
+  "prefix": "oluso",
+  "projectType": "library",
+  "release": {
+    "version": {
+      "manifestRootsToUpdate": ["dist/{projectRoot}"],
+      "currentVersionResolver": "git-tag",
+      "fallbackCurrentVersionResolver": "disk"
+    }
+  },
+  "tags": [],
+  "targets": {
+    "build-sdk": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "../../sdk/js",
+        "command": "[ -d node_modules ] || npm ci --no-audit --no-fund; npm run build"
+      }
+    },
+    "build": {
+      "executor": "@nx/angular:package",
+      "outputs": ["{workspaceRoot}/dist/{projectRoot}"],
+      "options": {
+        "project": "libs/journey-ui/ng-package.json",
+        "tsConfig": "libs/journey-ui/tsconfig.lib.json"
+      },
+      "configurations": {
+        "production": {
+          "tsConfig": "libs/journey-ui/tsconfig.lib.prod.json"
+        },
+        "development": {}
+      },
+      "defaultConfiguration": "production",
+      "dependsOn": ["build-sdk", "^build"]
+    },
+    "nx-release-publish": {
+      "options": {
+        "packageRoot": "dist/{projectRoot}"
+      }
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint"
+    }
+  }
+}

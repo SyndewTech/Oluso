@@ -20,6 +20,8 @@ public class Fido2DbContext : PluginDbContextBase<Fido2DbContext>
     /// <inheritdoc />
     protected override string PluginName => PluginIdentifier;
 
+    protected override string? TablePrefix => "";
+
     /// <inheritdoc />
     /// <remarks>
     /// FIDO2 context has order 80 (after SCIM=50, LDAP=60, SAML=70)
@@ -45,9 +47,8 @@ public class Fido2DbContext : PluginDbContextBase<Fido2DbContext>
 
     public DbSet<Fido2CredentialEntity> Fido2Credentials => Set<Fido2CredentialEntity>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyFido2Configuration();
     }
 }

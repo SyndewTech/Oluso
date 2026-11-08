@@ -48,7 +48,7 @@ public class ProtocolContext
     public string? JourneyId { get; set; }
 
     /// <summary>
-    /// Resolved policy ID to use
+    /// The policy the request names, by slug (<c>?policy=</c>)
     /// </summary>
     public string? PolicyId { get; set; }
 

@@ -22,6 +22,13 @@ public class TokenRequest
     // Refresh token grant
     public string? RefreshToken { get; set; }
 
+    /// <summary>
+    /// The <c>tenant</c> parameter of a refresh: the tenant the new tokens are for. The user must be entitled
+    /// to it (a member, an owner or admin of its organization, or a SuperAdmin), and the rotated refresh token
+    /// keeps it, so later refreshes stay there. Null keeps the refresh token's tenant.
+    /// </summary>
+    public string? Tenant { get; set; }
+
     // Resource owner password grant (deprecated but supported)
     public string? UserName { get; set; }
     public string? Password { get; set; }
@@ -60,8 +67,28 @@ public class TokenRequest
     /// </summary>
     public string? BoundDPoPJkt { get; set; }
 
+    /// <summary>
+    /// SHA-256 thumbprint of the mTLS client certificate (x5t#S256), set during
+    /// mTLS client authentication for certificate-bound access tokens (RFC 8705 §3).
+    /// </summary>
+    public string? MtlsCertificateThumbprint { get; set; }
+
     // Parsed properties
+
+    /// <summary>
+    /// The requested scopes the server will grant: the <c>scope</c> parameter less any the client isn't allowed,
+    /// that don't exist, or that the tenant doesn't offer. Empty when no scope was named.
+    /// </summary>
     public ICollection<string> RequestedScopes { get; set; } = new List<string>();
+
+    /// <summary>
+    /// The <c>scope</c> parameter as sent. Grants that narrow an earlier grant (refresh, token exchange) check
+    /// this against it, so asking for a scope beyond the original grant fails even if it would have been left out.
+    /// </summary>
+    public ICollection<string> ScopesAsRequested { get; set; } = new List<string>();
+
+    /// <summary>The scopes the client asked for: <see cref="ScopesAsRequested"/>, else <see cref="RequestedScopes"/>.</summary>
+    public IEnumerable<string> ScopesAsked => ScopesAsRequested.Count > 0 ? ScopesAsRequested : RequestedScopes;
 
     // Validated client (populated after authentication)
     public ValidatedClient? Client { get; set; }
@@ -184,6 +211,7 @@ public class ValidatedClient
 {
     public string ClientId { get; set; } = default!;
     public string? ClientName { get; set; }
+    public string? TenantId { get; set; }
     public string? Description { get; set; }
     public string? ClientUri { get; set; }
     public string? LogoUri { get; set; }
@@ -244,8 +272,13 @@ public class ValidatedClient
     public ICollection<string> IdentityProviderRestrictions { get; set; } = new List<string>();
 
     // Access restrictions
+    public string? RequiredPermission { get; set; }
     public ICollection<string> AllowedRoles { get; set; } = new List<string>();
     public ICollection<string> AllowedUsers { get; set; } = new List<string>();
+    public bool RequireVerifiedEmail { get; set; }
+
+    /// <summary>Resource indicators the client may request; empty means any.</summary>
+    public ICollection<string> AllowedResources { get; set; } = new List<string>();
 
     // Custom properties (includes domain_hint and other custom settings)
     public IDictionary<string, string> Properties { get; set; } = new Dictionary<string, string>();

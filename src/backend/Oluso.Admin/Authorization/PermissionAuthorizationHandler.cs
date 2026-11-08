@@ -1,7 +1,10 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Authorization;
+using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 
 namespace Oluso.Admin.Authorization;
 
@@ -11,22 +14,24 @@ namespace Oluso.Admin.Authorization;
 /// SECURITY MODEL:
 /// - Claims are identity data (profile, roles, tenant)
 /// - Permissions are a separate token property (not mixed with claims)
-/// - First checks token's "permissions" claim (fast path, no DB call)
-/// - Falls back to database role lookup if permissions not in token
+/// - First checks token's "permissions" claim (fast path, no DB call), but only
+///   while the request is still in the tenant the token was minted for
+/// - Falls back to database role lookup otherwise, resolved against the tenant
+///   the request actually landed in
 /// </summary>
 public class PermissionAuthorizationHandler : IAuthorizationHandler
 {
-    public const string PolicyPrefix = "Permission:";
-    public const string AnyPolicyPrefix = "AnyPermission:";
-
-    private readonly IRoleStore _roleStore;
+    private readonly IEffectiveRoleResolver _effectiveRoles;
+    private readonly ITenantContext _tenantContext;
     private readonly ILogger<PermissionAuthorizationHandler> _logger;
 
     public PermissionAuthorizationHandler(
-        IRoleStore roleStore,
+        IEffectiveRoleResolver effectiveRoles,
+        ITenantContext tenantContext,
         ILogger<PermissionAuthorizationHandler> logger)
     {
-        _roleStore = roleStore;
+        _effectiveRoles = effectiveRoles;
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -70,15 +75,24 @@ public class PermissionAuthorizationHandler : IAuthorizationHandler
             return false;
         }
 
-        // SuperAdmins bypass permission checks
-        if (IsSuperAdmin(user))
-        {
-            _logger.LogDebug("Permission {Permission} granted: user is SuperAdmin", permission);
-            return true;
-        }
+        // NOTE: No SuperAdmin bypass here. All roles (including SuperAdmin) go through
+        // the same permission evaluation. SuperAdmin gets "*" wildcard which grants
+        // everything except RequiresExplicitGrant permissions. This ensures sensitive
+        // operations (sensitive financial or data access, etc.) always require explicit grants.
 
-        // FAST PATH: Check token's "permissions" claim first (no database call)
-        var tokenPermissions = GetTokenPermissions(user);
+        // FAST PATH: Check token's "permissions" claim first (no database call).
+        //
+        // Only valid while the request is still scoped to the tenant the token was
+        // minted for. A client that switches tenant with X-Tenant-Id carries the
+        // old tenant's permissions in its token until it re-mints, and those must
+        // not be honoured in the new tenant — roles are per-tenant assignments, so
+        // the same user can legitimately hold very different permissions either
+        // side of a switch.
+        var tokenPermissions = TokenMatchesCurrentTenant(user)
+            ? GetTokenPermissions(user)
+            : null;
+        _logger.LogDebug("Token permissions count: {Count}", tokenPermissions?.Count ?? -1);
+
         if (tokenPermissions != null)
         {
             if (HasPermissionInList(tokenPermissions, permission))
@@ -94,32 +108,50 @@ public class PermissionAuthorizationHandler : IAuthorizationHandler
 
         // FALLBACK: Token doesn't have permissions claim, check database
         // This handles backward compatibility with older tokens
+        _logger.LogDebug("No permissions in token, falling back to database lookup");
         return await HasPermissionFromDatabaseAsync(user, permission);
     }
 
     /// <summary>
     /// Gets permissions from the token's "permissions" claim.
+    /// Handles two formats:
+    /// 1. Single claim with JSON array value: {"permissions": ["*","users.read"]}
+    /// 2. Multiple individual claims (JWT library splits JSON arrays): permissions=*, permissions=users.read
     /// Returns null if the token doesn't have a permissions claim.
     /// </summary>
-    private static HashSet<string>? GetTokenPermissions(System.Security.Claims.ClaimsPrincipal user)
+    private HashSet<string>? GetTokenPermissions(System.Security.Claims.ClaimsPrincipal user)
     {
         var permissionsClaim = user.FindFirst("permissions")?.Value;
         if (string.IsNullOrEmpty(permissionsClaim))
         {
+            _logger.LogDebug("No permissions claim found in token");
             return null;
         }
 
-        try
+        // Try JSON array format first (single claim with serialized array)
+        if (permissionsClaim.StartsWith('['))
         {
-            var permissions = JsonSerializer.Deserialize<string[]>(permissionsClaim);
-            if (permissions != null)
+            try
             {
-                return new HashSet<string>(permissions, StringComparer.OrdinalIgnoreCase);
+                var permissions = JsonSerializer.Deserialize<string[]>(permissionsClaim);
+                if (permissions != null)
+                {
+                    _logger.LogDebug("Parsed {Count} permissions from token (JSON array)", permissions.Length);
+                    return new HashSet<string>(permissions, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse permissions claim as JSON array");
             }
         }
-        catch (JsonException)
+
+        // JWT library split the JSON array into individual claims — collect them all
+        var allClaims = user.FindAll("permissions").Select(c => c.Value).ToList();
+        if (allClaims.Count > 0)
         {
-            // Invalid JSON - fall back to database lookup
+            _logger.LogDebug("Collected {Count} permissions from individual token claims", allClaims.Count);
+            return new HashSet<string>(allClaims, StringComparer.OrdinalIgnoreCase);
         }
 
         return null;
@@ -127,27 +159,41 @@ public class PermissionAuthorizationHandler : IAuthorizationHandler
 
     /// <summary>
     /// Checks if the required permission exists in the permission list,
-    /// including wildcard matching.
+    /// including wildcard matching at any depth.
+    /// Sensitive permissions (RequiresExplicitGrant) cannot be matched by wildcards.
+    /// Examples: "<module>.*" matches "<module>.read", but NOT "<module>.sensitive.view" (if sensitive)
     /// </summary>
     private static bool HasPermissionInList(HashSet<string> permissions, string permission)
     {
-        // Direct match
+        // Direct match always works (even for sensitive permissions)
         if (permissions.Contains(permission))
         {
             return true;
         }
 
-        // Check for wildcard permissions (e.g., "users.*" grants "users.read")
-        var category = permission.Split('.').FirstOrDefault();
-        if (category != null && permissions.Contains($"{category}.*"))
+        // Sensitive permissions require explicit grant — no wildcard matching
+        if (PermissionRegistry.Instance.RequiresExplicitGrant(permission))
         {
-            return true;
+            return false;
         }
 
         // Check for full admin wildcard
         if (permissions.Contains("*"))
         {
             return true;
+        }
+
+        // Check for wildcard permissions at each level
+        // For "<module>.a.b.c", check: "<module>.*", "<module>.a.*", "<module>.a.b.*"
+        var segments = permission.Split('.');
+        var prefix = "";
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            prefix = i == 0 ? segments[i] : $"{prefix}.{segments[i]}";
+            if (permissions.Contains($"{prefix}.*"))
+            {
+                return true;
+            }
         }
 
         return false;
@@ -157,47 +203,67 @@ public class PermissionAuthorizationHandler : IAuthorizationHandler
     /// Falls back to database lookup for permission checking.
     /// Used when token doesn't contain permissions claim (backward compatibility).
     /// </summary>
+    /// <summary>
+    /// True when the request is still scoped to the tenant the token was issued
+    /// for, which is what makes the token's baked-in permissions trustworthy.
+    /// A request with no resolved tenant (platform-level operations) keeps the
+    /// fast path — there is no other tenant to be wrong about.
+    /// </summary>
+    private bool TokenMatchesCurrentTenant(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var resolvedTenantId = _tenantContext.TenantId;
+        if (string.IsNullOrEmpty(resolvedTenantId))
+        {
+            return true;
+        }
+
+        var tokenTenantId = user.FindFirst("tenant_id")?.Value;
+        if (string.IsNullOrEmpty(tokenTenantId))
+        {
+            return true;
+        }
+
+        if (string.Equals(tokenTenantId, resolvedTenantId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        _logger.LogDebug(
+            "Token was minted for tenant {TokenTenant} but request resolved to {ResolvedTenant} — " +
+            "ignoring token permissions and resolving from the database",
+            tokenTenantId, resolvedTenantId);
+        return false;
+    }
+
     private async Task<bool> HasPermissionFromDatabaseAsync(
         System.Security.Claims.ClaimsPrincipal user,
         string permission)
     {
-        // Get user's roles from claims
-        var roleNames = user.FindAll("role")
-            .Select(c => c.Value)
-            .ToList();
+        var userId = user.FindFirst("sub")?.Value
+            ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-        if (roleNames.Count == 0)
+        if (string.IsNullOrEmpty(userId))
         {
-            _logger.LogDebug("Permission check failed: user has no roles");
+            _logger.LogDebug("Permission check failed: no subject on the principal");
             return false;
         }
 
-        // Get tenant ID from claims
-        var tenantId = user.FindFirst("tenant_id")?.Value;
+        // Resolve against the tenant the request actually landed in, and read role
+        // ROWS rather than the token's role names. Names are ambiguous — every
+        // tenant has its own "Admin" row — so resolving a name from a token minted
+        // elsewhere would grant this tenant's Admin permissions to someone who was
+        // only ever an Admin somewhere else.
+        var tenantId = _tenantContext.TenantId ?? user.FindFirst("tenant_id")?.Value;
 
-        // Check each role for the required permission
-        foreach (var roleName in roleNames)
+        // Roles held in this tenant plus the organization-admin grant derived
+        // from organization membership.
+        var permissions = await _effectiveRoles.GetEffectivePermissionsAsync(userId, tenantId);
+        if (HasPermissionInList(new HashSet<string>(permissions, StringComparer.OrdinalIgnoreCase), permission))
         {
-            var role = await _roleStore.GetByNameAsync(roleName, tenantId);
-            if (role == null)
-            {
-                // Try global role
-                role = await _roleStore.GetByNameAsync(roleName, null);
-            }
-
-            if (role != null)
-            {
-                var permissions = role.GetPermissions();
-                if (HasPermissionInList(
-                    new HashSet<string>(permissions, StringComparer.OrdinalIgnoreCase),
-                    permission))
-                {
-                    _logger.LogDebug(
-                        "Permission {Permission} granted via role {Role} (database fallback)",
-                        permission, roleName);
-                    return true;
-                }
-            }
+            _logger.LogDebug(
+                "Permission {Permission} granted in tenant {TenantId} (database fallback)",
+                permission, tenantId ?? "(none)");
+            return true;
         }
 
         _logger.LogDebug(
@@ -206,6 +272,14 @@ public class PermissionAuthorizationHandler : IAuthorizationHandler
         return false;
     }
 
+    // Role claim types to check (JWT middleware may remap claim types)
+    private static readonly string[] RoleClaimTypes =
+    {
+        "role",
+        "roles",
+        System.Security.Claims.ClaimTypes.Role, // http://schemas.microsoft.com/ws/2008/06/identity/claims/role
+    };
+
     /// <summary>
     /// Checks if user has SuperAdmin role.
     /// SECURITY: This checks role claims from the token. Since permissions are
@@ -213,38 +287,33 @@ public class PermissionAuthorizationHandler : IAuthorizationHandler
     /// The SuperAdmin bypass is safe because it's checked before permission lookup,
     /// and any actual permission grants still require database-verified roles.
     /// </summary>
-    private static bool IsSuperAdmin(System.Security.Claims.ClaimsPrincipal user)
+    private bool IsSuperAdmin(System.Security.Claims.ClaimsPrincipal user)
     {
-        // Check for SuperAdmin role claim
-        // NOTE: We intentionally do NOT trust a "super_admin" claim - only role membership
-        var roles = user.FindAll("role").Select(c => c.Value);
+        // First check for super_admin claim (most authoritative)
+        var superAdminClaim = user.FindFirst("super_admin")?.Value;
+        if (superAdminClaim is "true" or "1")
+        {
+            _logger.LogDebug("User is SuperAdmin via super_admin claim");
+            return true;
+        }
+
+        // Check for SuperAdmin role claim across multiple claim types
+        // (JWT middleware may remap "role" to Microsoft schema URI)
+        var roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var claimType in RoleClaimTypes)
+        {
+            foreach (var claim in user.FindAll(claimType))
+            {
+                if (!string.IsNullOrWhiteSpace(claim.Value))
+                {
+                    roles.Add(claim.Value);
+                }
+            }
+        }
+
+        _logger.LogDebug("Found roles: [{Roles}]", string.Join(", ", roles));
+
         return roles.Any(r => r.Equals("SuperAdmin", StringComparison.OrdinalIgnoreCase) ||
                               r.Equals("SystemAdmin", StringComparison.OrdinalIgnoreCase));
-    }
-}
-
-/// <summary>
-/// Authorization requirement for a single permission
-/// </summary>
-public class PermissionRequirement : IAuthorizationRequirement
-{
-    public string Permission { get; }
-
-    public PermissionRequirement(string permission)
-    {
-        Permission = permission;
-    }
-}
-
-/// <summary>
-/// Authorization requirement for any of multiple permissions
-/// </summary>
-public class AnyPermissionRequirement : IAuthorizationRequirement
-{
-    public string[] Permissions { get; }
-
-    public AnyPermissionRequirement(params string[] permissions)
-    {
-        Permissions = permissions;
     }
 }

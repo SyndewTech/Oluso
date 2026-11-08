@@ -5,12 +5,15 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.DPoP;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
+using Oluso.Protocols.Validation;
 
 namespace Oluso.Protocols.Oidc;
 
@@ -24,9 +27,10 @@ namespace Oluso.Protocols.Oidc;
 /// - Supports DPoP-bound tokens for sender-constrained access
 /// - Uses IScopeValidator for consistent scope validation
 /// </summary>
-public class OidcDynamicRegistrationController : ControllerBase
+public class OidcDynamicRegistrationController : OidcControllerBase
 {
     private readonly IClientStore _clientStore;
+    private readonly IResourceStore? _resourceStore;
     private readonly IPersistedGrantStore _grantStore;
     private readonly ITenantContext _tenantContext;
     private readonly ITenantSettingsProvider _tenantSettings;
@@ -51,8 +55,10 @@ public class OidcDynamicRegistrationController : ControllerBase
         IBearerTokenValidator tokenValidator,
         IDPoPProofValidator dpopValidator,
         IOptions<OidcEndpointConfiguration> endpointConfig,
-        ILogger<OidcDynamicRegistrationController> logger)
+        ILogger<OidcDynamicRegistrationController> logger,
+        IResourceStore? resourceStore = null)
     {
+        _resourceStore = resourceStore;
         _clientStore = clientStore;
         _grantStore = grantStore;
         _tenantContext = tenantContext;
@@ -85,7 +91,10 @@ public class OidcDynamicRegistrationController : ControllerBase
             });
         }
 
-        // Validate initial access token for protected registration
+        // Validate initial access token for protected registration. A protected
+        // registration (initial access token validated) is "privileged" — only
+        // it may declare security-sensitive metadata like custom claim mappings.
+        var privilegedRegistration = !protocolSettings.AllowOpenDynamicRegistration;
         string? dpopJkt = null;
         if (!protocolSettings.AllowOpenDynamicRegistration)
         {
@@ -102,13 +111,28 @@ public class OidcDynamicRegistrationController : ControllerBase
                 tokenResult.ClientId ?? "unknown");
         }
 
-        // Validate redirect URIs
-        if (request.RedirectUris == null || request.RedirectUris.Count == 0)
+        // Validate redirect URIs: required for the redirect-based grants (RFC 7591 §2), not for a client that
+        // only uses, say, the device authorization grant.
+        var usesRedirects = request.GrantTypes is not { Count: > 0 }
+            || request.GrantTypes.Any(g => g is "authorization_code" or "implicit");
+        request.RedirectUris ??= new List<string>();
+        if (usesRedirects && request.RedirectUris.Count == 0)
         {
             return BadRequest(new DynamicRegistrationError
             {
                 Error = "invalid_redirect_uri",
                 ErrorDescription = "At least one redirect_uri is required"
+            });
+        }
+
+        // application_type (OpenID Connect DCR §2): web (the default) or native.
+        var applicationType = string.IsNullOrEmpty(request.ApplicationType) ? MatrixClientMetadata.Web : request.ApplicationType;
+        if (!MatrixClientMetadata.IsKnownApplicationType(applicationType))
+        {
+            return BadRequest(new DynamicRegistrationError
+            {
+                Error = "invalid_client_metadata",
+                ErrorDescription = "application_type must be web or native"
             });
         }
 
@@ -159,7 +183,7 @@ public class OidcDynamicRegistrationController : ControllerBase
             : DefaultScopes.ToList();
 
         var requestedScopes = ParseScopes(request.Scope);
-        var invalidScopes = requestedScopes.Except(allowedScopes).ToList();
+        var invalidScopes = await NotAllowedScopesAsync(requestedScopes, allowedScopes, cancellationToken);
         if (invalidScopes.Count > 0)
         {
             return BadRequest(new DynamicRegistrationError
@@ -175,16 +199,61 @@ public class OidcDynamicRegistrationController : ControllerBase
             requestedScopes = allowedScopes;
         }
 
+        // A Matrix client (it will hold the Matrix API or device scope) follows the Matrix spec's registration rules.
+        var matrixClient = MatrixScopes.AnyMatrix(requestedScopes);
+        if (matrixClient && MatrixClientMetadata.Validate(applicationType, request.ClientUri, request.LogoUri,
+                request.PolicyUri, request.TosUri, request.RedirectUris) is { } matrixError)
+        {
+            return BadRequest(new DynamicRegistrationError
+            {
+                Error = matrixError.Error,
+                ErrorDescription = matrixError.Description
+            });
+        }
+
         // Determine token endpoint auth method
         var authMethod = request.TokenEndpointAuthMethod ?? "none";
         var requireSecret = authMethod != "none";
+
+        // mTLS auth method handling (RFC 8705)
+        if (authMethod == "tls_client_auth")
+        {
+            // Exactly one identity field is required
+            var identityFieldCount = new[]
+            {
+                request.TlsClientAuthSubjectDn,
+                request.TlsClientAuthSanDns,
+                request.TlsClientAuthSanUri,
+                request.TlsClientAuthSanEmail,
+                request.TlsClientAuthSanIp
+            }.Count(f => !string.IsNullOrEmpty(f));
+
+            if (identityFieldCount != 1)
+            {
+                return BadRequest(new DynamicRegistrationError
+                {
+                    Error = "invalid_client_metadata",
+                    ErrorDescription = "Exactly one tls_client_auth identity field (subject_dn, san_dns, san_uri, san_email, san_ip) is required for tls_client_auth"
+                });
+            }
+
+            // PKI mTLS: cert identity replaces secret entirely
+            requireSecret = false;
+        }
+        else if (authMethod == "self_signed_tls_client_auth")
+        {
+            // Self-signed mTLS: no generated secret, but RequireClientSecret = true
+            // because the self-signed cert acts as the secret
+            requireSecret = true;
+        }
 
         // Generate client credentials
         var clientId = GenerateClientId();
         string? clientSecret = null;
         string? hashedSecret = null;
 
-        if (requireSecret)
+        // Generate a shared secret only for methods that use one
+        if (requireSecret && authMethod != "self_signed_tls_client_auth")
         {
             clientSecret = GenerateClientSecret();
             hashedSecret = HashSecret(clientSecret);
@@ -205,7 +274,7 @@ public class OidcDynamicRegistrationController : ControllerBase
             IsDynamicallyRegistered = true,
             RequireClientSecret = requireSecret,
             // PKCE settings from tenant DCR configuration
-            RequirePkce = protocolSettings.DynamicRegistrationRequirePkce,
+            RequirePkce = protocolSettings.DynamicRegistrationRequirePkce || matrixClient,
             // Only allow plain PKCE if tenant allows it (secure default: false)
             AllowPlainTextPkce = protocolSettings.AllowPlainPkce,
             // Inherit tenant-level DPoP requirement
@@ -225,10 +294,18 @@ public class OidcDynamicRegistrationController : ControllerBase
                 .ToList(),
             PostLogoutRedirectUris = (request.PostLogoutRedirectUris ?? [])
                 .Select(u => new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = u })
-                .ToList()
+                .ToList(),
+            // RFC 8705 mTLS + general auth method tracking
+            TokenEndpointAuthMethod = authMethod,
+            TlsClientAuthSubjectDn = request.TlsClientAuthSubjectDn,
+            TlsClientAuthSanDns = request.TlsClientAuthSanDns,
+            TlsClientAuthSanUri = request.TlsClientAuthSanUri,
+            TlsClientAuthSanEmail = request.TlsClientAuthSanEmail,
+            TlsClientAuthSanIp = request.TlsClientAuthSanIp
         };
 
         // Store additional RFC 7591 metadata in properties
+        client.Properties.Add(new ClientProperty { Key = "application_type", Value = applicationType });
         if (!string.IsNullOrEmpty(request.TosUri))
             client.Properties.Add(new ClientProperty { Key = "tos_uri", Value = request.TosUri });
         if (!string.IsNullOrEmpty(request.PolicyUri))
@@ -239,6 +316,28 @@ public class OidcDynamicRegistrationController : ControllerBase
             client.Properties.Add(new ClientProperty { Key = "software_version", Value = request.SoftwareVersion });
         if (request.Contacts?.Count > 0)
             client.Properties.Add(new ClientProperty { Key = "contacts", Value = JsonSerializer.Serialize(request.Contacts) });
+
+        // Custom authorize-parameter → claim mappings (Oluso vendor extension to
+        // RFC 7591). Declaring where a token claim comes from is a security
+        // decision, so this is privileged-only: open/self-service registration
+        // may not set it, and a mapping onto a reserved/system claim is rejected.
+        if (request.AuthorizeParameterClaims?.Count > 0)
+        {
+            if (!privilegedRegistration)
+            {
+                return BadRequest(new DynamicRegistrationError
+                {
+                    Error = "invalid_client_metadata",
+                    ErrorDescription = "oluso_authorize_parameter_claims requires protected registration (an initial access token)"
+                });
+            }
+
+            var mappingError = MapAuthorizeParameterClaims(request.AuthorizeParameterClaims, client);
+            if (mappingError != null)
+            {
+                return mappingError;
+            }
+        }
 
         // Add secret if required
         if (hashedSecret != null)
@@ -274,12 +373,14 @@ public class OidcDynamicRegistrationController : ControllerBase
             ClientName = request.ClientName,
             ClientUri = request.ClientUri,
             LogoUri = request.LogoUri,
+            ApplicationType = applicationType,
             Scope = string.Join(" ", requestedScopes),
             Contacts = request.Contacts,
             TosUri = request.TosUri,
             PolicyUri = request.PolicyUri,
             SoftwareId = request.SoftwareId,
             SoftwareVersion = request.SoftwareVersion,
+            AuthorizeParameterClaims = ToAuthorizeParameterDtos(client.AllowedAuthorizeParameters),
             RegistrationClientUri = $"{baseUrl}{_endpointConfig.RegistrationEndpoint}/{clientId}",
             RegistrationAccessToken = registrationAccessToken
         };
@@ -316,6 +417,19 @@ public class OidcDynamicRegistrationController : ControllerBase
         if (error != null) return error;
 
         var protocolSettings = await _tenantSettings.GetProtocolSettingsAsync(cancellationToken);
+
+        // RFC 7592 self-management authenticates with the registration access
+        // token (the client managing itself), NOT the privileged initial access
+        // token. A client must never be able to grant itself custom claim
+        // mappings, so reject the field here — existing mappings are preserved.
+        if (request.AuthorizeParameterClaims != null)
+        {
+            return BadRequest(new DynamicRegistrationError
+            {
+                Error = "invalid_client_metadata",
+                ErrorDescription = "oluso_authorize_parameter_claims cannot be modified via client self-management"
+            });
+        }
 
         // Validate redirect URIs if provided
         if (request.RedirectUris != null)
@@ -355,7 +469,37 @@ public class OidcDynamicRegistrationController : ControllerBase
                 .ToList();
         }
 
+        if (request.ApplicationType != null && !MatrixClientMetadata.IsKnownApplicationType(request.ApplicationType))
+        {
+            return BadRequest(new DynamicRegistrationError
+            {
+                Error = "invalid_client_metadata",
+                ErrorDescription = "application_type must be web or native"
+            });
+        }
+
+        // A Matrix client's metadata, as it will be after this update, follows the Matrix registration rules.
+        if (MatrixScopes.AnyMatrix(client!.AllowedScopes.Select(s => s.Scope)))
+        {
+            var after = MatrixClientMetadata.Validate(
+                request.ApplicationType ?? GetClientProperty<string>(client, "application_type"),
+                request.ClientUri ?? client.ClientUri,
+                request.LogoUri ?? client.LogoUri,
+                request.PolicyUri ?? GetClientProperty<string>(client, "policy_uri"),
+                request.TosUri ?? GetClientProperty<string>(client, "tos_uri"),
+                client.RedirectUris.Select(r => r.RedirectUri));
+            if (after is { } updateError)
+            {
+                return BadRequest(new DynamicRegistrationError
+                {
+                    Error = updateError.Error,
+                    ErrorDescription = updateError.Description
+                });
+            }
+        }
+
         // Update other fields if provided
+        if (request.ApplicationType != null) UpdateClientProperty(client, "application_type", request.ApplicationType);
         if (request.ClientName != null) client!.ClientName = request.ClientName;
         if (request.ClientUri != null) client!.ClientUri = request.ClientUri;
         if (request.LogoUri != null) client!.LogoUri = request.LogoUri;
@@ -400,7 +544,7 @@ public class OidcDynamicRegistrationController : ControllerBase
             Type = OidcConstants.PersistedGrantTypes.RegistrationAccessToken
         }, cancellationToken);
 
-        await _clientStore.DeleteClientAsync(client!.ClientId, cancellationToken);
+        await _clientStore.DeleteByIdAsync(client!.Id, cancellationToken);
 
         _logger.LogInformation("Deleted DCR client {ClientId}", clientId);
 
@@ -536,14 +680,15 @@ public class OidcDynamicRegistrationController : ControllerBase
 
         var token = authHeader["Bearer ".Length..];
 
-        // Find the client
+        // Find the client — return 401 (not 404) when missing to avoid
+        // leaking whether a clientId exists (RFC 7592 §2.1).
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
         if (client == null || !client.IsDynamicallyRegistered)
         {
-            return (null, NotFound(new DynamicRegistrationError
+            return (null, Unauthorized(new DynamicRegistrationError
             {
-                Error = "invalid_client",
-                ErrorDescription = "Client not found or not dynamically registered"
+                Error = OidcConstants.Errors.InvalidToken,
+                ErrorDescription = "Invalid registration access token"
             }));
         }
 
@@ -696,6 +841,10 @@ public class OidcDynamicRegistrationController : ControllerBase
     {
         var issuedAt = new DateTimeOffset(client.Created).ToUnixTimeSeconds();
 
+        // Use the persisted auth method; fall back to legacy derivation for pre-existing clients
+        var authMethod = client.TokenEndpointAuthMethod
+            ?? (client.RequireClientSecret ? "client_secret_basic" : "none");
+
         return new DynamicRegistrationResponse
         {
             ClientId = client.ClientId,
@@ -704,17 +853,25 @@ public class OidcDynamicRegistrationController : ControllerBase
             RedirectUris = client.RedirectUris.Select(r => r.RedirectUri).ToList(),
             GrantTypes = client.AllowedGrantTypes.Select(g => g.GrantType).ToList(),
             ResponseTypes = DeriveResponseTypes(client.AllowedGrantTypes.Select(g => g.GrantType)),
-            TokenEndpointAuthMethod = client.RequireClientSecret ? "client_secret_basic" : "none",
+            TokenEndpointAuthMethod = authMethod,
             ClientName = client.ClientName,
             ClientUri = client.ClientUri,
             LogoUri = client.LogoUri,
+            ApplicationType = GetClientProperty<string>(client, "application_type") ?? MatrixClientMetadata.Web,
             Scope = string.Join(" ", client.AllowedScopes.Select(s => s.Scope)),
             Contacts = GetClientProperty<List<string>>(client, "contacts"),
             TosUri = GetClientProperty<string>(client, "tos_uri"),
             PolicyUri = GetClientProperty<string>(client, "policy_uri"),
             SoftwareId = GetClientProperty<string>(client, "software_id"),
             SoftwareVersion = GetClientProperty<string>(client, "software_version"),
-            RegistrationClientUri = $"{baseUrl}{_endpointConfig.RegistrationEndpoint}/{client.ClientId}"
+            AuthorizeParameterClaims = ToAuthorizeParameterDtos(client.AllowedAuthorizeParameters),
+            RegistrationClientUri = $"{baseUrl}{_endpointConfig.RegistrationEndpoint}/{client.ClientId}",
+            // RFC 8705 mTLS identity fields
+            TlsClientAuthSubjectDn = client.TlsClientAuthSubjectDn,
+            TlsClientAuthSanDns = client.TlsClientAuthSanDns,
+            TlsClientAuthSanUri = client.TlsClientAuthSanUri,
+            TlsClientAuthSanEmail = client.TlsClientAuthSanEmail,
+            TlsClientAuthSanIp = client.TlsClientAuthSanIp
             // Note: registration_access_token is not returned on GET/PUT per RFC 7592
         };
     }
@@ -785,8 +942,8 @@ public class OidcDynamicRegistrationController : ControllerBase
         if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed))
             return false;
 
-        // Allow localhost HTTP for development
-        if (parsed.Host == "localhost" || parsed.Host == "127.0.0.1")
+        // Loopback http (RFC 8252 §7.3): IPv4, IPv6 or localhost
+        if (parsed.Host is "localhost" or "127.0.0.1" or "[::1]")
             return true;
 
         // Require HTTPS for non-localhost
@@ -799,12 +956,86 @@ public class OidcDynamicRegistrationController : ControllerBase
         return true;
     }
 
+    /// <summary>
+    /// The requested scopes registration doesn't allow. A value of an allowed prefix scope (<see cref="ApiScopePrefixes"/>)
+    /// is allowed, the same rule a client's allowed scopes follow at authorization, and is registered as requested: the
+    /// client gets that value, not the whole prefix scope (it registers the prefix scope's name to choose suffixes later).
+    /// </summary>
+    private async Task<List<string>> NotAllowedScopesAsync(List<string> requested, IList<string> allowed, CancellationToken cancellationToken)
+    {
+        var notListed = requested.Where(s => !allowed.Contains(s)).ToList();
+        if (_resourceStore == null || notListed.Count == 0)
+            return notListed;
+
+        var prefixScopes = (await _resourceStore.FindPrefixApiScopesAsync(cancellationToken))
+            .Where(s => allowed.Contains(s.Name))
+            .ToList();
+        if (prefixScopes.Count == 0)
+            return notListed;
+        var defaultSuffixMaxLength = await ApiScopePrefixes.GetDefaultSuffixMaxLengthAsync(_tenantSettings, cancellationToken);
+        return notListed.Where(s => ApiScopePrefixes.Match(prefixScopes, s, defaultSuffixMaxLength) == null).ToList();
+    }
+
     private static List<string> ParseScopes(string? scope)
     {
         if (string.IsNullOrWhiteSpace(scope))
             return [];
 
         return scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+    }
+
+    /// <summary>
+    /// Validates and maps the vendor authorize-parameter claim entries onto the
+    /// client. Returns a BadRequest result on the first invalid entry, or null
+    /// when all entries are valid and have been added to the client.
+    /// </summary>
+    private IActionResult? MapAuthorizeParameterClaims(
+        List<DynamicRegistrationAuthorizeParameter> entries, Client client)
+    {
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Parameter) || string.IsNullOrWhiteSpace(entry.ClaimType))
+            {
+                return BadRequest(new DynamicRegistrationError
+                {
+                    Error = "invalid_client_metadata",
+                    ErrorDescription = "Each oluso_authorize_parameter_claims entry requires 'parameter' and 'claim_type'"
+                });
+            }
+
+            if (ReservedClaimKeys.IsReserved(entry.ClaimType) || ReservedClaimKeys.IsPermissionEntry(entry.ClaimType))
+            {
+                return BadRequest(new DynamicRegistrationError
+                {
+                    Error = "invalid_client_metadata",
+                    ErrorDescription = $"claim_type '{entry.ClaimType}' is reserved and cannot be sourced from an authorize parameter"
+                });
+            }
+
+            client.AllowedAuthorizeParameters.Add(new ClientAuthorizeParameter
+            {
+                Parameter = entry.Parameter.Trim(),
+                ClaimType = entry.ClaimType.Trim(),
+                Required = entry.Required
+            });
+        }
+
+        return null;
+    }
+
+    private static List<DynamicRegistrationAuthorizeParameter>? ToAuthorizeParameterDtos(
+        IEnumerable<ClientAuthorizeParameter>? parameters)
+    {
+        var list = parameters?
+            .Select(p => new DynamicRegistrationAuthorizeParameter
+            {
+                Parameter = p.Parameter,
+                ClaimType = p.ClaimType,
+                Required = p.Required
+            })
+            .ToList();
+
+        return list is { Count: > 0 } ? list : null;
     }
 
     private static List<string> DeriveResponseTypes(IEnumerable<string> grantTypes)
@@ -858,6 +1089,10 @@ public class DynamicRegistrationRequest
     [JsonPropertyName("client_uri")]
     public string? ClientUri { get; set; }
 
+    /// <summary>OpenID Connect DCR application type: web (default) or native.</summary>
+    [JsonPropertyName("application_type")]
+    public string? ApplicationType { get; set; }
+
     [JsonPropertyName("logo_uri")]
     public string? LogoUri { get; set; }
 
@@ -890,6 +1125,45 @@ public class DynamicRegistrationRequest
 
     [JsonPropertyName("post_logout_redirect_uris")]
     public List<string>? PostLogoutRedirectUris { get; set; }
+
+    [JsonPropertyName("tls_client_auth_subject_dn")]
+    public string? TlsClientAuthSubjectDn { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_dns")]
+    public string? TlsClientAuthSanDns { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_uri")]
+    public string? TlsClientAuthSanUri { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_email")]
+    public string? TlsClientAuthSanEmail { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_ip")]
+    public string? TlsClientAuthSanIp { get; set; }
+
+    /// <summary>
+    /// Oluso vendor extension: custom /authorize parameters this client may pass
+    /// and have surfaced as token claims. Privileged registration only.
+    /// </summary>
+    [JsonPropertyName("oluso_authorize_parameter_claims")]
+    public List<DynamicRegistrationAuthorizeParameter>? AuthorizeParameterClaims { get; set; }
+}
+
+/// <summary>
+/// Oluso vendor extension entry mapping a custom /authorize parameter to the
+/// token claim its value should be emitted under. See
+/// <see cref="ClientAuthorizeParameter"/>.
+/// </summary>
+public class DynamicRegistrationAuthorizeParameter
+{
+    [JsonPropertyName("parameter")]
+    public string? Parameter { get; set; }
+
+    [JsonPropertyName("claim_type")]
+    public string? ClaimType { get; set; }
+
+    [JsonPropertyName("required")]
+    public bool Required { get; set; }
 }
 
 /// <summary>
@@ -931,6 +1205,10 @@ public class DynamicRegistrationResponse
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ClientUri { get; set; }
 
+    [JsonPropertyName("application_type")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ApplicationType { get; set; }
+
     [JsonPropertyName("logo_uri")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? LogoUri { get; set; }
@@ -959,6 +1237,10 @@ public class DynamicRegistrationResponse
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SoftwareVersion { get; set; }
 
+    [JsonPropertyName("oluso_authorize_parameter_claims")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<DynamicRegistrationAuthorizeParameter>? AuthorizeParameterClaims { get; set; }
+
     [JsonPropertyName("registration_client_uri")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RegistrationClientUri { get; set; }
@@ -966,6 +1248,26 @@ public class DynamicRegistrationResponse
     [JsonPropertyName("registration_access_token")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RegistrationAccessToken { get; set; }
+
+    [JsonPropertyName("tls_client_auth_subject_dn")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TlsClientAuthSubjectDn { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_dns")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TlsClientAuthSanDns { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_uri")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TlsClientAuthSanUri { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_email")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TlsClientAuthSanEmail { get; set; }
+
+    [JsonPropertyName("tls_client_auth_san_ip")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TlsClientAuthSanIp { get; set; }
 }
 
 /// <summary>

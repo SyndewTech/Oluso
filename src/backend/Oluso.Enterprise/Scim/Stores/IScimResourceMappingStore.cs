@@ -20,6 +20,7 @@ public interface IScimResourceMappingStore
         CancellationToken cancellationToken = default);
 
     Task<ScimResourceMapping> CreateAsync(ScimResourceMapping mapping, CancellationToken cancellationToken = default);
+    Task UpdateAsync(ScimResourceMapping mapping, CancellationToken cancellationToken = default);
     Task DeleteAsync(string id, CancellationToken cancellationToken = default);
     Task DeleteByInternalIdAsync(string resourceType, string internalId, CancellationToken cancellationToken = default);
 }

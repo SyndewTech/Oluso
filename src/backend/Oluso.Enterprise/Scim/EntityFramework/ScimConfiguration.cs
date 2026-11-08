@@ -19,10 +19,14 @@ public class ScimClientConfiguration : IEntityTypeConfiguration<ScimClient>
         builder.Property(x => x.TokenHash).HasMaxLength(128).IsRequired();
         builder.Property(x => x.AllowedIpRanges).HasMaxLength(2000);
         builder.Property(x => x.DefaultRoleId).HasMaxLength(128);
+        builder.Property(x => x.OAuthClientId).HasMaxLength(256);
 
         builder.HasIndex(x => x.TenantId);
         builder.HasIndex(x => x.TokenHash).IsUnique();
         builder.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+        // Lookup index for the client-credentials auth path. Uniqueness of the
+        // (tenant, OAuthClientId) link is enforced in the controller at save time.
+        builder.HasIndex(x => new { x.TenantId, x.OAuthClientId });
     }
 }
 
@@ -86,7 +90,8 @@ public class ScimAttributeMappingConfiguration : IEntityTypeConfiguration<ScimAt
         builder.Property(x => x.ScimClientId).HasMaxLength(128).IsRequired();
         builder.Property(x => x.ScimAttribute).HasMaxLength(256).IsRequired();
         builder.Property(x => x.InternalProperty).HasMaxLength(128).IsRequired();
-        builder.Property(x => x.Direction).HasMaxLength(20).IsRequired();
+        builder.Property(x => x.Expression).HasMaxLength(2000);
+        builder.Property(x => x.Condition).HasMaxLength(1000);
         builder.Property(x => x.DefaultValue).HasMaxLength(500);
         builder.Property(x => x.Transformation).HasMaxLength(100);
 

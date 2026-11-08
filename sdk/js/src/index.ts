@@ -1,6 +1,14 @@
 // Core client
 export { OlusoClient, OlusoError } from './client';
 
+// Embed (programmatic API - types only, actual embed is a standalone script)
+export type { EmbedConfig } from './embed';
+
+// Journey renderer: draws any journey step by step
+export { mountJourney } from './journey/render';
+export type { MountJourneyOptions, JourneyMount, JourneyLabels } from './journey/render';
+export { conditionMet } from './journey/conditions';
+
 // Types
 export type {
   OlusoConfig,
@@ -8,12 +16,38 @@ export type {
   JourneyField,
   SubmissionResult,
   JourneySession,
+  JourneyStepView,
+  JourneyStepAction,
+  JourneyStepForm,
+  JourneyFormField,
+  JourneyFormFieldType,
+  JourneyFormOption,
+  JourneyFormCountry,
+  JourneyFormCondition,
+  JourneyFormAction,
+  JourneyFormLink,
+  JourneyFormWidget,
   StepResult,
-  AuthResult,
   OlusoEvent,
   OlusoEventType,
   OlusoEventListener,
 } from './types';
+
+// Auth SDK re-exports
+export { OlusoAuth } from './auth/client';
+export type {
+  OidcEndpoints,
+  OlusoAuthConfig,
+  OlusoUser,
+  TokenSet,
+  AuthResult,
+  JourneyStepData,
+  PasskeyOptions,
+  FedCmOptions,
+  WebAuthnAssertionOptions,
+  MountSignInOptions,
+} from './auth/types';
+export type { TokenStorage } from './auth/storage';
 
 // Convenience function to create a client
 import { OlusoClient } from './client';

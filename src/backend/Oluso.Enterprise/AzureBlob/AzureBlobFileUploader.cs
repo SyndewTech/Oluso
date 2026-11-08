@@ -19,6 +19,13 @@ public class AzureBlobFileUploader : IFileUploader
     private readonly AzureBlobOptions _options;
     private readonly ILogger<AzureBlobFileUploader> _logger;
 
+    // The dedicated PUBLIC container, resolved lazily on first public operation.
+    // Public assets live here — never in the private container — so the public
+    // serve path (and any server-side public read) is physically scoped away
+    // from private blobs even if a path guard had a bug.
+    private BlobContainerClient? _publicContainerClient;
+    private readonly object _publicContainerLock = new();
+
     public FileStorageProvider Provider => FileStorageProvider.AzureBlob;
 
     public AzureBlobFileUploader(
@@ -48,12 +55,55 @@ public class AzureBlobFileUploader : IFileUploader
         _logger = logger;
     }
 
-    public async Task<FileUploadResult> UploadAsync(
+    public Task<FileUploadResult> UploadAsync(
         string path,
         byte[] content,
         string? contentType = null,
         IDictionary<string, string>? metadata = null,
         CancellationToken cancellationToken = default)
+        => UploadCoreAsync(_containerClient, path, content, contentType, metadata, publicUrl: null, cancellationToken);
+
+    public async Task<FileUploadResult> UploadAsync(
+        string path,
+        byte[] content,
+        FileAccessLevel accessLevel,
+        string? contentType = null,
+        IDictionary<string, string>? metadata = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (accessLevel != FileAccessLevel.Public)
+            return await UploadCoreAsync(_containerClient, path, content, contentType, metadata, publicUrl: null, cancellationToken);
+
+        var publicContainer = ResolvePublicContainer();
+        if (publicContainer is null)
+        {
+            return FileUploadResult.Fail(
+                "Public upload requires AzureBlob:PublicContainerName to be configured (a dedicated public container).",
+                Provider);
+        }
+
+        // A public asset must be servable directly (CDN or anonymous-read container)
+        // so the app never has to proxy the read with privileged credentials — that
+        // proxy path is the leak vector. Refuse rather than fall back to it.
+        var publicUrl = GetPublicUrl(path, FileAccessLevel.Public);
+        if (string.IsNullOrEmpty(publicUrl))
+        {
+            return FileUploadResult.Fail(
+                "Public upload requires PublicBaseUrl (CDN) or PublicContainerAnonymousRead so the asset can be served directly, not proxied.",
+                Provider);
+        }
+
+        return await UploadCoreAsync(publicContainer, path, content, contentType, metadata, publicUrl, cancellationToken);
+    }
+
+    private async Task<FileUploadResult> UploadCoreAsync(
+        BlobContainerClient container,
+        string path,
+        byte[] content,
+        string? contentType,
+        IDictionary<string, string>? metadata,
+        string? publicUrl,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -65,7 +115,7 @@ public class AzureBlobFileUploader : IFileUploader
             }
 
             var blobPath = GetBlobPath(path);
-            var blobClient = _containerClient.GetBlobClient(blobPath);
+            var blobClient = container.GetBlobClient(blobPath);
 
             var uploadOptions = new BlobUploadOptions
             {
@@ -105,7 +155,8 @@ public class AzureBlobFileUploader : IFileUploader
                 Provider = Provider,
                 SizeBytes = content.Length,
                 ContentHash = contentHash,
-                ETag = response.Value.ETag.ToString()
+                ETag = response.Value.ETag.ToString(),
+                PublicUrl = publicUrl
             };
         }
         catch (Exception ex)
@@ -113,6 +164,19 @@ public class AzureBlobFileUploader : IFileUploader
             _logger.LogError(ex, "Failed to upload blob: {Path}", path);
             return FileUploadResult.Fail(ex.Message, Provider);
         }
+    }
+
+    public async Task<FileUploadResult> UploadAsync(
+        string path,
+        Stream content,
+        FileAccessLevel accessLevel,
+        string? contentType = null,
+        IDictionary<string, string>? metadata = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var ms = new MemoryStream();
+        await content.CopyToAsync(ms, cancellationToken);
+        return await UploadAsync(path, ms.ToArray(), accessLevel, contentType, metadata, cancellationToken);
     }
 
     public async Task<FileUploadResult> UploadAsync(
@@ -246,6 +310,8 @@ public class AzureBlobFileUploader : IFileUploader
         var blobPrefix = string.IsNullOrEmpty(prefix) ? _options.BasePath : GetBlobPath(prefix);
 
         await foreach (var blob in _containerClient.GetBlobsAsync(
+            traits: BlobTraits.None,
+            states: BlobStates.None,
             prefix: blobPrefix,
             cancellationToken: cancellationToken))
         {
@@ -346,7 +412,7 @@ public class AzureBlobFileUploader : IFileUploader
                 return Task.FromResult<string?>(null);
             }
 
-            var sasPermissions = BlobSasPermissions.None;
+            BlobSasPermissions sasPermissions = 0;
             if (permissions.HasFlag(SignedUrlPermissions.Read))
                 sasPermissions |= BlobSasPermissions.Read;
             if (permissions.HasFlag(SignedUrlPermissions.Write))
@@ -367,6 +433,99 @@ public class AzureBlobFileUploader : IFileUploader
         {
             _logger.LogError(ex, "Failed to generate signed URL: {Path}", path);
             return Task.FromResult<string?>(null);
+        }
+    }
+
+    public string? GetPublicUrl(string path, FileAccessLevel accessLevel)
+    {
+        if (accessLevel != FileAccessLevel.Public) return null;
+
+        var blobPath = GetBlobPath(path);
+
+        // A CDN / public origin in front of the public container — preferred.
+        if (!string.IsNullOrEmpty(_options.PublicBaseUrl))
+            return $"{_options.PublicBaseUrl.TrimEnd('/')}/{blobPath}";
+
+        // Direct blob URL, only valid when the container has anonymous blob read.
+        if (_options.PublicContainerAnonymousRead)
+        {
+            var container = ResolvePublicContainer();
+            if (container is not null)
+                return container.GetBlobClient(blobPath).Uri.ToString();
+        }
+
+        // No safe direct URL available — caller must not proxy a public blob.
+        return null;
+    }
+
+    public async Task<byte[]?> DownloadAsync(string path, FileAccessLevel accessLevel, CancellationToken cancellationToken = default)
+    {
+        if (accessLevel != FileAccessLevel.Public)
+            return await DownloadAsync(path, cancellationToken);
+
+        var container = ResolvePublicContainer();
+        if (container is null) return null;
+        var blobClient = container.GetBlobClient(GetBlobPath(path));
+        if (!await blobClient.ExistsAsync(cancellationToken)) return null;
+        var response = await blobClient.DownloadContentAsync(cancellationToken);
+        return response.Value.Content.ToArray();
+    }
+
+    public async Task<Stream?> DownloadStreamAsync(string path, FileAccessLevel accessLevel, CancellationToken cancellationToken = default)
+    {
+        if (accessLevel != FileAccessLevel.Public)
+            return await DownloadStreamAsync(path, cancellationToken);
+
+        var container = ResolvePublicContainer();
+        if (container is null) return null;
+        var blobClient = container.GetBlobClient(GetBlobPath(path));
+        if (!await blobClient.ExistsAsync(cancellationToken)) return null;
+        var response = await blobClient.DownloadStreamingAsync(cancellationToken: cancellationToken);
+        return response.Value.Content;
+    }
+
+    public async Task<bool> ExistsAsync(string path, FileAccessLevel accessLevel, CancellationToken cancellationToken = default)
+    {
+        if (accessLevel != FileAccessLevel.Public)
+            return await ExistsAsync(path, cancellationToken);
+
+        var container = ResolvePublicContainer();
+        if (container is null) return false;
+        return await container.GetBlobClient(GetBlobPath(path)).ExistsAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Lazily resolve (and, if configured, create) the dedicated public container.
+    /// Returns null when no public container is configured or no connection string
+    /// is available (e.g. the test constructor) — public operations then fail
+    /// closed rather than touching the private container.
+    /// </summary>
+    private BlobContainerClient? ResolvePublicContainer()
+    {
+        if (string.IsNullOrEmpty(_options.PublicContainerName)) return null;
+        if (_publicContainerClient is not null) return _publicContainerClient;
+
+        lock (_publicContainerLock)
+        {
+            if (_publicContainerClient is not null) return _publicContainerClient;
+            if (string.IsNullOrEmpty(_options.ConnectionString)) return null;
+
+            var serviceClient = new BlobServiceClient(_options.ConnectionString);
+            var client = serviceClient.GetBlobContainerClient(_options.PublicContainerName);
+
+            if (_options.CreateContainerIfNotExists)
+            {
+                var access = _options.PublicContainerAnonymousRead
+                    ? PublicAccessType.Blob
+                    : PublicAccessType.None;
+                client.CreateIfNotExists(access);
+                _logger.LogInformation(
+                    "Ensured Azure Blob PUBLIC container exists: {Container} (anonymousRead={Anon})",
+                    _options.PublicContainerName, _options.PublicContainerAnonymousRead);
+            }
+
+            _publicContainerClient = client;
+            return client;
         }
     }
 

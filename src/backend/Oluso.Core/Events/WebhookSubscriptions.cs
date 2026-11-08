@@ -167,9 +167,41 @@ public record WebhookEndpoint
     public Dictionary<string, string>? Headers { get; init; }
 
     /// <summary>
+    /// Authentication type for outbound delivery
+    /// </summary>
+    public WebhookAuthType AuthType { get; init; }
+
+    /// <summary>
+    /// Authentication credential (API key or bearer token).
+    /// Only returned when endpoint is created.
+    /// </summary>
+    public string? AuthCredential { get; init; }
+
+    /// <summary>
     /// API version for payload format
     /// </summary>
     public string ApiVersion { get; init; } = "2024-01-01";
+
+    /// <summary>
+    /// The OAuth client (client_id) that owns this endpoint, when the endpoint
+    /// belongs to an integration that also calls the Service API.
+    /// </summary>
+    public string? ClientId { get; init; }
+
+    /// <summary>
+    /// Don't deliver events whose origin is <see cref="ClientId"/>: the
+    /// integration already knows about changes it made itself.
+    /// </summary>
+    public bool SkipOwnClientEvents { get; init; } = true;
+
+    /// <summary>
+    /// When the endpoint was authorised to receive sensitive event properties. Null: they are
+    /// withheld from its deliveries (see <see cref="SensitiveEventData"/>).
+    /// </summary>
+    public DateTime? SensitiveDataAuthorizedAt { get; init; }
+
+    /// <summary>User id of the administrator who authorised sensitive data.</summary>
+    public string? SensitiveDataAuthorizedBy { get; init; }
 
     /// <summary>
     /// Created timestamp
@@ -211,7 +243,11 @@ public record CreateWebhookEndpoint
     public bool Enabled { get; init; } = true;
     public IReadOnlyList<string> EventTypes { get; init; } = Array.Empty<string>();
     public Dictionary<string, string>? Headers { get; init; }
+    public WebhookAuthType AuthType { get; init; }
+    public string? AuthCredential { get; init; }
     public string ApiVersion { get; init; } = "2024-01-01";
+    public string? ClientId { get; init; }
+    public bool SkipOwnClientEvents { get; init; } = true;
 }
 
 /// <summary>
@@ -225,7 +261,13 @@ public record UpdateWebhookEndpoint
     public bool? Enabled { get; init; }
     public IReadOnlyList<string>? EventTypes { get; init; }
     public Dictionary<string, string>? Headers { get; init; }
+    public WebhookAuthType? AuthType { get; init; }
+    public string? AuthCredential { get; init; }
     public string? ApiVersion { get; init; }
+
+    /// <summary>Empty string unlinks the client; null leaves it unchanged.</summary>
+    public string? ClientId { get; init; }
+    public bool? SkipOwnClientEvents { get; init; }
 }
 
 /// <summary>
@@ -237,6 +279,13 @@ public record WebhookDelivery
     public required string EndpointId { get; init; }
     public required string EventType { get; init; }
     public required string PayloadId { get; init; }
+
+    /// <summary>
+    /// Tenant that owns this delivery — needed by background retry to set
+    /// per-tenant context before re-dispatching, so audit logs and any
+    /// downstream writes are correctly attributed.
+    /// </summary>
+    public string? TenantId { get; init; }
 
     /// <summary>
     /// The webhook payload that was sent
@@ -311,6 +360,53 @@ public enum WebhookDeliveryStatus
 }
 
 #endregion
+
+/// <summary>
+/// Authentication type for outbound webhook delivery.
+/// The HMAC signature (X-Webhook-Signature) is sent for payload integrity whenever the endpoint has a secret,
+/// whatever the auth type.
+/// </summary>
+public enum WebhookAuthType
+{
+    /// <summary>No additional authentication (HMAC signature only)</summary>
+    None = 0,
+
+    /// <summary>Authorization: Bearer {credential} (OAuth tokens, iak_ API keys, etc.)</summary>
+    BearerToken = 1,
+
+    /// <summary>Authorization: Basic {base64(credential)} where credential is "username:password"</summary>
+    BasicAuth = 2,
+
+    /// <summary>X-API-Key: {credential}</summary>
+    ApiKeyHeader = 3,
+
+    /// <summary>
+    /// Authorization: Bearer {jwt} signed by the tenant's issuer with its current signing key (the keys at its
+    /// <c>jwks_uri</c>), so the receiver needs no shared secret: <c>typ</c> <c>webhook+jwt</c>; <c>iss</c> the tenant's
+    /// issuer as discovery states it, <c>aud</c> the endpoint URL, <c>sub</c> the owning client id (else the endpoint
+    /// id), <c>iat</c>, <c>exp</c> (iat + 300 s), <c>jti</c> the X-Webhook-ID, <c>webhook_event</c> and
+    /// <c>body_sha256</c> (base64url SHA-256 of the body bytes). Minted afresh for each attempt (same <c>jti</c>).
+    /// No credential; the HMAC signature is still sent when the endpoint has a secret.
+    /// </summary>
+    IssuerSigned = 4
+}
+
+/// <summary>
+/// Mints the bearer token of a <see cref="WebhookAuthType.IssuerSigned"/> delivery (see there for the claims).
+/// </summary>
+public interface IWebhookTokenIssuer
+{
+    /// <param name="endpoint">The endpoint delivered to (its tenant signs; its URL is the audience).</param>
+    /// <param name="deliveryId">The delivery's <c>X-Webhook-ID</c>, the token's <c>jti</c>.</param>
+    /// <param name="eventType">The event type, the token's <c>webhook_event</c>.</param>
+    /// <param name="body">The exact request body bytes sent.</param>
+    Task<string> CreateTokenAsync(
+        WebhookEndpoint endpoint,
+        string deliveryId,
+        string eventType,
+        ReadOnlyMemory<byte> body,
+        CancellationToken cancellationToken = default);
+}
 
 /// <summary>
 /// Options for webhook dispatcher

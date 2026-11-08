@@ -111,3 +111,60 @@ public interface ICibaUserNotificationService
     /// </summary>
     Task NotifyUserAsync(CibaRequest request, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// One way of telling a user about a pending CIBA request (realtime, push, email, …). The
+/// default <see cref="ICibaUserNotificationService"/> runs every registered channel in
+/// registration order; a channel that fails doesn't stop the others.
+/// </summary>
+public interface ICibaNotificationChannel
+{
+    /// <summary>Stable channel name, recorded in <see cref="CibaUserNotification.DeliveredVia"/>.</summary>
+    string Name { get; }
+
+    /// <summary>
+    /// Delivers the notification. Returns true when it was handed to a delivery service for the
+    /// user, false when this channel isn't available for them (not configured, no address).
+    /// </summary>
+    Task<bool> NotifyAsync(CibaUserNotification notification, CancellationToken cancellationToken = default);
+}
+
+/// <summary>A pending CIBA request resolved for delivery to the user who must approve it.</summary>
+public sealed class CibaUserNotification
+{
+    public required CibaRequest Request { get; init; }
+
+    /// <summary>The tenant the request (and the approving user) belongs to.</summary>
+    public required string TenantId { get; init; }
+
+    public required OlusoUserInfo User { get; init; }
+
+    /// <summary>The requesting application's display name.</summary>
+    public required string ClientName { get; init; }
+
+    /// <summary>
+    /// Channels that have already delivered, in order. A later channel can act as a fallback
+    /// by checking this (e.g. email only when push didn't go out).
+    /// </summary>
+    public ISet<string> DeliveredVia { get; } = new HashSet<string>(StringComparer.Ordinal);
+}
+
+/// <summary>
+/// Names shared by the server's CIBA user notifications and the clients that receive them
+/// (the mobile app's CIBA module listens for <see cref="RealtimeChannel"/> and handles pushes
+/// whose <c>type</c> is <see cref="PushType"/>).
+/// </summary>
+public static class CibaNotifications
+{
+    /// <summary>User-scoped realtime channel carrying CIBA request updates.</summary>
+    public const string RealtimeChannel = "ciba";
+
+    /// <summary>Realtime event raised when a new request awaits the user's decision.</summary>
+    public const string RequestedEvent = "ciba.requested";
+
+    /// <summary>Push <c>type</c>/<c>channel</c> data value routed to the mobile CIBA handler.</summary>
+    public const string PushType = "ciba";
+
+    /// <summary>Action-token action for the emailed approve/deny link.</summary>
+    public const string DecideAction = "ciba.request.decide";
+}

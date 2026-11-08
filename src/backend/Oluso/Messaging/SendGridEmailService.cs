@@ -27,6 +27,14 @@ public class SendGridEmailSender : IEmailSender
         _logger = logger;
     }
 
+    public Task<EmailResult> SendAsync(
+        string tenantId,
+        string email,
+        string subject,
+        string htmlMessage,
+        CancellationToken cancellationToken = default)
+        => SendAsync(email, subject, htmlMessage, cancellationToken);
+
     public async Task<EmailResult> SendAsync(
         string email,
         string subject,
@@ -52,7 +60,7 @@ public class SendGridEmailSender : IEmailSender
                 },
                 From = new SendGridEmail
                 {
-                    Email = _options.FromAddress ?? "noreply@example.com",
+                    Email = _options.FromAddress ?? "noreply@oluso.io",
                     Name = _options.FromName
                 },
                 Subject = subject,
@@ -121,7 +129,7 @@ public class SendGridEmailSender : IEmailSender
                 },
                 From = new SendGridEmail
                 {
-                    Email = _options.FromAddress ?? "noreply@example.com",
+                    Email = _options.FromAddress ?? "noreply@oluso.io",
                     Name = _options.FromName
                 },
                 TemplateId = templateName

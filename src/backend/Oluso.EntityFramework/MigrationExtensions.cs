@@ -43,28 +43,7 @@ public static class MigrationExtensions
         CancellationToken cancellationToken = default)
     {
         using var scope = host.Services.CreateScope();
-        var logger = scope.ServiceProvider.GetService<ILogger<OlusoDbContext>>();
-
-        // Discover all registered IMigratableDbContext implementations
-        var migratableContexts = DiscoverMigratableContexts(scope.ServiceProvider, logger);
-
-        if (migratableContexts.Count == 0)
-        {
-            logger?.LogWarning("No migratable DbContexts found. Ensure OlusoDbContext or plugin contexts are registered.");
-            return;
-        }
-
-        // Sort by MigrationOrder and apply schema migrations with interleaved data migrations
-        foreach (var context in migratableContexts.OrderBy(c => c.MigrationOrder))
-        {
-            await MigrateContextAsync(context, scope.ServiceProvider, logger, cancellationToken);
-        }
-
-        // Run final data migrations (those with AfterSchemaMigration = null)
-        await RunFinalDataMigrationsAsync(scope.ServiceProvider, logger, cancellationToken);
-
-        // Run seeding for any contexts that implement ISeedableDbContext
-        await SeedAllContextsAsync(scope.ServiceProvider, logger, cancellationToken);
+        await scope.ServiceProvider.MigrateOlusoDatabaseAsync(cancellationToken);
     }
 
     /// <summary>
@@ -103,85 +82,78 @@ public static class MigrationExtensions
     {
         var logger = serviceProvider.GetService<ILogger<OlusoDbContext>>();
 
-        var migratableContexts = DiscoverMigratableContexts(serviceProvider, logger);
+        var migratableContexts = serviceProvider.GetServices<IMigratableDbContext>()
+            .OrderBy(c => c.MigrationOrder)
+            .ToList();
 
-        foreach (var context in migratableContexts.OrderBy(c => c.MigrationOrder))
+        if (migratableContexts.Count == 0)
+        {
+            logger?.LogWarning("No migratable DbContexts found. Ensure OlusoDbContext or plugin contexts are registered.");
+            return;
+        }
+
+        // Apply schema migrations with interleaved data migrations
+        foreach (var context in migratableContexts)
         {
             await MigrateContextAsync(context, serviceProvider, logger, cancellationToken);
         }
 
-        // Run final data migrations (those with AfterSchemaMigration = null)
-        await RunFinalDataMigrationsAsync(serviceProvider, logger, cancellationToken);
+        // Run any pending data migrations (including those whose schema migration was already applied)
+        await RunPendingDataMigrationsAsync(serviceProvider, logger, cancellationToken);
 
         // Run seeding for any contexts that implement ISeedableDbContext
         await SeedAllContextsAsync(serviceProvider, logger, cancellationToken);
     }
 
-    private static List<IMigratableDbContext> DiscoverMigratableContexts(
+    /// <summary>
+    /// Applies one context's pending schema migrations one at a time, running the data migrations bound to
+    /// each straight after it: the per-context step of <see cref="MigrateOlusoDatabaseAsync(IServiceProvider, CancellationToken)"/>,
+    /// which afterwards runs the remaining data migrations and seeding for every context.
+    /// </summary>
+    /// <param name="context">The context to migrate.</param>
+    /// <param name="serviceProvider">Services the data migrations resolve.</param>
+    /// <param name="beforeSchemaMigration">
+    /// Runs before each schema migration is applied, with its full name. Tests use it to insert rows as
+    /// they stood at that point, so a data migration bound to the next schema migration has data to change.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public static Task MigrateSchemaWithDataMigrationsAsync(
+        this IMigratableDbContext context,
         IServiceProvider serviceProvider,
-        ILogger? logger)
-    {
-        var contexts = new List<IMigratableDbContext>();
+        Func<string, CancellationToken, Task>? beforeSchemaMigration = null,
+        CancellationToken cancellationToken = default) =>
+        MigrateContextAsync(context, serviceProvider, serviceProvider.GetService<ILogger<OlusoDbContext>>(), beforeSchemaMigration, cancellationToken);
 
-        // Get all registered DbContext types from the service collection
-        // We check for common DbContext types that might implement IMigratableDbContext
-        var dbContextTypes = new[]
-        {
-            typeof(OlusoDbContext),
-            // Add known plugin context types here, or use assembly scanning
-        };
-
-        foreach (var contextType in dbContextTypes)
-        {
-            try
-            {
-                var service = serviceProvider.GetService(contextType);
-                if (service is IMigratableDbContext migratable)
-                {
-                    contexts.Add(migratable);
-                    logger?.LogDebug("Discovered migratable context: {ContextName} (Order: {Order})",
-                        migratable.MigrationName, migratable.MigrationOrder);
-                }
-            }
-            catch (Exception ex)
-            {
-                logger?.LogDebug(ex, "Could not resolve {ContextType}", contextType.Name);
-            }
-        }
-
-        // Also try to resolve any IMigratableDbContext directly registered
-        // This catches plugin contexts registered with their interface
-        try
-        {
-            var allMigratable = serviceProvider.GetServices<IMigratableDbContext>();
-            foreach (var migratable in allMigratable)
-            {
-                if (!contexts.Any(c => c.MigrationName == migratable.MigrationName))
-                {
-                    contexts.Add(migratable);
-                    logger?.LogDebug("Discovered migratable context via interface: {ContextName} (Order: {Order})",
-                        migratable.MigrationName, migratable.MigrationOrder);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            logger?.LogDebug(ex, "Could not resolve IMigratableDbContext services");
-        }
-
-        return contexts;
-    }
+    private static Task MigrateContextAsync(
+        IMigratableDbContext context,
+        IServiceProvider serviceProvider,
+        ILogger? logger,
+        CancellationToken cancellationToken) =>
+        MigrateContextAsync(context, serviceProvider, logger, beforeSchemaMigration: null, cancellationToken);
 
     private static async Task MigrateContextAsync(
         IMigratableDbContext context,
         IServiceProvider serviceProvider,
         ILogger? logger,
+        Func<string, CancellationToken, Task>? beforeSchemaMigration,
         CancellationToken cancellationToken)
     {
         var contextName = context.MigrationName;
 
         try
         {
+            // Non-relational providers (e.g. InMemory for tests) don't support migrations.
+            // Use EnsureCreated instead so the schema is still available.
+            if (!context.Database.IsRelational())
+            {
+                logger?.LogInformation("{ContextName}: Non-relational provider detected, using EnsureCreated", contextName);
+                if (context is DbContext dbContext)
+                {
+                    await dbContext.Database.EnsureCreatedAsync(cancellationToken);
+                }
+                return;
+            }
+
             var pendingMigrations = await context.Database.GetPendingMigrationsAsync(cancellationToken);
             var pendingList = pendingMigrations.ToList();
 
@@ -211,6 +183,11 @@ public static class MigrationExtensions
             // Apply each schema migration one-by-one, running data migrations after each
             foreach (var migrationName in pendingList)
             {
+                if (beforeSchemaMigration != null)
+                {
+                    await beforeSchemaMigration(migrationName, cancellationToken);
+                }
+
                 logger?.LogInformation("{ContextName}: Applying schema migration: {Migration}", contextName, migrationName);
 
                 // Apply this single schema migration
@@ -245,10 +222,18 @@ public static class MigrationExtensions
         var result = new Dictionary<string, IEnumerable<string>>();
         var logger = serviceProvider.GetService<ILogger<OlusoDbContext>>();
 
-        var migratableContexts = DiscoverMigratableContexts(serviceProvider, logger);
+        var migratableContexts = serviceProvider.GetServices<IMigratableDbContext>()
+            .OrderBy(c => c.MigrationOrder)
+            .ToList();
 
-        foreach (var context in migratableContexts.OrderBy(c => c.MigrationOrder))
+        foreach (var context in migratableContexts)
         {
+            if (!context.Database.IsRelational())
+            {
+                result[context.MigrationName] = Enumerable.Empty<string>();
+                continue;
+            }
+
             var pending = await context.Database.GetPendingMigrationsAsync(cancellationToken);
             result[context.MigrationName] = pending;
         }
@@ -257,10 +242,13 @@ public static class MigrationExtensions
     }
 
     /// <summary>
-    /// Runs final data migrations (those with AfterSchemaMigration = null) for all registered migratable contexts.
-    /// These run after all schema migrations are complete.
+    /// Runs all pending data migrations for all registered migratable contexts.
+    /// This catches:
+    /// 1. Data migrations whose AfterSchemaMigration was already applied in a prior run
+    /// 2. Data migrations with AfterSchemaMigration = null (final migrations)
+    /// 3. Any other pending data migrations not yet recorded in the history table
     /// </summary>
-    private static async Task RunFinalDataMigrationsAsync(
+    private static async Task RunPendingDataMigrationsAsync(
         IServiceProvider serviceProvider,
         ILogger? logger,
         CancellationToken cancellationToken)
@@ -270,20 +258,22 @@ public static class MigrationExtensions
 
         try
         {
-            // Get all migratable contexts and run final data migrations
-            var migratableContexts = serviceProvider.GetServices<IMigratableDbContext>().ToList();
-
-            foreach (var migratable in migratableContexts)
+            foreach (var migratable in serviceProvider.GetServices<IMigratableDbContext>())
             {
-                if (migratable is DbContext dbContext)
+                if (migratable is DbContext dbContext && dbContext.Database.IsRelational())
                 {
-                    await runner.RunFinalDataMigrationsAsync(dbContext, cancellationToken);
+                    var contextType = dbContext.GetType();
+                    var method = typeof(DataMigrationRunner)
+                        .GetMethod(nameof(DataMigrationRunner.RunAsync))!
+                        .MakeGenericMethod(contextType);
+
+                    await (Task)method.Invoke(runner, new object?[] { dbContext, null, cancellationToken })!;
                 }
             }
         }
         catch (Exception ex)
         {
-            logger?.LogError(ex, "Final data migrations failed");
+            logger?.LogError(ex, "Pending data migrations failed");
             throw;
         }
     }

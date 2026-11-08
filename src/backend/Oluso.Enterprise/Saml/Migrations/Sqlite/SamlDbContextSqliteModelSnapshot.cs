@@ -15,7 +15,7 @@ namespace Oluso.Enterprise.Saml.Migrations.Sqlite
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "8.0.22");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.5");
 
             modelBuilder.Entity("Oluso.Enterprise.Saml.Entities.SamlServiceProvider", b =>
                 {
@@ -80,6 +80,9 @@ namespace Oluso.Enterprise.Saml.Migrations.Sqlite
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("RequireSignedAuthnRequests")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RequireVerifiedEmail")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("SignAssertions")

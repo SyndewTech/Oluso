@@ -5,34 +5,53 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Oluso.Core.Authentication;
+using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Locale;
 using Oluso.Core.Services;
+using Microsoft.AspNetCore.RateLimiting;
+using Oluso.Core.Security;
 
 namespace Oluso.Enterprise.Fido2.Controllers;
 
 /// <summary>
 /// Handles the passkey login flow with a self-contained UI page.
-/// This decouples passkey authentication from the main login page.
+/// This decouples passkey authentication from the main login page. The passkey is verified by the same
+/// <see cref="IFido2Service"/> as the journey passkey steps and the SDK endpoint, and the session it issues records
+/// the same sign-in (amr <c>fido2</c>/<c>hwk</c>, auth_time) and audit as a journey passkey sign-in.
 /// </summary>
 [Route("fido2")]
 [AllowAnonymous]
+[EnableRateLimiting(SignInRateLimitPolicies.SignIn)]
 public class Fido2LoginController : Controller
 {
+    /// <summary>The method and amr every passkey sign-in records.</summary>
+    private const string AuthenticationMethod = "fido2";
+    private static readonly string[] PasskeyMethods = { AuthenticationMethod, "hwk" };
+
     private readonly IFido2Service _fido2Service;
     private readonly IOlusoUserService _userService;
     private readonly ITenantContext? _tenantContext;
+    private readonly ISignInAuditor? _signInAuditor;
+    private readonly IClientStore? _clients;
     private readonly ILogger<Fido2LoginController> _logger;
 
     public Fido2LoginController(
         IFido2Service fido2Service,
         IOlusoUserService userService,
         ILogger<Fido2LoginController> logger,
-        ITenantContext? tenantContext = null)
+        ITenantContext? tenantContext = null,
+        ISignInAuditor? signInAuditor = null,
+        IClientStore? clients = null)
     {
         _fido2Service = fido2Service;
         _userService = userService;
         _tenantContext = tenantContext;
         _logger = logger;
+        _signInAuditor = signInAuditor;
+        _clients = clients;
     }
 
     /// <summary>
@@ -43,10 +62,17 @@ public class Fido2LoginController : Controller
         [FromQuery] string? returnUrl = null,
         CancellationToken cancellationToken = default)
     {
+        returnUrl = await SafeReturnUrlAsync(returnUrl, cancellationToken);
+
         // If already authenticated, redirect
         if (User.Identity?.IsAuthenticated == true)
         {
-            return Redirect(GetSafeReturnUrl(returnUrl));
+            return Redirect(returnUrl);
+        }
+
+        if (_tenantContext?.Tenant?.EnablePasskey == false)
+        {
+            return Content(GenerateErrorPage("Passkey sign-in is not available.", returnUrl), "text/html");
         }
 
         try
@@ -57,7 +83,7 @@ public class Fido2LoginController : Controller
             // Store assertion ID in session
             HttpContext.Session.SetString("fido2.assertionId", options.AssertionId);
 
-            // Serialize options for JavaScript
+            // Serialize options for JavaScript (the default encoder escapes <, > and &, so it is safe in a script)
             var optionsJson = System.Text.Json.JsonSerializer.Serialize(options, new System.Text.Json.JsonSerializerOptions
             {
                 PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
@@ -82,51 +108,11 @@ public class Fido2LoginController : Controller
         [FromForm] string? returnUrl = null,
         CancellationToken cancellationToken = default)
     {
-        // Get assertion ID from session
-        var assertionId = HttpContext.Session.GetString("fido2.assertionId");
-        if (string.IsNullOrEmpty(assertionId))
-        {
-            return Content(GenerateErrorPage("Session expired. Please try again.", returnUrl), "text/html");
-        }
-
-        try
-        {
-            var result = await _fido2Service.VerifyAssertionAsync(assertionId, assertionResponse, cancellationToken);
-
-            // Clear session
-            HttpContext.Session.Remove("fido2.assertionId");
-
-            if (!result.Succeeded)
-            {
-                _logger.LogWarning("Passkey verification failed: {Error}", result.Error);
-                return Content(GenerateErrorPage(result.ErrorDescription ?? "Passkey verification failed.", returnUrl), "text/html");
-            }
-
-            // Get user
-            var user = await _userService.FindByIdAsync(result.UserId!, cancellationToken);
-            if (user == null)
-            {
-                return Content(GenerateErrorPage("User not found.", returnUrl), "text/html");
-            }
-
-            if (!user.IsActive)
-            {
-                return Content(GenerateErrorPage("Your account has been deactivated.", returnUrl), "text/html");
-            }
-
-            _logger.LogInformation("User {UserId} logged in via passkey", user.Id);
-
-            // Sign in the user
-            await SignInUserAsync(user.Id);
-
-            // Redirect to return URL
-            return Redirect(GetSafeReturnUrl(returnUrl));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Passkey verification error");
-            return Content(GenerateErrorPage("An error occurred during authentication. Please try again.", returnUrl), "text/html");
-        }
+        returnUrl = await SafeReturnUrlAsync(returnUrl, cancellationToken);
+        var outcome = await CompleteSignInAsync(assertionResponse, returnUrl, cancellationToken);
+        return outcome.Error == null
+            ? Redirect(returnUrl)
+            : Content(GenerateErrorPage(outcome.Error, returnUrl), "text/html");
     }
 
     /// <summary>
@@ -137,100 +123,157 @@ public class Fido2LoginController : Controller
         [FromBody] PasskeyVerifyRequest request,
         CancellationToken cancellationToken = default)
     {
-        // Get assertion ID from session
+        var returnUrl = await SafeReturnUrlAsync(request.ReturnUrl, cancellationToken);
+        var outcome = await CompleteSignInAsync(request.AssertionResponse, returnUrl, cancellationToken);
+        if (outcome.SessionExpired)
+        {
+            return BadRequest(new { error = "Session expired", redirect = $"/fido2/login?returnUrl={Uri.EscapeDataString(returnUrl)}" });
+        }
+        return outcome.Error == null
+            ? Ok(new { success = true, redirect = returnUrl })
+            : BadRequest(new { error = outcome.Error });
+    }
+
+    private sealed record SignInOutcome(string? Error, bool SessionExpired = false);
+
+    /// <summary>Both forms of the page end here: verify, sign in, record the login and audit it.</summary>
+    private async Task<SignInOutcome> CompleteSignInAsync(string assertionResponse, string returnUrl, CancellationToken cancellationToken)
+    {
+        // Get assertion ID from session; it is used once.
         var assertionId = HttpContext.Session.GetString("fido2.assertionId");
         if (string.IsNullOrEmpty(assertionId))
         {
-            return BadRequest(new { error = "Session expired", redirect = $"/fido2/login?returnUrl={Uri.EscapeDataString(request.ReturnUrl ?? "/")}" });
+            return new SignInOutcome("Session expired. Please try again.", SessionExpired: true);
+        }
+        HttpContext.Session.Remove("fido2.assertionId");
+
+        if (_tenantContext?.Tenant?.EnablePasskey == false)
+        {
+            return new SignInOutcome("Passkey sign-in is not available.");
         }
 
         try
         {
-            var result = await _fido2Service.VerifyAssertionAsync(assertionId, request.AssertionResponse, cancellationToken);
-
-            // Clear session
-            HttpContext.Session.Remove("fido2.assertionId");
-
+            var result = await _fido2Service.VerifyAssertionAsync(assertionId, assertionResponse, cancellationToken);
             if (!result.Succeeded)
             {
                 _logger.LogWarning("Passkey verification failed: {Error}", result.Error);
-                return BadRequest(new { error = result.ErrorDescription ?? "Passkey verification failed" });
+                await RecordFailureAsync(result.UserId ?? "passkey", result.Error ?? "passkey_verification_failed", returnUrl, cancellationToken);
+                return new SignInOutcome(result.ErrorDescription ?? "Passkey verification failed.");
             }
 
-            // Get user
             var user = await _userService.FindByIdAsync(result.UserId!, cancellationToken);
-            if (user == null)
+            if (user == null || !user.IsActive)
             {
-                return BadRequest(new { error = "User not found" });
-            }
-
-            if (!user.IsActive)
-            {
-                return BadRequest(new { error = "Your account has been deactivated" });
+                await RecordFailureAsync(result.UserId!, user == null ? "user_not_found" : "user_deactivated", returnUrl, cancellationToken);
+                return new SignInOutcome(user == null ? "User not found." : "Your account has been deactivated.");
             }
 
             _logger.LogInformation("User {UserId} logged in via passkey", user.Id);
 
-            // Sign in the user
             await SignInUserAsync(user.Id);
+            await _userService.RecordLoginAsync(user.Id, cancellationToken);
 
-            return Ok(new { success = true, redirect = GetSafeReturnUrl(request.ReturnUrl) });
+            if (_signInAuditor != null)
+            {
+                await _signInAuditor.RecordSuccessAsync(new SignInAudit
+                {
+                    SubjectId = user.Id,
+                    Username = user.Username ?? user.Email ?? user.Id,
+                    TenantId = user.TenantId,
+                    AuthenticationMethod = AuthenticationMethod,
+                    ReturnUrl = returnUrl
+                }, cancellationToken);
+            }
+
+            return new SignInOutcome(null);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Passkey verification error");
-            return BadRequest(new { error = "An error occurred during authentication" });
+            return new SignInOutcome("An error occurred during authentication. Please try again.");
         }
     }
 
+    private Task RecordFailureAsync(string username, string reason, string returnUrl, CancellationToken cancellationToken) =>
+        _signInAuditor?.RecordFailureAsync(new SignInFailureAudit
+        {
+            Username = username,
+            FailureReason = reason,
+            ReturnUrl = returnUrl
+        }, cancellationToken) ?? Task.CompletedTask;
+
+    /// <summary>
+    /// Issues the session cookie the way a journey sign-in does (SignInManager and the claims principal factory),
+    /// stamped with how and when it signed in, so <c>max_age</c>, session MFA reuse and the tokens see a passkey.
+    /// </summary>
     private async Task SignInUserAsync(string userId)
     {
-        var user = await _userService.FindByIdAsync(userId);
-        if (user == null) return;
+        var signInManager = HttpContext.RequestServices.GetService<SignInManager<OlusoUser>>();
+        var userManager = HttpContext.RequestServices.GetService<UserManager<OlusoUser>>();
+        var identityUser = userManager == null ? null : await userManager.FindByIdAsync(userId);
+        var signInClaims = SessionAuthenticationClaims.Create(PasskeyMethods, DateTimeOffset.UtcNow);
 
+        if (signInManager != null && identityUser != null)
+        {
+            await signInManager.SignInWithClaimsAsync(identityUser, isPersistent: true, signInClaims);
+            return;
+        }
+
+        // Hosts without ASP.NET Identity: build the principal from the user service.
         var claims = (await _userService.GetClaimsAsync(userId)).ToList();
-
-        // Add tenant_id claim if in a tenant context
         if (_tenantContext?.HasTenant == true && !string.IsNullOrEmpty(_tenantContext.TenantId))
         {
             claims.RemoveAll(c => c.Type == "tenant_id");
             claims.Add(new Claim("tenant_id", _tenantContext.TenantId));
         }
+        claims.RemoveAll(c => c.Type is "amr" or "auth_time");
+        claims.AddRange(signInClaims);
 
-        var identity = new ClaimsIdentity(claims, "Oluso");
-        var principal = new ClaimsPrincipal(identity);
-
-        var authProperties = new AuthenticationProperties
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, "Oluso"));
+        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, new AuthenticationProperties
         {
             IsPersistent = true,
             ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30)
-        };
-
-        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, authProperties);
+        });
     }
 
-    private string GetSafeReturnUrl(string? returnUrl)
+    /// <summary>
+    /// Where to go after signing in. A local path, or an absolute URL on this host with its scheme (the
+    /// sign-in page links here with the authorize callback, which then checks the client's redirect_uri
+    /// exactly). Otherwise only an absolute URL that is exactly a registered redirect URI of an enabled client
+    /// in the tenant. Anything else goes home.
+    /// </summary>
+    private async Task<string> SafeReturnUrlAsync(string? returnUrl, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(returnUrl))
             return "/";
 
-        // Only allow relative URLs or same-host URLs
         if (Url.IsLocalUrl(returnUrl))
             return returnUrl;
 
-        if (Uri.TryCreate(returnUrl, UriKind.Absolute, out var uri))
+        if (Uri.TryCreate(returnUrl, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
         {
             var request = HttpContext.Request;
-            if (string.Equals(uri.Host, request.Host.Host, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(uri.Scheme, request.Scheme, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(uri.Authority, request.Host.Value, StringComparison.OrdinalIgnoreCase))
+                return returnUrl;
+
+            if (_clients != null && await _clients.IsRegisteredRedirectUriAsync(returnUrl, cancellationToken))
                 return returnUrl;
         }
 
+        _logger.LogWarning("Passkey login return URL {ReturnUrl} is not local or a registered redirect URI; using /", returnUrl);
         return "/";
     }
 
-    private static string GenerateLoginPage(string optionsJson, string? returnUrl)
+    private static string Html(string? value) => System.Net.WebUtility.HtmlEncode(value ?? string.Empty);
+
+    private static string GenerateLoginPage(string optionsJson, string returnUrl)
     {
-        var escapedReturnUrl = Uri.EscapeDataString(returnUrl ?? "/");
+        var escapedReturnUrl = Html(Uri.EscapeDataString(returnUrl));
+        var returnUrlValue = Html(returnUrl);
         return $$"""
 <!DOCTYPE html>
 <html>
@@ -305,22 +348,22 @@ public class Fido2LoginController : Controller
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
         </svg>
-        <h1>Sign in with Passkey</h1>
-        <p class="subtitle">Use your fingerprint, face, or security key</p>
+        <h1>{{UiStringDefaults.Resolve("passkey_assert_title")}}</h1>
+        <p class="subtitle">{{UiStringDefaults.Resolve("passkey_assert_description")}}</p>
 
         <div id="loading" class="status loading">
             <div class="spinner"></div>
-            Waiting for passkey...
+            {{UiStringDefaults.Resolve("passkey_assert_waiting")}}
         </div>
 
         <div id="error" class="status error hidden"></div>
 
-        <button id="retryBtn" class="btn btn-primary hidden" onclick="startAssertion()">Try Again</button>
-        <a href="/account/login?returnUrl={{escapedReturnUrl}}" class="btn btn-secondary" style="display: block;">Back to Login</a>
+        <button id="retryBtn" class="btn btn-primary hidden" onclick="startAssertion()">{{UiStringDefaults.Resolve("passkey_assert_retry")}}</button>
+        <a href="/account/login?returnUrl={{escapedReturnUrl}}" class="btn btn-secondary" style="display: block;">{{UiStringDefaults.Resolve("fido2_login_password_fallback")}}</a>
 
         <form id="verifyForm" method="post" action="/fido2/login" class="hidden">
             <input type="hidden" name="assertionResponse" id="assertionResponse" />
-            <input type="hidden" name="returnUrl" value="{{returnUrl ?? "/"}}" />
+            <input type="hidden" name="returnUrl" value="{{returnUrlValue}}" />
         </form>
     </div>
 
@@ -415,9 +458,10 @@ public class Fido2LoginController : Controller
 """;
     }
 
-    private static string GenerateErrorPage(string message, string? returnUrl)
+    private static string GenerateErrorPage(string message, string returnUrl)
     {
-        var escapedReturnUrl = Uri.EscapeDataString(returnUrl ?? "/");
+        var escapedReturnUrl = Html(Uri.EscapeDataString(returnUrl));
+        var encodedMessage = Html(message);
         return $$"""
 <!DOCTYPE html>
 <html>
@@ -468,8 +512,8 @@ public class Fido2LoginController : Controller
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
         </svg>
-        <h1>Authentication Error</h1>
-        <p class="message">{{message}}</p>
+        <h1>{{UiStringDefaults.Resolve("error_title")}}</h1>
+        <p class="message">{{encodedMessage}}</p>
         <a href="/fido2/login?returnUrl={{escapedReturnUrl}}" class="btn btn-primary">Try Again</a>
         <a href="/account/login?returnUrl={{escapedReturnUrl}}" class="btn btn-secondary">Back to Login</a>
     </div>

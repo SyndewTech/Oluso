@@ -1,0 +1,25 @@
+# Local dev reverse proxy - run with: caddy run --config Caddyfile.dev
+# Gives the backend and each portal its own HTTPS host. *.localhost names
+# resolve to 127.0.0.1 in browsers; add them to /etc/hosts for other clients.
+# Uses Caddy's internal CA for HTTPS (trust it once via: caddy trust).
+# Set Oluso:IssuerUri and the Oluso:Urls entries to these hosts when using it.
+
+{
+	local_certs
+}
+
+idp.oluso.localhost {
+	reverse_proxy localhost:5050
+}
+
+account.oluso.localhost {
+	reverse_proxy localhost:4200
+}
+
+admin.oluso.localhost {
+	reverse_proxy localhost:4201
+}
+
+workspace.oluso.localhost {
+	reverse_proxy localhost:4202
+}

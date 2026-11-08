@@ -29,6 +29,9 @@ get_context_config() {
         fido2|fido)
             echo "src/backend/Oluso.Enterprise/Fido2|samples/Oluso.Sample|Fido2DbContext"
             ;;
+        verification|kyb)
+            echo "src/backend/Oluso.Enterprise/Verification|samples/Oluso.Sample|VerificationDbContext"
+            ;;
         *)
             echo ""
             ;;
@@ -46,6 +49,7 @@ get_context_name() {
         ldap) echo "ldap" ;;
         saml) echo "saml" ;;
         fido2|fido) echo "fido2" ;;
+        verification|kyb) echo "verification" ;;
         *) echo "" ;;
     esac
 }
@@ -80,6 +84,21 @@ get_output_dir() {
     esac
 }
 
+# Lists the other migrations scripts in this repository (contexts this script doesn't know).
+print_other_migration_scripts() {
+    local repo_root self other found=""
+    repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+    self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    for other in "$repo_root"/*/scripts/migrations.sh; do
+        [ -f "$other" ] && [ "$other" != "$self" ] || continue
+        if [ -z "$found" ]; then
+            echo "For other contexts, use:"
+            found=1
+        fi
+        echo "  ./${other#"$repo_root"/}"
+    done
+}
+
 command="${1:-help}"
 
 # Determine if second arg is context or provider
@@ -94,13 +113,22 @@ else
     ctx=$(get_context_name "$2")
     if [ -n "$ctx" ]; then
         context_name="$ctx"
-        provider=$(get_provider "${3:-Sqlite}")
-        migration_name="${4:-}"
+        if [ "$command" = "add-all" ]; then
+            # add-all [context] <migration-name> — no provider arg
+            migration_name="${3:-}"
+        else
+            provider=$(get_provider "${3:-Sqlite}")
+            migration_name="${4:-}"
+        fi
     else
         # Not a context, treat as provider
         context_name="oluso"
-        provider=$(get_provider "$2")
-        migration_name="${3:-}"
+        if [ "$command" = "add-all" ]; then
+            migration_name="$2"
+        else
+            provider=$(get_provider "$2")
+            migration_name="${3:-}"
+        fi
     fi
 fi
 
@@ -109,10 +137,9 @@ config=$(get_context_config "$context_name")
 
 if [ -z "$config" ]; then
     echo "Unknown context: $context_name"
-    echo "Valid contexts: oluso, scim, ldap, saml"
+    echo "Valid contexts: oluso, scim, ldap, saml, fido2, verification"
     echo ""
-    echo "For private contexts (billing, workflows), use:"
-    echo "  ./private/scripts/migrations.sh"
+    print_other_migration_scripts
     exit 1
 fi
 
@@ -211,7 +238,7 @@ case "$command" in
         fi
 
         echo "Adding migration '$migration_name' for all public contexts ($prov)..."
-        for ctx in oluso scim ldap saml fido2; do
+        for ctx in oluso scim ldap saml fido2 verification; do
             cfg=$(get_context_config "$ctx")
             IFS='|' read -r proj start base_ctx <<< "$cfg"
             provider_ctx=$(get_provider_context "$base_ctx" "$prov")
@@ -242,7 +269,7 @@ case "$command" in
         echo "  add-all [context] <name>          Add migration for all providers"
         echo "  add-all-contexts <name>           Add migration for all contexts (SQLite)"
         echo ""
-        echo "Contexts: oluso (default), scim, ldap, saml, fido2"
+        echo "Contexts: oluso (default), scim, ldap, saml, fido2, verification"
         echo "Providers: Sqlite (default), SqlServer, Postgres"
         echo ""
         echo "Examples:"
@@ -253,7 +280,6 @@ case "$command" in
         echo "  $0 add-all-contexts Sqlite Initial # All contexts with SQLite"
         echo "  $0 list scim Sqlite                # List SCIM Sqlite migrations"
         echo ""
-        echo "For private contexts (billing, workflows), use:"
-        echo "  ./private/scripts/migrations.sh"
+        print_other_migration_scripts
         ;;
 esac

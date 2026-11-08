@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Cors.Infrastructure;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -24,6 +25,7 @@ using Oluso.Protocols.Oidc;
 using Oluso.Protocols.Routing;
 using Oluso.Protocols.Services;
 using Oluso.Protocols.Validation;
+using Oluso.Services;
 using Oluso.Storage;
 
 namespace Oluso;
@@ -33,6 +35,15 @@ namespace Oluso;
 /// </summary>
 public class OlusoBuilder
 {
+    /// <summary>HttpContext item carrying a failed sender-constraint check from token validation to the 401 challenge.</summary>
+    private const string SenderConstraintChallengeItem = "Oluso.SenderConstraintChallenge";
+
+    private static void FailSenderConstraint(TokenValidatedContext context, Protocols.SenderConstraint.SenderConstraintFailure failure)
+    {
+        context.HttpContext.Items[SenderConstraintChallengeItem] = failure;
+        context.Fail(failure.Description);
+    }
+
     public IServiceCollection Services { get; }
     public IConfiguration Configuration { get; }
     internal OlusoOptions Options { get; } = new();
@@ -45,8 +56,20 @@ public class OlusoBuilder
         Services = services;
         Configuration = configuration;
 
+        // Public-asset serving/resizing config (provider-agnostic) — bound here so
+        // the public file endpoints can resolve it regardless of storage provider.
+        Services.AddOptions<Core.Storage.PublicAssetOptions>()
+            .BindConfiguration(Core.Storage.PublicAssetOptions.SectionName);
+
+        // Public-asset allowlist — core owns only its own prefixes; modules
+        // contribute the rest via IPublicAssetPathProvider (collected here).
+        Services.AddSingleton<Core.Storage.IPublicAssetPathRegistry, Core.Storage.PublicAssetPathRegistry>();
+
         // Core protocol services
         Services.AddScoped<IAuthenticationCoordinator, AuthenticationCoordinator>();
+        Services.AddScoped<ISessionHintMatcher, SessionHintMatcher>();
+        Services.AddScoped<Protocols.IConsentDecisions, Protocols.ConsentDecisions>();
+        Services.AddScoped<Protocols.Device.IDeviceVerificationService, Protocols.Device.DeviceVerificationService>();
         Services.AddSingleton<IProtocolStateStore, InMemoryProtocolStateStore>();
 
         // Plugin registry - collects all managed plugins
@@ -55,18 +78,73 @@ public class OlusoBuilder
         // Tenant settings provider (can be overridden by user)
         Services.TryAddScoped<ITenantSettingsProvider, DefaultTenantSettingsProvider>();
 
-        // Issuer resolver - centralized issuer URI resolution for multi-tenancy
-        Services.TryAddScoped<IIssuerResolver, Services.IssuerResolver>();
+        // Issuer resolver and custom-domain DNS verification (shared with headless hosts)
+        Services.AddOlusoTenantHostServices();
+
+        // Custom domain activation
+        Services.TryAddScoped<Core.Services.ICustomDomainActivationService, Core.Services.CustomDomainActivationService>();
+
+        // Redeems organization invitation links (/account/accept-invitation)
+        Services.TryAddScoped<Core.Services.IOrganizationInvitationService, Core.Services.OrganizationInvitationService>();
+
+        // Custom domains finalise asynchronously — the edge provider issues the
+        // certificate minutes after the hostname is submitted, so activation
+        // can't complete on the request that verified DNS. These sweeps are the
+        // only thing that moves a domain from Verified to Active unattended.
+        Services.AddHostedService<Jobs.DomainVerificationBackgroundService>();
+        Services.AddHostedService<Jobs.DomainRevalidationBackgroundService>();
+
+        // Signing keys expire on a schedule nobody watches: this pass rotates
+        // ahead of expiry, marks expired keys, and keeps caches coherent so an
+        // expired or rotated key never strands a session.
+        Services.AddHostedService<Jobs.SigningKeyMaintenanceBackgroundService>();
+        // Expired grants, sessions and PAR requests are swept on the same hourly pass
+        // (and by the same maintenance callback), so the tables stop growing forever.
+        Services.TryAddScoped<Core.Services.IExpiredRecordsPurger, Services.ExpiredRecordsPurger>();
+        // Every interactive sign-in path (standalone pages, external callback, passkeys,
+        // journey completion) reports through one auditor so the audit log and dashboard
+        // see all of them, not just the local-login journey step.
+        Services.TryAddScoped<Core.Services.ISignInAuditor, Services.SignInAuditor>();
 
         // Claims provider registry - automatically collects claims from enabled plugins
         Services.TryAddScoped<IClaimsProviderRegistry, ClaimsProviderRegistry>();
 
+        // Emits token claims from a client's allowlisted custom /authorize parameters
+        Services.AddScoped<Core.Domain.Interfaces.IClaimsProvider, Core.Services.AuthorizeParameterClaimsProvider>();
+
+        // Shared by the profile service and the ID-token builder so both agree
+        // on which claim types an identity scope releases.
+        Services.TryAddScoped<Core.Services.IIdentityScopeClaimResolver, Core.Services.IdentityScopeClaimResolver>();
+
+        // Journey step secrets: the step-type schema marks which config fields
+        // are credentials; these encrypt them at rest and redact them on read.
+        // Scoped, not singleton: it reads IExtendedStepHandlerRegistry, which is
+        // scoped, so a singleton would be a captive-dependency violation.
+        Services.TryAddScoped<Core.UserJourneys.IJourneyStepSecretResolver, Core.UserJourneys.JourneyStepSecretResolver>();
+        Services.TryAddScoped<Core.UserJourneys.IJourneyStepSecretProtector, Core.UserJourneys.JourneyStepSecretProtector>();
+
         // Profile service - uses claims provider registry
         Services.TryAddScoped<IProfileService, DefaultProfileService>();
 
+        // Which tenant a token is for, and whether the routed tenant may issue it (authorize and token endpoints).
+        Services.TryAddScoped<Core.Services.ITokenTenantResolver, Core.Services.TokenTenantResolver>();
+        Services.TryAddScoped<Core.Services.IClientUserAccess, Core.Services.ClientUserAccess>();
+
+        // Scopes that require a tenant feature (ApiScope property required_feature) are issued only while the
+        // routed tenant has it on.
+        Services.TryAddScoped<Core.Services.IScopeFeatureGate, Core.Services.ScopeFeatureGate>();
+
         // Dynamic CORS policy provider - checks client origins + app config
         Services.TryAddSingleton<ICorsPolicyProvider, Services.OlusoCorsPolicyProvider>();
-        Services.TryAddSingleton<Services.ICorsOriginsCacheInvalidator, Services.CorsOriginsCacheInvalidator>();
+        Services.TryAddSingleton<Oluso.Core.Services.ICorsOriginsCacheInvalidator, Services.CorsOriginsCacheInvalidator>();
+
+        // Signed journey launch links: context for the calling app, and a return address
+        // limited to the tenant's host and its registered app origins.
+        Services.TryAddScoped<Oluso.Core.Services.ITenantAppOrigins, Services.TenantAppOrigins>();
+        Services.TryAddScoped<Core.UserJourneys.IJourneyLaunchTokenService, Core.UserJourneys.JourneyLaunchTokenService>();
+        Services.TryAddScoped<Core.UserJourneys.IJourneyStepForms, Core.UserJourneys.JourneyStepForms>();
+        Services.AddHttpContextAccessor();
+        Services.TryAddScoped<Core.UserJourneys.IHeadlessJourneySessions, Core.UserJourneys.HeadlessJourneySessions>();
     }
 
     /// <summary>
@@ -223,6 +301,17 @@ public class OlusoBuilder
     }
 
     /// <summary>
+    /// Add local file system storage with sensible defaults.
+    /// Uses "./storage" directory relative to the application base path.
+    /// Ideal for development scenarios.
+    /// </summary>
+    public OlusoBuilder AddLocalFileStorage()
+    {
+        var defaultPath = Path.Combine(AppContext.BaseDirectory, "storage");
+        return AddLocalFileStorage(defaultPath);
+    }
+
+    /// <summary>
     /// Add database-backed plugin store with file storage.
     /// Metadata is stored in the database for queryable access,
     /// plugin bytes are stored using the registered IFileUploader.
@@ -231,6 +320,24 @@ public class OlusoBuilder
     public OlusoBuilder AddDatabasePluginStore()
     {
         Services.AddScoped<IPluginStore, DatabasePluginStore>();
+        return this;
+    }
+
+    /// <summary>
+    /// Add plugin hook system for executing WASM plugins in response to domain events.
+    /// Requires AddDatabasePluginStore() or AddFileSystemPluginStore() to be called first.
+    /// </summary>
+    public OlusoBuilder AddPluginHooks()
+    {
+        // Plugin hook stores
+        Services.AddScoped<Core.Plugins.IPluginHookStore, PluginHookStore>();
+        Services.AddScoped<Core.Plugins.IPluginExecutionLogger, PluginExecutionLogStore>();
+        Services.AddScoped<PluginNetworkConfigStore>();
+        Services.AddScoped<PluginConfigOverrideStore>();
+
+        // Plugin hook runtime
+        Services.AddScoped<Core.Plugins.IPluginHookRuntime, Core.Plugins.PluginHookRuntime>();
+
         return this;
     }
 
@@ -269,6 +376,10 @@ public class OlusoBuilder
 
         Services.AddScoped<IOidcProtocolService, OidcProtocolService>();
 
+        // One issuer for codes returned to a page instead of a redirect (SDK passkey, embedded and headless
+        // journeys, FedCM): authorize-endpoint client rules, then the authorize endpoint's code shape.
+        Services.AddScoped<Core.Protocols.IAuthorizationCodeIssuer, Protocols.AuthorizationCodeIssuer>();
+
         // Register validators
         Services.AddScoped<IPkceValidator, PkceValidator>();
         Services.AddScoped<IScopeValidator, ScopeValidator>();
@@ -278,9 +389,28 @@ public class OlusoBuilder
         Services.AddScoped<ITokenRequestValidator, TokenRequestValidator>();
         Services.AddScoped<IBearerTokenValidator, BearerTokenValidator>();
 
+        // Register mTLS services (RFC 8705)
+        Services.AddSingleton(Options.Mtls);
+        Services.AddSingleton<Protocols.Mtls.IClientCertificateExtractor>(sp =>
+            new Protocols.Mtls.ClientCertificateExtractor(
+                Options.Mtls,
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Protocols.Mtls.ClientCertificateExtractor>>()));
+
         // Register DPoP services
+        // Replay cache for proof jti values: atomic in this process, shared through Redis when a Redis
+        // connection string is configured (same one the realtime backplane uses).
+        Services.TryAddSingleton<IDPoPReplayCache>(sp =>
+        {
+            var configuration = sp.GetRequiredService<IConfiguration>();
+            var redis = configuration.GetConnectionString("RealtimeRedis") ?? configuration.GetConnectionString("Redis");
+            return string.IsNullOrWhiteSpace(redis)
+                ? new LocalDPoPReplayCache(sp.GetService<Microsoft.Extensions.Caching.Distributed.IDistributedCache>())
+                : new RedisDPoPReplayCache(redis);
+        });
         Services.AddSingleton<IDPoPNonceStore, InMemoryDPoPNonceStore>();
         Services.AddScoped<IDPoPProofValidator, DPoPProofValidator>();
+        Services.AddScoped<IDPoPResourceValidator, DPoPResourceValidator>();
+        Services.AddSingleton<Protocols.Mtls.ICertificateBoundTokenValidator, Protocols.Mtls.CertificateBoundTokenValidator>();
 
         // Register grant handlers
         Services.AddScoped<IGrantHandler, AuthorizationCodeGrantHandler>();
@@ -294,19 +424,68 @@ public class OlusoBuilder
 
         // Register token service
         Services.AddScoped<ITokenService, TokenService>();
+        Services.AddScoped<IAudienceResolver, AudienceResolver>();
+        Services.AddScoped<IClientUsageRecorder, ClientUsageRecorder>();
 
         // Register CIBA services
         Services.AddScoped<ICibaService, Protocols.Ciba.CibaService>();
-        Services.TryAddScoped<ICibaUserNotificationService, Services.DefaultCibaUserNotificationService>();
+        Services.TryAddScoped<ICibaUserNotificationService, Protocols.Ciba.CibaUserNotificationService>();
+        // Delivery order matters: email checks whether push already reached the user.
+        Services.AddScoped<ICibaNotificationChannel, Protocols.Ciba.CibaRealtimeNotificationChannel>();
+        Services.AddScoped<ICibaNotificationChannel, Protocols.Ciba.CibaPushNotificationChannel>();
+        Services.AddScoped<ICibaNotificationChannel, Protocols.Ciba.CibaEmailNotificationChannel>();
 
         // Register backchannel logout services
-        Services.AddScoped<IBackchannelLogoutService, Services.BackchannelLogoutService>();
+        Services.AddScoped<Services.BackchannelLogoutService>();
+        Services.AddScoped<IBackchannelLogoutService>(sp => sp.GetRequiredService<Services.BackchannelLogoutService>());
+        Services.AddScoped<IResourceServerLogoutNotifier>(sp => sp.GetRequiredService<Services.BackchannelLogoutService>());
+        Services.AddOptions<ResourceServerLogoutOptions>();
         Services.AddScoped<ILogoutTokenGenerator, Services.LogoutTokenGenerator>();
 
         // Register JWT bearer authentication for API endpoints (UserInfo, etc.)
         // This uses dynamic key resolution from ISigningCredentialStore and validates
-        // issuer/audience dynamically based on configuration and tenant settings
+        // issuer/audience dynamically based on configuration and tenant settings.
+        //
+        // The "Oluso.Smart" policy scheme is wired up as the default authenticate
+        // scheme (set in EntityFrameworkExtensions.RestoreOlusoSmartScheme, after
+        // AddIdentity). It forwards each request to either the JWT bearer scheme
+        // (if an Authorization header is present) or the Identity cookie scheme
+        // (otherwise). Without this, app.UseAuthentication() never populated
+        // HttpContext.User for bearer-token requests, so TenantResolutionMiddleware
+        // saw isAuthenticated=false and silently skipped ValidateAuthenticatedAccess
+        // — letting any user pass an X-Tenant-Id header and switch tenant context.
         Services.AddAuthentication()
+            .AddPolicyScheme("Oluso.Smart", "Oluso.Smart", options =>
+            {
+                options.ForwardDefaultSelector = ctx =>
+                {
+                    // Realtime hub opened with a ticket rather than an access token.
+                    if (Realtime.HubTicketAuthenticationHandler.TicketFrom(ctx.Request) != null)
+                        return Realtime.HubTicketAuthenticationHandler.SchemeName;
+
+                    // Bearer header — the regular API path. Forward to JWT.
+                    if (ctx.Request.Headers.ContainsKey("Authorization"))
+                        return OidcConstants.AccessTokenAuthenticationScheme;
+
+                    // SignalR WS / SSE upgrade — browsers can't set the
+                    // Authorization header on a WebSocket upgrade, so the
+                    // client puts the bearer in ?access_token=… instead.
+                    // Forward to JWT so JwtBearer's OnMessageReceived lifts
+                    // the token out of the query string and Context.User
+                    // ends up populated for OnConnectedAsync (sub, tenant_id,
+                    // etc.). Without this branch the selector would fall
+                    // through to the cookie scheme and the hub connection
+                    // would join no user-group, silently dropping every
+                    // targeted broadcast.
+                    if (ctx.Request.Path.StartsWithSegments("/hubs")
+                        && !string.IsNullOrEmpty(ctx.Request.Query["access_token"]))
+                        return OidcConstants.AccessTokenAuthenticationScheme;
+
+                    return Microsoft.AspNetCore.Identity.IdentityConstants.ApplicationScheme;
+                };
+            })
+            .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, Realtime.HubTicketAuthenticationHandler>(
+                Realtime.HubTicketAuthenticationHandler.SchemeName, configureOptions: null)
             .AddJwtBearer(OidcConstants.AccessTokenAuthenticationScheme, options =>
             {
                 // Disable inbound claim type mapping to preserve original JWT claim names (e.g., "sub" stays "sub")
@@ -331,7 +510,10 @@ public class OlusoBuilder
                     },
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
-                    ClockSkew = TimeSpan.FromMinutes(1)
+                    ClockSkew = TimeSpan.FromMinutes(1),
+                    // Our signing keys also sign JWTs that are not access tokens (token-exchange tickets,
+                    // logout tokens); those are refused here by their typ.
+                    TypeValidator = AccessTokenTypes.Validate
                 };
 
                 // Use events to dynamically resolve signing keys and validate issuer/audience
@@ -339,31 +521,50 @@ public class OlusoBuilder
                 {
                     OnTokenValidated = async context =>
                     {
-                        var issuerResolver = context.HttpContext.RequestServices
-                            .GetService<IIssuerResolver>();
+                        var configuration = context.HttpContext.RequestServices
+                            .GetRequiredService<IConfiguration>();
                         var clientStore = context.HttpContext.RequestServices
                             .GetService<IClientStore>();
                         var loggerFactory = context.HttpContext.RequestServices
                             .GetService<Microsoft.Extensions.Logging.ILoggerFactory>();
                         var logger = loggerFactory?.CreateLogger("Oluso.AccessToken");
 
-                        // Validate issuer using centralized resolver
-                        var expectedIssuer = issuerResolver != null
-                            ? await issuerResolver.GetIssuerAsync()
-                            : $"{context.Request.Scheme}://{context.Request.Host}".TrimEnd('/');
-
+                        // Accept any iss that's ours: the configured base URL,
+                        // or any subdomain of it (per-tenant subdomain auto-
+                        // issuer). Pattern-based instead of strict-equality so
+                        // a SPA on one host can use a token minted on another
+                        // (e.g. SSO on tenant subdomain, API call on platform).
+                        // Signature check still gates everything — a forged
+                        // iss with the right pattern but wrong signature 401s.
+                        // Ours means minted here: the base issuer, a tenant subdomain, or the
+                        // token's own tenant's custom domain / issuer override.
+                        var services = context.HttpContext.RequestServices;
                         var tokenIssuer = context.Principal?.FindFirst("iss")?.Value;
-                        if (!string.Equals(tokenIssuer, expectedIssuer, StringComparison.OrdinalIgnoreCase))
+                        var tokenTenantId = context.Principal?.FindFirst("tenant_id")?.Value;
+                        var tenantStore = services.GetService<ITenantStore>();
+                        var tokenTenant = string.IsNullOrEmpty(tokenTenantId) || tenantStore == null
+                            ? null
+                            : await tenantStore.GetByIdAsync(tokenTenantId, context.HttpContext.RequestAborted);
+                        var issuerAccepted = await services.GetRequiredService<IIssuerResolver>()
+                            .IsOwnIssuerAsync(tokenIssuer, tokenTenant, context.HttpContext.RequestAborted);
+                        if (!issuerAccepted)
                         {
-                            logger?.LogWarning("Issuer mismatch: expected '{Expected}', got '{Actual}'",
-                                expectedIssuer, tokenIssuer);
-                            context.Fail($"Invalid issuer: expected '{expectedIssuer}'");
+                            logger?.LogWarning("Unknown issuer: '{Actual}' (tenant {TenantId})", tokenIssuer, tokenTenantId);
+                            // A token exception, so the 401's WWW-Authenticate names the issuer.
+                            context.Fail(new SecurityTokenInvalidIssuerException($"The issuer '{tokenIssuer}' isn't one of this server's issuers.")
+                            {
+                                InvalidIssuer = tokenIssuer
+                            });
                             return;
                         }
 
-                        // Validate audience - the token's aud claim should match a valid client
-                        var tokenAudience = context.Principal?.FindFirst("aud")?.Value
-                            ?? context.Principal?.FindFirst("client_id")?.Value;
+                        // Validate audience - one of the token's aud values should be a valid client (a token
+                        // whose scopes span several APIs lists each one's audience, Oluṣọ's own being the client).
+                        var audiences = context.Principal?.FindAll("aud").Select(c => c.Value).Where(v => !string.IsNullOrEmpty(v)).ToList()
+                            ?? new List<string>();
+                        if (audiences.Count == 0 && context.Principal?.FindFirst("client_id")?.Value is { Length: > 0 } clientIdClaim)
+                            audiences.Add(clientIdClaim);
+                        var tokenAudience = audiences.FirstOrDefault();
 
                         if (string.IsNullOrEmpty(tokenAudience))
                         {
@@ -372,28 +573,118 @@ public class OlusoBuilder
                             return;
                         }
 
-                        // Verify the audience is a valid client in the system
+                        // Verify the audience is a valid, enabled client. This runs on
+                        // EVERY authenticated API call — keep it cheap. IsClientEnabledAsync
+                        // does a one-column projection on the (TenantId, ClientId) unique
+                        // index, no Includes, no cartesian explosion.
                         if (clientStore != null)
                         {
-                            var client = await clientStore.FindClientByIdAsync(tokenAudience);
-                            if (client == null || !client.Enabled)
+                            bool? enabled = null;
+                            foreach (var audience in audiences)
+                            {
+                                enabled = await clientStore.IsClientEnabledAsync(audience);
+                                if (enabled == true)
+                                {
+                                    tokenAudience = audience;
+                                    break;
+                                }
+                            }
+                            if (enabled != true)
                             {
                                 logger?.LogWarning("Invalid audience: client '{ClientId}' not found or disabled",
                                     tokenAudience);
-                                context.Fail($"Invalid audience: client '{tokenAudience}' not found or disabled");
+                                context.Fail(new SecurityTokenInvalidAudienceException(
+                                    $"Invalid audience: client '{tokenAudience}' not found or disabled")
+                                {
+                                    InvalidAudience = tokenAudience
+                                });
                                 return;
                             }
                         }
+
+                        // A sender-constrained token is usable only by the holder of what it is bound to:
+                        // a DPoP key (cnf.jkt, RFC 9449 §7), never as a bearer token, and a client
+                        // certificate (cnf.x5t#S256, RFC 8705 §3).
+                        var confirmation = Oluso.Core.Protocols.SenderConstraint.TokenConfirmation.Parse(context.Principal?.FindFirst("cnf")?.Value);
+                        var presented = PresentedAccessToken.FromAuthorizationHeader(context.Request.Headers.Authorization);
+                        var rawToken = context.SecurityToken switch
+                        {
+                            Microsoft.IdentityModel.JsonWebTokens.JsonWebToken jwt => jwt.EncodedToken,
+                            System.IdentityModel.Tokens.Jwt.JwtSecurityToken jwt => jwt.RawData,
+                            _ => presented?.Token,
+                        };
+                        var dpop = await services.GetRequiredService<IDPoPResourceValidator>().ValidateAsync(
+                            context.Request, presented?.Scheme, rawToken ?? string.Empty, confirmation.Jkt,
+                            context.HttpContext.RequestAborted);
+                        if (!dpop.IsValid)
+                        {
+                            logger?.LogWarning("DPoP check failed: {Error} {Description}", dpop.Error, dpop.ErrorDescription);
+                            FailSenderConstraint(context, new Protocols.SenderConstraint.SenderConstraintFailure(
+                                PresentedAccessToken.DPoPScheme, dpop.Error ?? "invalid_token",
+                                dpop.ErrorDescription ?? "DPoP validation failed", dpop.ServerNonce));
+                            return;
+                        }
+
+                        var certificateProblem = services.GetRequiredService<Protocols.Mtls.ICertificateBoundTokenValidator>()
+                            .Problem(context.HttpContext, confirmation.CertificateThumbprint);
+                        if (certificateProblem != null)
+                        {
+                            logger?.LogWarning("Certificate-bound token check failed: {Description}", certificateProblem);
+                            FailSenderConstraint(context, new Protocols.SenderConstraint.SenderConstraintFailure(
+                                presented?.Scheme ?? PresentedAccessToken.BearerScheme, "invalid_token", certificateProblem));
+                        }
+                    },
+                    OnChallenge = context =>
+                    {
+                        if (context.HttpContext.Items[SenderConstraintChallengeItem] is not Protocols.SenderConstraint.SenderConstraintFailure failure)
+                            return Task.CompletedTask;
+                        context.HandleResponse();
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        context.Response.Headers.WWWAuthenticate =
+                            $"{failure.Scheme} error=\"{failure.Error}\", error_description=\"{failure.Description.Replace("\"", "'")}\"";
+                        if (!string.IsNullOrEmpty(failure.Nonce))
+                            context.Response.Headers["DPoP-Nonce"] = failure.Nonce;
+                        return Task.CompletedTask;
                     },
                     OnMessageReceived = async context =>
                     {
-                        // Get signing keys from the credential store
+                        // JwtBearer reads only "Authorization: Bearer"; a DPoP-scheme token is read here.
+                        if (PresentedAccessToken.FromAuthorizationHeader(context.Request.Headers.Authorization) is { IsDPoP: true } dpopToken)
+                            context.Token = dpopToken.Token;
+
+                        // SignalR WebSocket auth: browsers can't set the
+                        // Authorization header on a WebSocket upgrade, so
+                        // the SignalR client passes the bearer in the
+                        // query string. Move it onto context.Token so
+                        // JwtBearer validates it like any other request.
+                        // Restricted to /hubs/ paths so this never picks
+                        // up unrelated callers' query strings.
+                        // Only when no Authorization header was sent: a header token is the one the
+                        // DPoP/mTLS checks look at, so a query token must never replace it.
+                        var path = context.HttpContext.Request.Path;
+                        if (path.StartsWithSegments("/hubs") && !context.Request.Headers.ContainsKey("Authorization"))
+                        {
+                            var qsToken = context.Request.Query["access_token"];
+                            if (!string.IsNullOrEmpty(qsToken))
+                            {
+                                context.Token = qsToken;
+                            }
+                        }
+
+                        // Signing key lookup: BearerTokenTenantResolverMiddleware
+                        // has already set ITenantContext from the token's
+                        // tenant_id claim before this fires, so the credential
+                        // store returns keys for the right tenant via the plain
+                        // GetValidationKeysAsync — no peek needed here.
                         var credentialStore = context.HttpContext.RequestServices
                             .GetService<ISigningCredentialStore>();
 
                         if (credentialStore != null)
                         {
-                            var keys = await credentialStore.GetValidationKeysAsync();
+                            // A token signed by a key this instance has not cached yet
+                            // (rotated elsewhere) triggers one refresh instead of a 401.
+                            var keys = await credentialStore.GetValidationKeysAsync(
+                                tenantId: null, requiredKeyId: Keys.TokenKeyIdReader.Read(context));
                             context.Options.TokenValidationParameters.IssuerSigningKeys =
                                 keys.Select(k => k.Key);
                         }
@@ -425,6 +716,15 @@ public class OlusoBuilder
 
         return this;
     }
+
+    /// <summary>
+    /// Pattern-based iss acceptance. A token's issuer is "ours" when it
+    /// matches the configured base URL exactly, or is a single-label
+    /// subdomain of that base on the same scheme + port (the
+    /// per-tenant auto-issuer shape). Signature validation still
+    /// gates the request — this is only the safety check that the
+    /// claim was minted by something we recognise.
+    /// </summary>
 }
 
 /// <summary>
@@ -438,6 +738,8 @@ public static class OlusoMvcExtensions
     /// </summary>
     public static IMvcBuilder ApplyOlusoConventions(this IMvcBuilder mvcBuilder, OlusoBuilder olusoBuilder)
     {
+        mvcBuilder.AddMvcOptions(options => options.Filters.Add<Oluso.Core.Locale.TenantCurrencyNotSetExceptionFilter>());
+
         // Apply MVC option configurations (route conventions)
         foreach (var config in olusoBuilder.MvcOptionConfigurations)
         {
@@ -468,14 +770,51 @@ public class OlusoOptions
     public string? IssuerUri { get; set; }
 
     /// <summary>
+    /// Absolute base URL of the workspace SPA (e.g. <c>https://app.myapp.com</c>).
+    /// Used to build user-facing links — currently magic-link decide URLs
+    /// pushed into approval emails. Falls back to <see cref="IssuerUri"/>
+    /// when unset, which is correct for single-host deployments.
+    /// </summary>
+    public string? WorkspaceBaseUrl { get; set; }
+
+    /// <summary>
     /// Enable automatic database migrations on startup
     /// </summary>
     public bool AutoMigrate { get; set; } = true;
 
     /// <summary>
+    /// Run the hourly signing key maintenance pass (mark expired keys, rotate ahead
+    /// of expiry, clean up) inside this host. Turn off when a scheduler triggers it
+    /// through <c>POST api/system/maintenance/signing-keys</c> instead; both paths
+    /// are idempotent, so leaving it on alongside the callback is safe.
+    /// </summary>
+    public bool RunSigningKeyMaintenanceInProcess { get; set; } = true;
+
+    /// <summary>
+    /// Run the custom domain and email domain checks (pending verification every
+    /// 5 minutes, revalidation of verified domains hourly) inside this host. The
+    /// checks are not designed to run concurrently, so with several instances
+    /// leave this on in exactly one of them and turn it off in the rest.
+    /// </summary>
+    public bool RunDomainChecksInProcess { get; set; } = true;
+
+    /// <summary>
+    /// Offer "Sign in with your organisation" on the platform login pages
+    /// (<c>Oluso:EnableOrganizationSignIn</c>). The user enters a tenant identifier
+    /// and is handed to that tenant's own login, then returned to the platform
+    /// signed in. Each tenant can still opt out (<c>Tenant.AllowPlatformOrgSignIn</c>).
+    /// </summary>
+    public bool EnableOrganizationSignIn { get; set; } = true;
+
+    /// <summary>
     /// Token lifetimes
     /// </summary>
     public TokenOptions Tokens { get; set; } = new();
+
+    /// <summary>
+    /// Mutual TLS (mTLS) client authentication settings (RFC 8705).
+    /// </summary>
+    public Core.Protocols.MtlsOptions Mtls { get; set; } = new();
 
     /// <summary>
     /// Password policy (deprecated - use tenant-specific password policies instead).

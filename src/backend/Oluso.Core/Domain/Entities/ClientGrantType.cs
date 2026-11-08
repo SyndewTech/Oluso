@@ -1,6 +1,6 @@
 namespace Oluso.Core.Domain.Entities;
 
-public class ClientGrantType
+public class ClientGrantType : TenantEntity
 {
     public int Id { get; set; }
     public int ClientId { get; set; }

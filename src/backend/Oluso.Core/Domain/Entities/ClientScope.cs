@@ -1,6 +1,6 @@
 namespace Oluso.Core.Domain.Entities;
 
-public class ClientScope
+public class ClientScope : TenantEntity
 {
     public int Id { get; set; }
     public int ClientId { get; set; }

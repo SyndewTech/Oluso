@@ -17,7 +17,7 @@ namespace Oluso.Enterprise.Saml.Migrations.SqlServer
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.22")
+                .HasAnnotation("ProductVersion", "10.0.5")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -87,6 +87,9 @@ namespace Oluso.Enterprise.Saml.Migrations.SqlServer
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("RequireSignedAuthnRequests")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RequireVerifiedEmail")
                         .HasColumnType("bit");
 
                     b.Property<bool>("SignAssertions")

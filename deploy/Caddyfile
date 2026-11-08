@@ -1,0 +1,76 @@
+# Oluso Edge Router
+#
+# Single-origin path routing - no CORS, no per-app domains.
+# - /admin/*     → admin-standalone SPA  (static)
+# - /workspace/* → workspace-standalone SPA (static)
+# - /account/*   → account-standalone SPA (static), except the sign-in pages
+# - everything else → oluso backend (API, OIDC, /connect/*, Razor pages, SAML, SCIM, etc.)
+#
+# HTTPS uses Caddy's internal CA for local dev. You'll see a browser warning
+# on first visit until you trust Caddy's root cert on your machine (docs/docker.md
+# shows how). For production, swap the site address for your real hostname and
+# Caddy will obtain a public cert automatically.
+
+{
+    # Local dev: Caddy's internal CA. Replace with your ACME email for prod.
+    local_certs
+}
+
+# 'localhost' auto-listens on 443 (HTTPS via internal CA) AND 80 (plain HTTP,
+# no redirect - keeps things working if a user lands on http://). Add more
+# hostnames (127.0.0.1, host.docker.internal) comma-separated if you hit
+# this from other names during dev.
+localhost {
+    tls internal
+    # Redirect bare /<app> to /<app>/ so the prefix matcher below always
+    # sees a trailing slash (matches how Angular's base-href is formatted).
+    redir /admin /admin/ permanent
+    redir /workspace /workspace/ permanent
+    redir /account /account/ permanent
+
+    # Shared SPA handler - try the exact file, then fall back to index.html
+    # for SPA client-side routes like /admin/users/123.
+    @spa_admin path /admin/*
+    handle @spa_admin {
+        uri strip_prefix /admin
+        root * /srv/admin
+        try_files {path} /index.html
+        file_server
+    }
+
+    @spa_workspace path /workspace/*
+    handle @spa_workspace {
+        uri strip_prefix /workspace
+        root * /srv/workspace
+        try_files {path} /index.html
+        file_server
+    }
+
+    # The sign-in pages live under /account too but are served by the backend
+    # (Razor pages in Oluso.UI); only the remaining /account/* routes are the SPA's.
+    @oluso_account path /account/login* /account/register* /account/consent* /account/forgot-password* /account/reset-password* /account/accept-invitation* /account/direct-login* /account/external-callback* /account/external-register* /account/org-signin* /account/org-handoff*
+    handle @oluso_account {
+        reverse_proxy oluso:5050 {
+            header_up Host {hostport}
+            header_up X-Forwarded-Host {hostport}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    @spa_account path /account/*
+    handle @spa_account {
+        uri strip_prefix /account
+        root * /srv/account
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Everything else → backend.
+    handle {
+        reverse_proxy oluso:5050 {
+            header_up Host {hostport}
+            header_up X-Forwarded-Host {hostport}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+}

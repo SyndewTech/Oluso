@@ -5,29 +5,39 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Protocols;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Oluso.UI.ViewModels;
+using Microsoft.AspNetCore.RateLimiting;
+using Oluso.Core.Security;
 
 namespace Oluso.UI.Pages.Account;
 
 /// <summary>
 /// Standalone registration page for non-journey authentication flows
 /// </summary>
+[EnableRateLimiting(SignInRateLimitPolicies.SignIn)]
 public class RegisterModel : PageModel
 {
     private readonly IOlusoUserService _userService;
+    private readonly IProtocolStateStore _protocolStateStore;
     private readonly ITenantContext? _tenantContext;
+    private readonly ISignInAuditor? _signInAuditor;
     private readonly ILogger<RegisterModel> _logger;
 
     public RegisterModel(
         IOlusoUserService userService,
+        IProtocolStateStore protocolStateStore,
         ILogger<RegisterModel> logger,
-        ITenantContext? tenantContext = null)
+        ITenantContext? tenantContext = null,
+        ISignInAuditor? signInAuditor = null)
     {
         _userService = userService;
+        _protocolStateStore = protocolStateStore;
         _tenantContext = tenantContext;
         _logger = logger;
+        _signInAuditor = signInAuditor;
     }
 
     [BindProperty]
@@ -39,18 +49,63 @@ public class RegisterModel : PageModel
     public string? ErrorMessage { get; set; }
     public Dictionary<string, string> ValidationErrors { get; set; } = new();
     public bool RequireUsername { get; set; } = false;
-    public bool RequireTermsAcceptance { get; set; } = true;
+    // RequireTermsAcceptance / TermsUrl / PrivacyUrl are bound from the
+    // tenant on every render so admins set them once at the tenant level
+    // and the standalone register page mirrors the journey signup step's
+    // behaviour. Defaults match a permissive tenant (false / null).
+    public bool RequireTermsAcceptance { get; set; }
+    public string? TermsUrl { get; set; }
+    public string? PrivacyUrl { get; set; }
     public IList<ExternalProviderViewModel>? ExternalProviders { get; set; }
     public JourneyUiConfiguration? UiConfig { get; set; }
 
+    /// <summary>
+    /// Pulls the tenant-level registration settings into the page model so
+    /// the view and the POST validator share one source of truth. Called
+    /// from both OnGet and OnPost — OnPost can't trust BindProperty because
+    /// these aren't form-posted, they come from <see cref="ITenantContext"/>.
+    /// </summary>
+    private void BindTenantRegistrationSettings()
+    {
+        var tenant = _tenantContext?.Tenant;
+        if (tenant == null) return;
+        RequireTermsAcceptance = tenant.RequireTermsAcceptance;
+        TermsUrl = tenant.TermsOfServiceUrl;
+        PrivacyUrl = tenant.PrivacyPolicyUrl;
+    }
+
     public async Task<IActionResult> OnGetAsync()
     {
+        // /Account/Register is the standalone-mode UI for an in-flight
+        // protocol flow — never directly navigable.
+        if (!await AuthFlowGate.HasActiveFlowAsync(_protocolStateStore, ReturnUrl))
+        {
+            _logger.LogWarning("Direct access to /Account/Register rejected (no protocol flow in flight). ReturnUrl={ReturnUrl}", ReturnUrl);
+            return NotFound();
+        }
+
+        // Check if self-registration is allowed for this tenant
+        if (_tenantContext?.Tenant?.AllowSelfRegistration == false)
+        {
+            _logger.LogWarning("Registration attempt blocked - self-registration is disabled for tenant");
+            return RedirectToPage("/Account/Login", new { ReturnUrl, error = "registration_disabled" });
+        }
+
+        BindTenantRegistrationSettings();
         await LoadExternalProvidersAsync();
         return Page();
     }
 
     public async Task<IActionResult> OnPostAsync()
     {
+        // Check if self-registration is allowed for this tenant
+        if (_tenantContext?.Tenant?.AllowSelfRegistration == false)
+        {
+            _logger.LogWarning("Registration POST blocked - self-registration is disabled for tenant");
+            return RedirectToPage("/Account/Login", new { ReturnUrl, error = "registration_disabled" });
+        }
+
+        BindTenantRegistrationSettings();
         await LoadExternalProvidersAsync();
 
         // Validate input
@@ -61,6 +116,13 @@ public class RegisterModel : PageModel
         else if (!IsValidEmail(Input.Email))
         {
             ValidationErrors["email"] = "Please enter a valid email address";
+        }
+        else if (!IsEmailDomainAllowed(Input.Email))
+        {
+            // Tenant-level allowlist — when set, registration is restricted
+            // to the listed domains. Mirrors the journey SignUpStepHandler
+            // domain check so both surfaces enforce the same policy.
+            ValidationErrors["email"] = "Registrations from this email domain are not allowed.";
         }
 
         if (RequireUsername && string.IsNullOrWhiteSpace(Input.Username))
@@ -103,22 +165,26 @@ public class RegisterModel : PageModel
             return Page();
         }
 
-        // Create user
+        // Create user. RequireEmailVerification flows from the tenant
+        // setting so admins can flip "verify after sign-up" on/off without
+        // touching code, and so the standalone register flow stays
+        // consistent with the journey signup step.
         var createResult = await _userService.CreateUserAsync(new CreateUserRequest
         {
             Email = Input.Email!,
             Username = Input.Username ?? Input.Email!,
             Password = Input.Password!,
             FirstName = Input.FirstName,
-            LastName = Input.LastName
+            LastName = Input.LastName,
+            RequireEmailVerification = _tenantContext?.Tenant?.RequireEmailVerification ?? true,
+            ClientId = await AuthFlowGate.GetClientIdAsync(_protocolStateStore, ReturnUrl)
         });
 
         if (!createResult.Succeeded)
         {
-            _logger.LogWarning("Registration failed for {Email}: {Errors}",
-                Input.Email, string.Join(", ", createResult.Errors));
+            _logger.LogWarning("Registration failed for {Email}: {Errors}", Input.Email, createResult.Message);
 
-            ErrorMessage = string.Join(". ", createResult.Errors);
+            ErrorMessage = createResult.MessageOr("Your account could not be created.");
             return Page();
         }
 
@@ -126,6 +192,19 @@ public class RegisterModel : PageModel
 
         // Sign in the new user
         await SignInUserAsync(createResult.UserId!);
+        await _userService.RecordLoginAsync(createResult.UserId!);
+
+        if (_signInAuditor != null)
+        {
+            await _signInAuditor.RecordSuccessAsync(new SignInAudit
+            {
+                SubjectId = createResult.UserId!,
+                Username = Input.Email,
+                TenantId = _tenantContext?.HasTenant == true ? _tenantContext.TenantId : null,
+                AuthenticationMethod = "signup",
+                ReturnUrl = ReturnUrl
+            });
+        }
 
         // Handle return URL - redirect back to callback (cookie is now set)
         if (!string.IsNullOrEmpty(ReturnUrl) && IsAllowedReturnUrl(ReturnUrl))
@@ -226,6 +305,29 @@ public class RegisterModel : PageModel
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Enforces the tenant's <c>AllowedEmailDomains</c> allowlist (comma /
+    /// whitespace-separated). Empty / unset list means "any". The
+    /// SignUpStepHandler does the same check for journey-based signup;
+    /// both paths must agree so a tenant policy can't be bypassed by
+    /// pointing the protocol flow at the standalone register page.
+    /// </summary>
+    private bool IsEmailDomainAllowed(string email)
+    {
+        var allowed = _tenantContext?.Tenant?.AllowedEmailDomains;
+        if (string.IsNullOrWhiteSpace(allowed)) return true;
+
+        var atIndex = email.IndexOf('@');
+        if (atIndex < 0 || atIndex == email.Length - 1) return false;
+        var domain = email[(atIndex + 1)..].ToLowerInvariant();
+
+        var domains = allowed
+            .Split(new[] { ',', ' ', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(d => d.ToLowerInvariant());
+
+        return domains.Contains(domain);
     }
 
     private bool IsAllowedReturnUrl(string url)

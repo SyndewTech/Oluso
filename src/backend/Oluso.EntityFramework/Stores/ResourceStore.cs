@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 
 namespace Oluso.EntityFramework.Stores;
 
@@ -116,6 +117,18 @@ public class ResourceStore : IResourceStore
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IEnumerable<Resource>> FindResourcesByScopeNamesAsync(
+        IEnumerable<string> scopeNames,
+        CancellationToken cancellationToken = default)
+    {
+        var names = scopeNames.Distinct().ToList();
+        if (names.Count == 0) return Array.Empty<Resource>();
+        return await _context.Resources
+            .Where(r => r.Enabled && r.AllowedScopes.Any(s => names.Contains(s.Scope)))
+            .Include(r => r.AllowedScopes)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<Resource> AddResourceAsync(Resource resource, CancellationToken cancellationToken = default)
     {
         // Always set TenantId from context to prevent bypass attacks
@@ -155,7 +168,19 @@ public class ResourceStore : IResourceStore
     {
         return await _context.ApiScopes
             .Include(s => s.UserClaims)
+            // Properties mark prefix scopes (ApiScopePrefixes) and carry required features (ApiScopeFeatures).
+            .Include(s => s.Properties)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IEnumerable<ApiScope>> FindPrefixApiScopesAsync(CancellationToken cancellationToken = default)
+    {
+        var candidates = await _context.ApiScopes
+            .Where(s => s.Properties.Any(p => p.Key == ApiScopePrefixes.MatchProperty))
+            .Include(s => s.UserClaims)
+            .Include(s => s.Properties)
+            .ToListAsync(cancellationToken);
+        return candidates.Where(ApiScopePrefixes.IsPrefix).ToList();
     }
 
     public async Task<IEnumerable<ApiScope>> FindApiScopesByNameAsync(
@@ -166,6 +191,8 @@ public class ResourceStore : IResourceStore
         return await _context.ApiScopes
             .Where(s => names.Contains(s.Name))
             .Include(s => s.UserClaims)
+            // Properties carry the tenant feature a scope requires (ApiScopeFeatures), read at issue time.
+            .Include(s => s.Properties)
             .ToListAsync(cancellationToken);
     }
 

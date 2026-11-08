@@ -1,0 +1,33 @@
+@using Microsoft.AspNetCore.Localization
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnv
+@{
+    Layout = null;
+    var requestCulture = Context.Features.Get<IRequestCultureFeature>()?.RequestCulture;
+    var resolvedLocale = requestCulture?.UICulture.Name ?? "en";
+}
+<!DOCTYPE html>
+<html lang="@resolvedLocale">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>@(ViewData["Title"] ?? Localizer["composite_login_title"].Value)</title>
+    <partial name="_TenantFavicon" />
+
+    <!-- Standalone Account/* page styles. Per-tenant brand overrides come from
+         each page's @@section Styles block (which actually fires now because
+         this layout calls RenderSection). -->
+    <link rel="stylesheet" href="~/_content/Oluso.UI/css/standalone-auth.css" asp-append-version="true" />
+    @* Host-app stylesheet: overrides the library default when the deployed app ships its own wwwroot/css/standalone-auth.css. Only emitted when the file exists so there's no 404. *@
+    @if (HostEnv.WebRootFileProvider.GetFileInfo("css/standalone-auth.css").Exists)
+    {
+        <link rel="stylesheet" href="~/css/standalone-auth.css" asp-append-version="true" />
+    }
+
+    @await RenderSectionAsync("Styles", required: false)
+</head>
+<body>
+    @RenderBody()
+
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

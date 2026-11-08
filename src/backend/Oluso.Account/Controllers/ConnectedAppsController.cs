@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Oluso.Account.Dto.ConnectedApps;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Account.Events;
 using Oluso.Core.Events;
+using Oluso.Core.Services;
 
 namespace Oluso.Account.Controllers;
 
@@ -16,18 +19,21 @@ public class ConnectedAppsController : AccountBaseController
     private readonly IClientStore _clientStore;
     private readonly IOlusoEventService _eventService;
     private readonly ILogger<ConnectedAppsController> _logger;
+    private readonly IResourceServerLogoutNotifier? _resourceServers;
 
     public ConnectedAppsController(
         ITenantContext tenantContext,
         IPersistedGrantStore grantStore,
         IClientStore clientStore,
         IOlusoEventService eventService,
-        ILogger<ConnectedAppsController> logger) : base(tenantContext)
+        ILogger<ConnectedAppsController> logger,
+        IResourceServerLogoutNotifier? resourceServers = null) : base(tenantContext)
     {
         _grantStore = grantStore;
         _clientStore = clientStore;
         _eventService = eventService;
         _logger = logger;
+        _resourceServers = resourceServers;
     }
 
     /// <summary>
@@ -165,6 +171,10 @@ public class ConnectedAppsController : AccountBaseController
         // Remove all grants for this client
         await _grantStore.RemoveAllAsync(filter, cancellationToken);
 
+        // Resource servers keeping their own sessions (a Matrix homeserver) hear that these sessions ended.
+        if (_resourceServers != null)
+            await _resourceServers.NotifyAsync(grants, cancellationToken);
+
         _logger.LogInformation("User {UserId} revoked access for client {ClientId}", UserId, clientId);
 
         await _eventService.RaiseAsync(new AppAccessRevokedEvent
@@ -179,69 +189,3 @@ public class ConnectedAppsController : AccountBaseController
         return Ok(new { message = "Application access revoked" });
     }
 }
-
-#region DTOs
-
-public class ConnectedAppListDto
-{
-    public List<ConnectedAppDto> Apps { get; set; } = new();
-    public int TotalCount { get; set; }
-}
-
-public class ConnectedAppDto
-{
-    public string ClientId { get; set; } = null!;
-    public string ClientName { get; set; } = null!;
-    public string? ClientUri { get; set; }
-    public string? LogoUri { get; set; }
-    public string? Description { get; set; }
-    public DateTime FirstConnectedAt { get; set; }
-    public DateTime LastUsedAt { get; set; }
-    public List<string> GrantTypes { get; set; } = new();
-    public List<string> Scopes { get; set; } = new();
-    public bool HasActiveTokens { get; set; }
-}
-
-public class ConnectedAppDetailDto
-{
-    public string ClientId { get; set; } = null!;
-    public string ClientName { get; set; } = null!;
-    public string? ClientUri { get; set; }
-    public string? LogoUri { get; set; }
-    public string? Description { get; set; }
-    public DateTime FirstConnectedAt { get; set; }
-    public List<GrantDetailDto> Grants { get; set; } = new();
-    public List<ScopeInfoDto> Scopes { get; set; } = new();
-}
-
-public class GrantDetailDto
-{
-    public string Type { get; set; } = null!;
-    public DateTime CreatedAt { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-    public string? SessionId { get; set; }
-}
-
-public class ScopeInfoDto
-{
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool Required { get; set; }
-}
-
-#endregion
-
-#region Events
-
-public class AppAccessRevokedEvent : OlusoEvent
-{
-    public override string Category => "Security";
-    public override string EventType => "AppAccessRevoked";
-    public string? SubjectId { get; set; }
-    public string? ClientId { get; set; }
-    public int RevokedGrantCount { get; set; }
-    public string? IpAddress { get; set; }
-}
-
-#endregion

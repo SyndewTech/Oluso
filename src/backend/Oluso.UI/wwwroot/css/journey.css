@@ -17,6 +17,12 @@
     --error-color: #dc2626;
     --success-color: #16a34a;
     --warning-color: #f59e0b;
+    /* Text/lines that sit directly on the page background (brand name,
+       progress text, vertical step rail) — defaults suit the dark page;
+       light themes override these below. */
+    --on-bg: #ffffff;
+    --on-bg-muted: rgba(255, 255, 255, 0.72);
+    --on-bg-subtle: rgba(255, 255, 255, 0.4);
 }
 
 /* Reset & Base */
@@ -34,6 +40,26 @@ body.journey-page {
     line-height: 1.5;
 }
 
+/* Standalone Account/* pages (Login, Register, ForgotPassword, DirectLogin,
+   Consent, ExternalCallback, ExternalRegister) render only an .auth-container
+   div — they don't own a <body> tag, so they can't add the journey-page class.
+   Make .auth-container itself a full-bleed wrapper so the dark gradient
+   applies regardless of the host layout's body background. Without this the
+   body's default white shows through as a top strip. */
+.auth-container {
+    margin: 0;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--background-start) 0%, var(--background-end) 100%);
+    color: var(--text-primary);
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    position: relative;
+}
+
 body.journey-page::before {
     content: '';
     position: fixed;
@@ -42,7 +68,7 @@ body.journey-page::before {
     width: 100%;
     height: 100%;
     background-image:
-        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 20% 30%, var(--primary-glow) 0%, transparent 45%),
         radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
     pointer-events: none;
     z-index: 0;
@@ -123,7 +149,7 @@ body.journey-page::before {
 .journey-brand-text {
     font-size: 1.5rem;
     font-weight: 700;
-    color: white;
+    color: var(--on-bg);
     letter-spacing: -0.02em;
 }
 
@@ -178,12 +204,12 @@ body.journey-page::before {
     text-align: center;
     margin-top: 0.75rem;
     font-size: 0.875rem;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--on-bg-muted);
 }
 
 /* Journey Card */
 .journey-card {
-    background: rgba(255, 255, 255, 0.98);
+    background: var(--card-bg, rgba(255, 255, 255, 0.98));
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: 16px;
@@ -473,6 +499,32 @@ textarea.form-control {
     width: 100%;
 }
 
+.org-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 1.25rem 0;
+}
+
+/* Two stacked lines, so the button overrides .btn's centred inline-flex. */
+.org-choice {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.125rem;
+    text-align: left;
+    padding: 0.75rem 1rem;
+}
+
+.org-choice-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.org-choice-slug {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
 .btn-loading {
     position: relative;
     color: transparent !important;
@@ -677,6 +729,32 @@ textarea.form-control {
     height: 1.25rem;
 }
 
+/* ── Provider brand defaults ────────────────────────────────────────
+   Keyed off the provider-{type} hooks on every external login button.
+   White button + brand-coloured border and a faint brand-tinted hover,
+   so the brand mark (which carries its own colours) stays legible.
+   Tenants can override via provider-{type} or provider-scheme-{slug}. */
+button.provider-google { border-color: #4285F4; }
+button.provider-google:hover:not(:disabled) { background: rgba(66, 133, 244, .08); border-color: #4285F4; }
+
+button.provider-microsoft { border-color: #0067b8; }
+button.provider-microsoft:hover:not(:disabled) { background: rgba(0, 103, 184, .08); border-color: #0067b8; }
+
+button.provider-facebook { border-color: #1877F2; }
+button.provider-facebook:hover:not(:disabled) { background: rgba(24, 119, 242, .08); border-color: #1877F2; }
+
+button.provider-linkedin { border-color: #0A66C2; }
+button.provider-linkedin:hover:not(:disabled) { background: rgba(10, 102, 194, .08); border-color: #0A66C2; }
+
+button.provider-github { border-color: #24292f; }
+button.provider-github:hover:not(:disabled) { background: rgba(36, 41, 47, .06); border-color: #24292f; }
+
+button.provider-apple { border-color: #000000; }
+button.provider-apple:hover:not(:disabled) { background: rgba(0, 0, 0, .06); border-color: #000000; }
+
+button.provider-twitter { border-color: #000000; }
+button.provider-twitter:hover:not(:disabled) { background: rgba(0, 0, 0, .06); border-color: #000000; }
+
 /* Form Row (side by side fields) */
 .form-row {
     display: flex;
@@ -728,3 +806,260 @@ textarea.form-control {
 .mb-1 { margin-bottom: 0.5rem; }
 .mb-2 { margin-bottom: 1rem; }
 .mb-3 { margin-bottom: 1.5rem; }
+
+/* ── Vertical step indicator ────────────────────────────────────────
+   When ProgressStyle = "vertical", the step list sits beside the card.
+   The chosen Layout Width applies to the CARD; the indicator column is
+   additive, so the container widens to keep the form from being squeezed.
+   Default (horizontal) keeps the body as a plain column. */
+.journey-container.with-vertical-steps.layout-narrow { max-width: 672px; }
+.journey-container.with-vertical-steps.layout-medium { max-width: 812px; }
+.journey-container.with-vertical-steps.layout-wide   { max-width: 1112px; }
+/* layout-full already spans the viewport */
+
+.journey-body.has-vertical-steps {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 2rem;
+}
+.journey-card-col {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.journey-steps-vertical {
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0 0;
+    flex: 0 0 10rem;
+    width: 10rem;
+}
+.journey-step-v {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    color: var(--on-bg-subtle);
+    font-size: 0.9rem;
+    line-height: 1.3;
+    position: relative;
+}
+.journey-step-v-label { padding-top: 0.2rem; }
+/* Connect this marker's bottom to the next marker's top. Using the row's
+   own height (100%) keeps the line aligned even when a label wraps. */
+.journey-step-v:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 0.8125rem;
+    transform: translateX(-50%);
+    top: 2.125rem;
+    height: calc(100% - 1.625rem);
+    width: 2px;
+    background: var(--on-bg-subtle);
+    z-index: 0;
+}
+.journey-step-v-marker {
+    flex: 0 0 auto;
+    width: 1.625rem;
+    height: 1.625rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: transparent;
+    border: 2px solid var(--on-bg-subtle);
+    color: var(--on-bg-subtle);
+    z-index: 1;
+}
+.journey-step-v.completed { color: var(--on-bg-muted); }
+.journey-step-v.completed .journey-step-v-marker {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+.journey-step-v.completed:not(:last-child)::after { background: var(--primary-color); }
+.journey-step-v.active { color: var(--on-bg); font-weight: 600; }
+.journey-step-v.active .journey-step-v-marker {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    box-shadow: 0 0 0 4px var(--primary-light);
+}
+
+/* On narrow screens keep the rail on the side but drop the labels so it
+   becomes a slim numbered stepper, leaving the card the rest of the width. */
+@media (max-width: 640px) {
+    .journey-body.has-vertical-steps {
+        gap: 1rem;
+    }
+    .journey-steps-vertical {
+        flex: 0 0 auto;
+        width: auto;
+        min-width: 0;
+    }
+    .journey-step-v-label {
+        display: none;
+    }
+}
+
+/* ── Journey themes ─────────────────────────────────────────────────
+   Pure-CSS presets applied via a theme-{value} class on body.journey-page
+   (set from JourneyUiConfiguration.Theme). They override shell variables
+   only; an explicit Primary Color still composes since themes don't touch
+   --primary-color. Default (no class) keeps the dark-gradient look. */
+
+/* Light: soft neutral page, white card, dark text. */
+body.theme-light {
+    --background-start: #eef2f7;
+    --background-end: #dbe3ec;
+    --card-bg: #ffffff;
+    --text-primary: #1a1a2e;
+    --text-secondary: #6c757d;
+    /* Page sits light, so on-background text must be dark. */
+    --on-bg: #1a1a2e;
+    --on-bg-muted: #4b5563;
+    --on-bg-subtle: #9ca3af;
+}
+body.theme-light::before { opacity: 0.4; }
+
+/* Dark: dark page and dark card with light text. */
+body.theme-dark {
+    --background-start: #0b1120;
+    --background-end: #131c2e;
+    --card-bg: #1e293b;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --border-color: #334155;
+}
+body.theme-dark .journey-card {
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Minimal: flat — no gradient, glow, blur, or heavy shadow. */
+body.theme-minimal {
+    --background-start: #f8fafc;
+    --background-end: #f8fafc;
+    --card-bg: #ffffff;
+    --on-bg: #1a1a2e;
+    --on-bg-muted: #4b5563;
+    --on-bg-subtle: #9ca3af;
+}
+body.theme-minimal::before { display: none; }
+body.theme-minimal .journey-card {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+    border: 1px solid var(--border-color);
+}
+
+/* ── Email-expandable login (loginLayout = "email-expandable") ───────
+   The local form is collapsed behind a button (styled <summary>) and
+   revealed on click — no JS. */
+.local-disclosure { width: 100%; }
+.local-disclosure-summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+.local-disclosure-summary::-webkit-details-marker { display: none; }
+.local-disclosure-summary::marker { content: ''; }
+.local-disclosure[open] > .local-disclosure-summary {
+    margin-bottom: 1rem;
+}
+.local-section-expanded { margin: 0; }
+
+/* Phone field: country picker + national number side by side */
+.phone-input {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.phone-input-country {
+  flex: 0 0 40%;
+  max-width: 14rem;
+}
+
+.phone-input-number {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* One-time code entry (Journey/_OtpCodeInput) and the resend / change links under it. */
+.otp-input-group {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    margin: 0.5rem 0 0.75rem;
+    direction: ltr;
+}
+.otp-digit {
+    width: 3rem;
+    height: 3.5rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    text-align: center;
+    border: 1.5px solid #d1d5db;
+    border-radius: 0.5rem;
+    background: #fff;
+    color: #111827;
+    outline: none;
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    caret-color: transparent;
+}
+.otp-digit:focus {
+    border-color: var(--bs-primary, #4F46E5);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18);
+}
+.otp-digit.filled {
+    background: #f9fafb;
+    border-color: #9ca3af;
+}
+@media (max-width: 380px) {
+    .otp-digit { width: 2.25rem; height: 2.75rem; font-size: 1.25rem; }
+    .otp-input-group { gap: 0.35rem; }
+}
+.otp-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+.otp-action-form {
+    display: inline;
+    margin: 0;
+    padding: 0;
+}
+.otp-action-link {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--bs-primary, #4F46E5);
+    cursor: pointer;
+    text-decoration: underline;
+}
+.otp-action-link:hover { opacity: 0.85; }
+.otp-action-sep { color: #d1d5db; }
+
+/* Present for password managers and screen readers but not drawn: the account a
+   new or changed password belongs to, on forms that no longer show it. Not
+   display:none or type="hidden", which password managers skip. */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}

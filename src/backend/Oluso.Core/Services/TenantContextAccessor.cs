@@ -18,12 +18,10 @@ public class TenantContextAccessor : ITenantContextAccessor
 
     public void SetTenant(Tenant tenant)
     {
-        var holder = _tenantHolder.Value;
-        if (holder != null)
-        {
-            holder.Tenant = null;
-        }
-
+        // A fresh holder for this async flow only. Nulling the previous holder
+        // here would also clear it for every flow that shares it, so a
+        // workflow step setting its tenant inside an HTTP request used to
+        // strip the request's own tenant for the rest of the call.
         _tenantHolder.Value = new TenantHolder { Tenant = tenant };
     }
 

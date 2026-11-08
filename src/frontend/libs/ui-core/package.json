@@ -1,0 +1,24 @@
+{
+  "name": "@oluso/ui-core",
+  "version": "0.0.1",
+  "peerDependencies": {
+    "@angular/common": "^21.1.0",
+    "@angular/core": "^21.1.0",
+    "@jsverse/transloco": "^8.0.0"
+  },
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./fesm2022/oluso-ui-core.mjs"
+    },
+    "./styles.css": "./ui-core.css",
+    "./ui-core.css": "./ui-core.css"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

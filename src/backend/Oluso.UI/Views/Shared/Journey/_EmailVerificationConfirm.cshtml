@@ -1,0 +1,114 @@
+@model Oluso.UserJourneys.Steps.EmailVerificationConfirmViewModel
+
+<div class="email-verification-confirm-form">
+    <h2>@Localizer["email_verification_confirm_title"]</h2>
+    <p class="description">
+        @if (Model.Mode == "magic-link")
+        {
+            @Localizer["email_verification_confirm_magic_link_msg", Model.Email]
+        }
+        else
+        {
+            @Localizer["email_verification_confirm_code_msg", Model.Email]
+        }
+    </p>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(Model.SuccessMessage))
+    {
+        <div class="alert alert-success" role="alert">
+            @Model.SuccessMessage
+        </div>
+    }
+
+    @if (Model.Mode != "magic-link")
+    {
+        <form method="post">
+            <div class="form-group mb-3">
+                <label class="form-label">@Localizer["email_verification_confirm_code_label"]</label>
+                <partial name="Journey/_OtpCodeInput" model="new Oluso.UI.ViewModels.OtpCodeInputViewModel(Model.CodeLength)" />
+                <small class="form-text text-muted">
+                    @Localizer["email_verification_confirm_expires", Model.ExpirationMinutes]
+                </small>
+            </div>
+
+            <div class="d-grid gap-2">
+                <button type="submit" class="btn btn-primary">@Localizer["email_verification_confirm_button"]</button>
+            </div>
+        </form>
+    }
+
+    <div class="otp-actions">
+        <form method="post" class="otp-action-form">
+            <input type="hidden" name="resend" value="true" />
+            <button type="submit" class="otp-action-link">
+                @(Model.Mode == "magic-link" ? Localizer["email_verification_confirm_resend_link"] : Localizer["email_verification_confirm_resend_code"])
+            </button>
+        </form>
+        @if (Model.CanChangeEmail)
+        {
+            <span class="otp-action-sep" aria-hidden="true">·</span>
+            <form method="post" class="otp-action-form">
+                <input type="hidden" name="change_email" value="true" />
+                <button type="submit" class="otp-action-link">@Localizer["email_verification_confirm_change_email"]</button>
+            </form>
+        }
+    </div>
+
+</div>
+
+@* Cross-device magic-link support: when the user clicks the link in their
+   email on another device, the journey advances on the server. This polls
+   for that change and reloads when the current step has moved on so the
+   user doesn't have to refresh manually. Stops polling when the tab is
+   hidden (visibility API), on errors after a few retries, and after a
+   3-minute hard cap. *@
+<script>
+    (function () {
+        var journeyId = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.JourneyId));
+        var startStepId = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CurrentStepId));
+        if (!journeyId || !startStepId) return;
+
+        var statusUrl = "/journey/" + encodeURIComponent(journeyId) + "/status";
+        var intervalMs = 3000;
+        var hardStopAt = Date.now() + 3 * 60 * 1000;
+        var consecutiveErrors = 0;
+        var timer = null;
+
+        function tick() {
+            if (Date.now() > hardStopAt) { stop(); return; }
+            if (document.hidden) return;
+
+            fetch(statusUrl, { credentials: "same-origin", cache: "no-store" })
+                .then(function (r) {
+                    if (!r.ok) throw new Error("status " + r.status);
+                    return r.json();
+                })
+                .then(function (data) {
+                    consecutiveErrors = 0;
+                    if (!data) return;
+                    if (data.expired || data.status === "Expired") { stop(); return; }
+                    if (data.currentStepId && data.currentStepId !== startStepId) {
+                        stop();
+                        window.location.reload();
+                    }
+                })
+                .catch(function () {
+                    if (++consecutiveErrors >= 5) stop();
+                });
+        }
+
+        function stop() {
+            if (timer !== null) { clearInterval(timer); timer = null; }
+        }
+
+        timer = setInterval(tick, intervalMs);
+        document.addEventListener("visibilitychange", function () { if (!document.hidden) tick(); });
+    })();
+</script>

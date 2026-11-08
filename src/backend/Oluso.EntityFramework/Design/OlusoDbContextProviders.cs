@@ -14,7 +14,9 @@ public class OlusoDbContextSqlite : OlusoDbContext
     public OlusoDbContextSqlite() : base(CreateDesignTimeOptions()) { }
 
     /// <summary>
-    /// Runtime constructor for DI.
+    /// Runtime constructor for DI. The base resolves ITenantContext lazily
+    /// from DbContextOptions.ApplicationServiceProvider, so derived providers
+    /// don't need to take it as a parameter.
     /// </summary>
     public OlusoDbContextSqlite(DbContextOptions<OlusoDbContextSqlite> options)
         : base(options) { }
@@ -24,14 +26,6 @@ public class OlusoDbContextSqlite : OlusoDbContext
         var builder = new DbContextOptionsBuilder<OlusoDbContext>();
         builder.UseSqlite("Data Source=:memory:");
         return builder.Options;
-    }
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        if (!optionsBuilder.IsConfigured)
-        {
-            optionsBuilder.UseSqlite("Data Source=Oluso.db");
-        }
     }
 }
 
@@ -58,14 +52,6 @@ public class OlusoDbContextSqlServer : OlusoDbContext
         builder.UseSqlServer("Server=.;Database=Oluso;Trusted_Connection=True;TrustServerCertificate=True");
         return builder.Options;
     }
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        if (!optionsBuilder.IsConfigured)
-        {
-            optionsBuilder.UseSqlServer("Server=.;Database=Oluso;Trusted_Connection=True;TrustServerCertificate=True");
-        }
-    }
 }
 
 /// <summary>
@@ -90,13 +76,5 @@ public class OlusoDbContextPostgres : OlusoDbContext
         var builder = new DbContextOptionsBuilder<OlusoDbContext>();
         builder.UseNpgsql("Host=localhost;Database=Oluso;Username=postgres;Password=postgres");
         return builder.Options;
-    }
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        if (!optionsBuilder.IsConfigured)
-        {
-            optionsBuilder.UseNpgsql("Host=localhost;Database=Oluso;Username=postgres;Password=postgres");
-        }
     }
 }

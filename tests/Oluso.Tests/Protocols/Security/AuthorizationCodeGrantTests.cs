@@ -61,6 +61,7 @@ public class AuthorizationCodeGrantTests
             _profileService.Object,
             _grantStore.Object,
             _clientStore.Object,
+            ClientUserAccessKit.For(_profileService.Object),
             NullLogger<AuthorizationCodeGrantHandler>.Instance);
     }
 
@@ -553,6 +554,57 @@ public class AuthorizationCodeGrantTests
     #endregion
 
     #region Helpers
+
+    #region Resource indicators (RFC 8707 §2.1)
+
+    [Fact]
+    public async Task HandleAsync_ResourcesNamedAtSignIn_ApplyWhenTheTokenRequestNamesNone()
+    {
+        var code = CreateValidAuthCode();
+        code.Resources = new List<string> { "https://api.example/a", "https://api.example/b" };
+        _codeStore.Setup(x => x.GetAsync(TestCode, It.IsAny<CancellationToken>())).ReturnsAsync(code);
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest());
+
+        result.IsValid.Should().BeTrue();
+        result.Resources.Should().BeEquivalentTo("https://api.example/a", "https://api.example/b");
+        result.GrantedResources.Should().BeEquivalentTo("https://api.example/a", "https://api.example/b");
+    }
+
+    [Fact]
+    public async Task HandleAsync_TheTokenRequestMayNarrowButNotWidenTheResources()
+    {
+        var code = CreateValidAuthCode();
+        code.Resources = new List<string> { "https://api.example/a", "https://api.example/b" };
+        _codeStore.Setup(x => x.GetAsync(TestCode, It.IsAny<CancellationToken>())).ReturnsAsync(code);
+
+        var narrowed = CreateValidTokenRequest();
+        narrowed.Resource = new List<string> { "https://api.example/a" };
+        (await _handler.HandleAsync(narrowed)).Resources.Should().Equal("https://api.example/a");
+
+        var code2 = CreateValidAuthCode();
+        code2.Resources = new List<string> { "https://api.example/a" };
+        _codeStore.Setup(x => x.GetAsync(TestCode, It.IsAny<CancellationToken>())).ReturnsAsync(code2);
+        var widened = CreateValidTokenRequest();
+        widened.Resource = new List<string> { "https://other.example" };
+        var result = await _handler.HandleAsync(widened);
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Be(OidcConstants.Errors.InvalidTarget);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithoutResourcesAtSignIn_TheTokenRequestsResourcesApply()
+    {
+        _codeStore.Setup(x => x.GetAsync(TestCode, It.IsAny<CancellationToken>())).ReturnsAsync(CreateValidAuthCode());
+        var request = CreateValidTokenRequest();
+        request.Resource = new List<string> { "https://api.example/a" };
+
+        var result = await _handler.HandleAsync(request);
+
+        result.Resources.Should().Equal("https://api.example/a");
+    }
+
+    #endregion
 
     private static ValidatedClient CreateValidatedClient()
     {

@@ -1,0 +1,97 @@
+@model BusinessVerificationWaitingViewModel
+
+<div class="business-verification-waiting" id="kyb-waiting">
+    <h2>@Localizer["business_verification_waiting_title"]</h2>
+    <p class="description">@Localizer["business_verification_waiting_description", Model.BusinessName]</p>
+    <p class="text-muted">@Localizer[Model.ReasonKey]</p>
+
+    <div class="d-flex align-items-center gap-2 mb-3" id="kyb-waiting-spinner" aria-live="polite">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        <span>@Localizer["business_verification_waiting_checking"]</span>
+    </div>
+
+    <div class="d-grid gap-2 mb-3">
+        @if (Model.CanResumeHosted)
+        {
+            <form method="post">
+                <input type="hidden" name="action" value="resume_hosted" />
+                <button type="submit" class="btn btn-primary w-100">@Localizer["business_verification_waiting_resume"]</button>
+            </form>
+        }
+        <form method="post">
+            <input type="hidden" name="action" value="refresh" />
+            <button type="submit" class="btn btn-outline-secondary w-100">@Localizer["business_verification_waiting_refresh"]</button>
+        </form>
+    </div>
+
+    @if (Model.EmailRequested)
+    {
+        <div class="alert alert-info" role="status">@Localizer["business_verification_waiting_email_confirmed", Model.Email ?? string.Empty]</div>
+    }
+    else if (Model.CanEmail)
+    {
+        <div id="kyb-waiting-email" hidden>
+            <p>@Localizer["business_verification_waiting_email_offer"]</p>
+            <form method="post">
+                <input type="hidden" name="action" value="notify" />
+                <div class="form-group mb-3">
+                    <label for="kyb-email" class="form-label">@Localizer["business_verification_waiting_email_label"]</label>
+                    <input type="email" id="kyb-email" name="email" class="form-control" value="@Model.Email" autocomplete="email" maxlength="320" required />
+                </div>
+                <div class="d-grid">
+                    <button type="submit" class="btn btn-primary">@Localizer["business_verification_waiting_email_button"]</button>
+                </div>
+            </form>
+        </div>
+    }
+</div>
+
+@* Polls the journey status endpoint. A webhook or a reviewer deciding the check bumps the
+   journey's revision; moving to another step changes the step id. Either reloads the page,
+   which shows the outcome. After the wait the email offer appears and polling slows. *@
+<script>
+    (function () {
+        var journeyId = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.JourneyId));
+        var stepId = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.StepId));
+        var revision = @Model.Revision;
+        var statusUrl = "/journey/" + encodeURIComponent(journeyId) + "/status";
+        var offerAt = Date.now() + @(Model.WaitSeconds) * 1000;
+        var stopAt = Date.now() + 30 * 60 * 1000;
+        var errors = 0;
+        var timer = null;
+        var offered = false;
+
+        function offer() {
+            if (offered) return;
+            offered = true;
+            var email = document.getElementById("kyb-waiting-email");
+            if (email) email.hidden = false;
+            var spinner = document.getElementById("kyb-waiting-spinner");
+            if (spinner) spinner.hidden = true;
+            if (timer !== null) { clearInterval(timer); timer = setInterval(tick, 15000); }
+        }
+
+        function stop() { if (timer !== null) { clearInterval(timer); timer = null; } }
+
+        function tick() {
+            if (Date.now() > stopAt) { stop(); return; }
+            if (Date.now() > offerAt) offer();
+            if (document.hidden) return;
+            fetch(statusUrl, { credentials: "same-origin", cache: "no-store" })
+                .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+                .then(function (data) {
+                    errors = 0;
+                    if (!data) return;
+                    if (data.expired || data.status === "Expired") { stop(); return; }
+                    if ((data.currentStepId && data.currentStepId !== stepId) || (typeof data.revision === "number" && data.revision !== revision)) {
+                        stop();
+                        window.location.reload();
+                    }
+                })
+                .catch(function () { if (++errors >= 5) stop(); });
+        }
+
+        timer = setInterval(tick, 3000);
+        document.addEventListener("visibilitychange", function () { if (!document.hidden) tick(); });
+    })();
+</script>

@@ -16,16 +16,19 @@ public class DynamicAuthenticationSchemeProvider : AuthenticationSchemeProvider
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly DynamicSchemeCache _schemeCache;
+    private readonly DynamicExternalProviderOptions _providerOptions;
 
     public DynamicAuthenticationSchemeProvider(
         IOptions<AuthenticationOptions> options,
         IHttpContextAccessor httpContextAccessor,
         DynamicSchemeCache schemeCache,
+        IOptions<DynamicExternalProviderOptions> providerOptions,
         IServiceScopeFactory scopeFactory)
         : base(options)
     {
         _httpContextAccessor = httpContextAccessor;
         _schemeCache = schemeCache;
+        _providerOptions = providerOptions.Value;
         _scopeFactory = scopeFactory;
     }
 
@@ -43,8 +46,9 @@ public class DynamicAuthenticationSchemeProvider : AuthenticationSchemeProvider
             return scheme;
         }
 
+        var allowTenantOverrides = _providerOptions.AllowTenantOverrides;
         var tenantContext = GetTenantContext();
-        var tenantId = tenantContext?.TenantId ?? "global";
+        var tenantId = allowTenantOverrides ? (tenantContext?.TenantId ?? "global") : "global";
         var cacheKey = $"{tenantId}:{name}";
 
         // Check cache first
@@ -61,7 +65,7 @@ public class DynamicAuthenticationSchemeProvider : AuthenticationSchemeProvider
             return null;
         }
 
-        var provider = await providerStore.GetBySchemeAsync(name);
+        var provider = await providerStore.GetBySchemeAsync(name, allowTenantOverrides);
         if (provider == null || !provider.Enabled)
         {
             return null;
@@ -98,7 +102,7 @@ public class DynamicAuthenticationSchemeProvider : AuthenticationSchemeProvider
         }
 
         // Add dynamic schemes from database
-        var providers = await providerStore.GetEnabledProvidersAsync();
+        var providers = await providerStore.GetEnabledProvidersAsync(_providerOptions.AllowTenantOverrides);
         foreach (var provider in providers)
         {
             if (schemes.Any(s => s.Name.Equals(provider.Scheme, StringComparison.OrdinalIgnoreCase)))
@@ -150,7 +154,16 @@ public class DynamicSchemeCache
 {
     private readonly Dictionary<string, (AuthenticationScheme Scheme, DateTime Expiry)> _cache = new();
     private readonly object _lock = new();
-    private readonly TimeSpan _defaultExpiry = TimeSpan.FromMinutes(5);
+    private readonly TimeSpan _defaultExpiry;
+
+    public DynamicSchemeCache() : this(TimeSpan.FromMinutes(5))
+    {
+    }
+
+    public DynamicSchemeCache(TimeSpan defaultExpiry)
+    {
+        _defaultExpiry = defaultExpiry;
+    }
 
     public bool TryGetScheme(string key, out AuthenticationScheme? scheme)
     {

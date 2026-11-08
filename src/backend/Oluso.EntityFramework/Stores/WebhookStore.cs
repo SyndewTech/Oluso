@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,6 +15,7 @@ namespace Oluso.EntityFramework.Stores;
 public class WebhookStore : IWebhookStore
 {
     private readonly IOlusoDbContext _context;
+    private readonly IKeyEncryptionService _encryption;
     private readonly ILogger<WebhookStore> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -23,9 +25,11 @@ public class WebhookStore : IWebhookStore
 
     public WebhookStore(
         IOlusoDbContext context,
+        IKeyEncryptionService encryption,
         ILogger<WebhookStore> logger)
     {
         _context = context;
+        _encryption = encryption;
         _logger = logger;
     }
 
@@ -58,9 +62,10 @@ public class WebhookStore : IWebhookStore
         CreateWebhookEndpoint dto,
         CancellationToken cancellationToken = default)
     {
-        // Generate a secure secret
+        // Generate a secure secret and encrypt for HMAC signing at dispatch time
         var secret = GenerateSecret();
         var secretHash = HashSecret(secret);
+        var encryptedSecret = await _encryption.EncryptAsync(secret, cancellationToken);
 
         var endpoint = new WebhookEndpointEntity
         {
@@ -69,12 +74,19 @@ public class WebhookStore : IWebhookStore
             Description = dto.Description,
             Url = dto.Url,
             SecretHash = secretHash,
+            SigningSecretEncrypted = encryptedSecret,
             Enabled = dto.Enabled,
-            ApiVersion = dto.ApiVersion,
+            ApiVersion = dto.ApiVersion ?? "2024-01-01",
             HeadersJson = dto.Headers != null
                 ? JsonSerializer.Serialize(dto.Headers, JsonOptions)
-                : null
+                : null,
+            AuthType = dto.AuthType,
+            AuthCredential = dto.AuthCredential,
+            ClientId = string.IsNullOrWhiteSpace(dto.ClientId) ? null : dto.ClientId.Trim(),
+            SkipOwnClientEvents = dto.SkipOwnClientEvents
         };
+        if (dto.AuthorizeSensitiveData)
+            GrantSensitiveData(endpoint, dto.SensitiveDataAuthorizedBy, dto.SensitiveDataAuthorizedByName);
 
         // Add event subscriptions
         foreach (var eventType in dto.EventTypes)
@@ -115,6 +127,14 @@ public class WebhookStore : IWebhookStore
         if (dto.Enabled.HasValue) endpoint.Enabled = dto.Enabled.Value;
         if (dto.ApiVersion != null) endpoint.ApiVersion = dto.ApiVersion;
         if (dto.Headers != null) endpoint.HeadersJson = JsonSerializer.Serialize(dto.Headers, JsonOptions);
+        if (dto.AuthType.HasValue) endpoint.AuthType = dto.AuthType.Value;
+        if (dto.AuthCredential != null) endpoint.AuthCredential = dto.AuthCredential;
+        if (dto.ClientId != null) endpoint.ClientId = string.IsNullOrWhiteSpace(dto.ClientId) ? null : dto.ClientId.Trim();
+        if (dto.SkipOwnClientEvents.HasValue) endpoint.SkipOwnClientEvents = dto.SkipOwnClientEvents.Value;
+        if (dto.AuthorizeSensitiveData == true)
+            GrantSensitiveData(endpoint, dto.SensitiveDataAuthorizedBy, dto.SensitiveDataAuthorizedByName);
+        else if (dto.AuthorizeSensitiveData == false)
+            GrantSensitiveData(endpoint, null, null);
 
         if (dto.EventTypes != null)
         {
@@ -173,6 +193,7 @@ public class WebhookStore : IWebhookStore
 
         var secret = GenerateSecret();
         endpoint.SecretHash = HashSecret(secret);
+        endpoint.SigningSecretEncrypted = await _encryption.EncryptAsync(secret, cancellationToken);
         endpoint.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync(cancellationToken);
@@ -207,6 +228,21 @@ public class WebhookStore : IWebhookStore
     }
 
     #region Helpers
+
+    private static void GrantSensitiveData(WebhookEndpointEntity endpoint, string? by, string? byName)
+    {
+        if (by == null)
+        {
+            endpoint.SensitiveDataAuthorizedAt = null;
+            endpoint.SensitiveDataAuthorizedBy = null;
+            endpoint.SensitiveDataAuthorizedByName = null;
+            return;
+        }
+
+        endpoint.SensitiveDataAuthorizedAt = DateTime.UtcNow;
+        endpoint.SensitiveDataAuthorizedBy = by;
+        endpoint.SensitiveDataAuthorizedByName = byName;
+    }
 
     private static string GenerateSecret()
     {
@@ -243,7 +279,14 @@ public class WebhookStore : IWebhookStore
                 .Select(s => s.EventType)
                 .ToList(),
             Headers = headers,
+            AuthType = endpoint.AuthType,
+            AuthCredential = null, // Never expose credential via admin API
             ApiVersion = endpoint.ApiVersion,
+            ClientId = endpoint.ClientId,
+            SkipOwnClientEvents = endpoint.SkipOwnClientEvents,
+            SensitiveDataAuthorizedAt = endpoint.SensitiveDataAuthorizedAt,
+            SensitiveDataAuthorizedBy = endpoint.SensitiveDataAuthorizedBy,
+            SensitiveDataAuthorizedByName = endpoint.SensitiveDataAuthorizedByName,
             CreatedAt = endpoint.CreatedAt,
             UpdatedAt = endpoint.UpdatedAt
         };
