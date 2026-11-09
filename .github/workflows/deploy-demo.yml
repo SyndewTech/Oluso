@@ -12,6 +12,8 @@ name: Deploy Demo
 #   WEBDEPLOY_USERNAME   userName
 #   WEBDEPLOY_PASSWORD   userPWD
 #   OLUSO_DB_CONNECTION_STRING   the SQL Server connection string
+#   DEMO_SUPERADMIN_PASSWORD     the super admin's password: the daily demo reset (Sample:DemoReset) puts
+#                                it back, while the other test accounts get their published passwords
 #
 # Repository variable DEMO_DEPLOY_ENABLED=true turns the job on; until then it is skipped, not failed.
 #
@@ -57,11 +59,14 @@ jobs:
         shell: pwsh
         env:
           CONNECTION_STRING: ${{ secrets.OLUSO_DB_CONNECTION_STRING }}
+          SUPERADMIN_PASSWORD: ${{ secrets.DEMO_SUPERADMIN_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CONNECTION_STRING)) { throw "Set the repository secret OLUSO_DB_CONNECTION_STRING." }
+          if ([string]::IsNullOrWhiteSpace($env:SUPERADMIN_PASSWORD)) { throw "Set the repository secret DEMO_SUPERADMIN_PASSWORD (the super admin's password after each demo reset)." }
           $settings = Get-Content -Raw deploy/demo/appsettings.Production.json | ConvertFrom-Json -AsHashtable
           $settings.ConnectionStrings = @{ OlusoDb = $env:CONNECTION_STRING }
           $settings.DataProtection = @{ KeysPath = 'App_Data/dataprotection-keys' }
+          $settings.Sample.DemoReset.SuperAdminPassword = $env:SUPERADMIN_PASSWORD
           $settings | ConvertTo-Json -Depth 32 | Set-Content -Path publish/appsettings.Production.json -Encoding utf8
           Write-Host "appsettings.Production.json written for $($settings.Oluso.IssuerUri)"
 

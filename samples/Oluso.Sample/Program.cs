@@ -21,6 +21,7 @@ using Oluso.Enterprise.AzureKeyVault;
 using Oluso.Core.Licensing;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using Microsoft.OpenApi;
+using Oluso.Sample;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -117,6 +118,9 @@ builder.Services.AddTenantFeatureProvider();
 
 // Per-user module seat access (when MaxSeats is configured)
 builder.Services.AddUserModuleAccessFeatureProvider();
+
+// Public demo only: restore the test accounts on a schedule (Sample:DemoReset), so no visitor can lock the others out.
+builder.Services.AddDemoAccountReset(builder.Configuration);
 
 // Messaging (email, SMS, WhatsApp)
 builder.Services.AddMessaging(builder.Configuration);
