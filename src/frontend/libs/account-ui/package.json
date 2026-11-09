@@ -1,6 +1,20 @@
 {
   "name": "@syndew/oluso-account-ui",
   "version": "0.0.1",
+  "description": "The Oluso self-service account portal as an Angular library: profile, password, security and sessions, extensible with account plugins.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "identity",
+    "account",
+    "self-service",
+    "oidc"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/account-ui#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",

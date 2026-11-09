@@ -1,6 +1,20 @@
 {
   "name": "@syndew/oluso-plugin-saml",
   "version": "0.0.1",
+  "description": "SAML 2.0 for the Oluso admin portal: service provider registrations and the identity provider settings.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "saml",
+    "sso",
+    "federation",
+    "plugin"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/plugins/saml#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",

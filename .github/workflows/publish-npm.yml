@@ -91,6 +91,8 @@ jobs:
           publish ../../sdk/js
           for pkg in dist/libs/*/ dist/libs/plugins/*/; do
             if [ -f "$pkg/package.json" ]; then
+              # Each package carries the Oluso Community License ("SEE LICENSE IN LICENSE"); the SDK copies its own in prepack.
+              cp ../../LICENSE "$pkg"
               publish "${pkg%/}"
             fi
           done

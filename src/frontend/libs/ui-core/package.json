@@ -1,6 +1,19 @@
 {
   "name": "@syndew/oluso-ui-core",
   "version": "0.0.1",
+  "description": "Shared Angular building blocks for the Oluso portals and plugins: plugin registry, API base URL token, terminology and locale services, and common UI.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "identity",
+    "plugins",
+    "ui"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/ui-core#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",

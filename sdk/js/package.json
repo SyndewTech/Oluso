@@ -36,7 +36,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest",
+    "prepack": "cp ../../LICENSE LICENSE"
   },
   "peerDependencies": {
     "react": ">=17.0.0",
@@ -65,5 +66,5 @@
     "waitlist",
     "journey"
   ],
-  "license": "MIT"
+  "license": "SEE LICENSE IN LICENSE"
 }

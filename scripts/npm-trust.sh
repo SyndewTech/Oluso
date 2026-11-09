@@ -36,6 +36,9 @@ for dir in src/frontend/dist/libs/*/ src/frontend/dist/libs/plugins/*/; do
     [ -f "$dir/package.json" ] && PACKAGES+=("${dir%/}")
 done
 
+# A failure on one package is reported and the rest still run; rerun the script for what failed
+# (it skips what is already done).
+FAILED=()
 for dir in "${PACKAGES[@]}"; do
     name=$(node -p "require('./$dir/package.json').name")
     echo ""
@@ -44,15 +47,32 @@ for dir in "${PACKAGES[@]}"; do
         echo "   on npm already"
     else
         echo "   first publish ($(node -p "require('./$dir/package.json').version"))"
-        $DRY_RUN || npm publish "$dir" --access public
+        # ./ so npm reads sdk/js as a folder, not a GitHub user/repo.
+        if ! $DRY_RUN && ! npm publish "./$dir" --access public; then
+            FAILED+=("$name: first publish")
+            continue
+        fi
     fi
     if npm trust list "$name" 2>/dev/null | grep -q "$WORKFLOW"; then
         echo "   trusted publisher already set"
+    elif $DRY_RUN; then
+        echo "   trusted publisher to add: $REPOSITORY $WORKFLOW"
+    elif npm trust github "$name" --file "$WORKFLOW" --repository "$REPOSITORY" --yes; then
+        echo "   trusted publisher added: $REPOSITORY $WORKFLOW"
     else
-        $DRY_RUN || npm trust github "$name" --file "$WORKFLOW" --repository "$REPOSITORY" --yes
-        echo "   trusted publisher $($DRY_RUN && echo "to add" || echo "added"): $REPOSITORY $WORKFLOW"
+        FAILED+=("$name: trusted publisher")
     fi
 done
+
+if [ ${#FAILED[@]} -gt 0 ]; then
+    echo ""
+    echo "Not done:" >&2
+    printf '  %s\n' "${FAILED[@]}" >&2
+    echo "A new package can take a minute to show on npm: rerun the script. Adding a trusted publisher needs a" >&2
+    echo "login without a 2FA-bypassing token (npm logout, then npm login), or set it on npmjs.com:" >&2
+    echo "package > Settings > Trusted publishing > GitHub Actions: $REPOSITORY, workflow $WORKFLOW." >&2
+    exit 1
+fi
 
 echo ""
 echo "Done. Set the repository variable NPM_TRUSTED_PUBLISHING to true on $REPOSITORY."

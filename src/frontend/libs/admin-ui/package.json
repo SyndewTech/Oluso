@@ -1,6 +1,20 @@
 {
   "name": "@syndew/oluso-admin-ui",
   "version": "0.0.1",
+  "description": "The Oluso admin portal as an Angular library: tenant, user, client, journey and security administration, extensible with admin plugins.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "identity",
+    "admin",
+    "iam",
+    "oidc"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/admin-ui#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",
