@@ -10,7 +10,7 @@ Mount it in your own Angular app to host the admin portal yourself, rebrand it, 
 npm install @syndew/oluso-admin-ui
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-ui-core` and `@syndew/oluso-auth`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@angular/forms`, `@angular/platform-browser`, `@angular/router`, `angular-auth-oidc-client`, `rxjs`, `@syndew/oluso-auth`, `@syndew/oluso-ui-core`.
 
 ## Use
 

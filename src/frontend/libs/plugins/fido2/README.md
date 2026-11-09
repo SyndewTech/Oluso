@@ -13,18 +13,28 @@ It needs the FIDO2 module (`Syndew.Oluso.Enterprise.Fido2`) on the Oluso server.
 npm install @syndew/oluso-plugin-fido2
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-ui-core` and `@syndew/oluso-admin-ui`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@angular/forms`, `@angular/router`, `rxjs`, `@syndew/oluso-admin-ui`, `@syndew/oluso-ui-core`.
 
 ## Use
 
 ```ts
+import { inject, provideAppInitializer } from '@angular/core';
 import { PluginService } from '@syndew/oluso-ui-core';
 import { FIDO2_PLUGIN, FIDO2_ACCOUNT_PLUGIN } from '@syndew/oluso-plugin-fido2';
 
-// admin portal
-pluginService.registerAdminPlugin(FIDO2_PLUGIN);
-// account portal
-pluginService.registerAccountPlugin(FIDO2_ACCOUNT_PLUGIN);
+// admin app providers
+provideAppInitializer(() => {
+  const plugins = inject(PluginService);
+  plugins.registerAdminPlugin(FIDO2_PLUGIN);
+  plugins.markInitialized();
+})
+
+// account app providers
+provideAppInitializer(() => {
+  const plugins = inject(PluginService);
+  plugins.registerAccountPlugin(FIDO2_ACCOUNT_PLUGIN);
+  plugins.markInitialized();
+})
 ```
 
 ## Links

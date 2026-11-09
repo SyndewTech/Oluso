@@ -10,7 +10,7 @@ Mount it in your own Angular app, replace its landing page through the `ACCOUNT_
 npm install @syndew/oluso-account-ui
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-ui-core` and `@syndew/oluso-auth`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@angular/forms`, `@angular/router`, `angular-auth-oidc-client`, `rxjs`, `@syndew/oluso-auth`, `@syndew/oluso-ui-core`.
 
 ## Use
 

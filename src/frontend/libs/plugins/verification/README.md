@@ -10,19 +10,26 @@ It plugs into the Oluso admin portal (`@syndew/oluso-admin-ui`) and needs the ve
 npm install @syndew/oluso-plugin-verification
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-ui-core` and `@syndew/oluso-admin-ui`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@angular/forms`, `@angular/router`, `rxjs`, `@syndew/oluso-admin-ui`, `@syndew/oluso-ui-core`.
 
 ## Use
 
-Register the plugin with the `PluginService` before the admin portal starts:
+Register the plugin with the `PluginService` when the admin app starts:
 
 ```ts
+import { inject, provideAppInitializer } from '@angular/core';
 import { PluginService } from '@syndew/oluso-ui-core';
 import { VERIFICATION_PLUGIN } from '@syndew/oluso-plugin-verification';
 
-pluginService.registerAdminPlugin(VERIFICATION_PLUGIN);
-pluginService.markInitialized();
+// in the admin app's providers
+provideAppInitializer(() => {
+  const plugins = inject(PluginService);
+  plugins.registerAdminPlugin(VERIFICATION_PLUGIN);
+  plugins.markInitialized();
+})
 ```
+
+Register every plugin before `markInitialized()`.
 
 ## Links
 

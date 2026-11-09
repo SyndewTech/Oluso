@@ -16,15 +16,23 @@ The Oluso admin, workspace and account portals use it, and so can your own Angul
 npm install @syndew/oluso-auth
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-ui-core`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@angular/router`, `rxjs`, `@syndew/oluso-ui-core`.
 
 ## Use
 
 ```ts
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
-import { authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@syndew/oluso-auth';
+import { tenantInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@syndew/oluso-auth';
 
-provideHttpClient(withInterceptors([authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor]));
+provideHttpClient(withInterceptors([tenantInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor]));
+```
+
+The interceptors and guards use the app's `AuthProvider`. The portal libraries register one (`provideAdminAuth()`, `provideAccountAuth()`, `provideWorkspaceAuth()`); in your own app, provide a class that extends `AuthProvider`:
+
+```ts
+import { AuthProvider } from '@syndew/oluso-auth';
+
+providers: [{ provide: AuthProvider, useClass: MyAuthProvider }]
 ```
 
 Protect routes with `authGuard`, or `permissionGuard` for a permission the signed-in user must hold.

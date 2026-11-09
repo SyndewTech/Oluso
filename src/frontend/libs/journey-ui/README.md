@@ -10,7 +10,7 @@ Only apps that render journeys need this package (and `@syndew/oluso-sdk`). `@sy
 npm install @syndew/oluso-journey-ui @syndew/oluso-sdk
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-auth` and `@syndew/oluso-sdk`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@syndew/oluso-auth`, `@syndew/oluso-sdk`.
 
 ## Links
 

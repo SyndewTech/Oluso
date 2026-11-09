@@ -8,7 +8,7 @@
     <!-- Package metadata -->
     <PackageId>Oluso.Imaging</PackageId>
     <Authors>Oluso</Authors>
-    <Description>Image resizing for Oluso public assets. Isolates the image library behind IImageResizer; the default implementation uses SkiaSharp (MIT-licensed) as a local/dev resize shim that mirrors Cloudflare Image Resizing's options. ImageSharp is intentionally NOT used — its Six Labors Split License is not compatible with commercial redistribution.</Description>
+    <Description>Image resizing for Oluso public assets, behind IImageResizer. The default implementation uses SkiaSharp and mirrors Cloudflare Image Resizing's options.</Description>
     <PackageTags>identity;images;resize;skiasharp;cdn</PackageTags>
 
     <!-- Generate XML documentation -->

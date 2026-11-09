@@ -12,7 +12,6 @@
     <Company>Your Company</Company>
     <Description>Default UI views for Oluso User Journey Engine. Provides ready-to-use views for login, signup, MFA, and other authentication steps. Optional package - customize or replace with your own views.</Description>
     <PackageTags>oluso;identity;ui;views;login;authentication</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <!-- Enable Razor views -->
     <AddRazorSupportForMvc>true</AddRazorSupportForMvc>

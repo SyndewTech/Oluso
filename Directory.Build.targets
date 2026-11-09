@@ -14,4 +14,18 @@
     <PackageId Condition="'$(PackageId)' == ''">$(AssemblyName)</PackageId>
     <PackageId>$(PackageIdPrefix)$(PackageId)</PackageId>
   </PropertyGroup>
+
+  <!-- The public packages (src/backend) are under the Oluso Community License and each has its
+       own README.md, shown on the package page. A missing README fails the pack (NU5039). -->
+  <PropertyGroup>
+    <IsPublicOlusoPackage Condition="'$(IsPackable)' == 'true' and $([System.String]::Copy('$(MSBuildProjectDirectory)').Replace('\', '/').Contains('/src/backend/'))">true</IsPublicOlusoPackage>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(IsPublicOlusoPackage)' == 'true'">
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(IsPublicOlusoPackage)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 </Project>

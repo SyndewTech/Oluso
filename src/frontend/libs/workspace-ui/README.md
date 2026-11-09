@@ -10,7 +10,7 @@ Mount it in your own Angular app and add pages with workspace plugins.
 npm install @syndew/oluso-workspace-ui
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21), `@syndew/oluso-ui-core` and `@syndew/oluso-auth`.
+Peer dependencies (npm installs them with the package): `@angular/common`, `@angular/core`, `@angular/forms`, `@angular/router`, `@microsoft/signalr`, `angular-auth-oidc-client`, `rxjs`, `@syndew/oluso-auth`, `@syndew/oluso-ui-core`.
 
 ## Use
 

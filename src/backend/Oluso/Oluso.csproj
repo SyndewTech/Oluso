@@ -11,11 +11,6 @@
     <Company>Syndew Technology Ltd</Company>
     <Description>Modern OAuth 2.0 and OpenID Connect identity server for ASP.NET Core. Multi-tenant, extensible, with User Journey Engine for customizable authentication flows.</Description>
     <PackageTags>oauth;oidc;openidconnect;identity;authentication;authorization;multi-tenant</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/your-org/oluso</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/your-org/oluso</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
 
     <!-- Generate XML documentation -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -44,11 +39,6 @@
 
     <!-- WASM plugin runtime -->
     <PackageReference Include="Extism.Sdk" />
-  </ItemGroup>
-
-  <!-- Include README in package -->
-  <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <!-- Reference the Oluso packages -->

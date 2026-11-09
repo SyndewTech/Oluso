@@ -15,7 +15,7 @@ Every other `@syndew/oluso-*` Angular package builds on it.
 npm install @syndew/oluso-ui-core
 ```
 
-Peer dependencies: `@angular/core` and `@angular/common` (Angular 21).
+Peer dependencies (npm installs them with the package): `@angular/cdk`, `@angular/common`, `@angular/core`, `@angular/forms`, `@angular/platform-browser`, `@angular/router`, `@jsverse/transloco`, `dompurify`, `marked`, `rxjs`.
 
 ## Use
 

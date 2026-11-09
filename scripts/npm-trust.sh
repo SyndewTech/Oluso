@@ -33,7 +33,11 @@ echo "Building the frontend libraries..."
 
 PACKAGES=(sdk/js)
 for dir in src/frontend/dist/libs/*/ src/frontend/dist/libs/plugins/*/; do
-    [ -f "$dir/package.json" ] && PACKAGES+=("${dir%/}")
+    if [ -f "$dir/package.json" ]; then
+        # The packages say "SEE LICENSE IN LICENSE"; the SDK copies its own in prepack.
+        cp LICENSE "$dir"
+        PACKAGES+=("${dir%/}")
+    fi
 done
 
 # A failure on one package is reported and the rest still run; rerun the script for what failed

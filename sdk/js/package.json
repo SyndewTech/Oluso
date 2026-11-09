@@ -7,6 +7,10 @@
     "directory": "sdk/js"
   },
   "description": "Oluso JavaScript SDK for embedding journeys and forms",
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/sdk/js#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
