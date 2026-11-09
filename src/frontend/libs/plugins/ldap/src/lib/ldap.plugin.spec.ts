@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { NavItem } from '@oluso/ui-core';
+import { NavItem } from '@syndew/oluso-ui-core';
 import { LDAP_PLUGIN } from './ldap.plugin';
 
 /** Every full route path the plugin declares, e.g. '/ldap/dashboard' or '/ldap/items/:id'. */

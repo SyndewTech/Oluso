@@ -2,7 +2,7 @@ import { Component, inject, signal, computed, effect, OnInit, OnDestroy } from '
 import { CommonModule, NgComponentOutlet } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { OidcSecurityService } from 'angular-auth-oidc-client';
-import { WorkspaceNavItem, PluginService, IconComponent, HelpPanelService, HelpPanelComponent, FeedbackService, FeedbackFabComponent, FeedbackPanelComponent, ToastContainerComponent, CommandPaletteComponent, ShortcutsHelpComponent, CommandRegistryService, AnyCommand, WorkspaceApp, navItemCommand, resolveCommandApp, workspaceAppForNavItem, workspaceCommandAreas } from '@oluso/ui-core';
+import { WorkspaceNavItem, PluginService, IconComponent, HelpPanelService, HelpPanelComponent, FeedbackService, FeedbackFabComponent, FeedbackPanelComponent, ToastContainerComponent, CommandPaletteComponent, ShortcutsHelpComponent, CommandRegistryService, AnyCommand, WorkspaceApp, navItemCommand, resolveCommandApp, workspaceAppForNavItem, workspaceCommandAreas } from '@syndew/oluso-ui-core';
 import { WorkspaceAuthService } from '../../services/workspace-auth.service';
 import { AppSwitcherService } from '../../services/app-switcher.service';
 import { ActionCenterService } from '../../services/action-center.service';

@@ -15,7 +15,7 @@ import {
   LocaleDatePipe,
   ToastService,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { ClientService } from '../../services/client.service';
 import { PlatformClientService } from '../../services/platform-client.service';
 import { ApiScopeService } from '../../services/api-scope.service';

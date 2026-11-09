@@ -14,7 +14,7 @@ import {
   ToastService,
   extractErrorMessage,
   remoteOptions,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { AuditLogService } from '../../services/audit-log.service';
 import { ClientService } from '../../services/client.service';
 import { UserService } from '../../services/user.service';

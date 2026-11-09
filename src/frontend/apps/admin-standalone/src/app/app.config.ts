@@ -1,8 +1,8 @@
 import { ApplicationConfig, provideBrowserGlobalErrorListeners, APP_INITIALIZER, Injector, inject } from '@angular/core';
 import { provideRouter } from '@angular/router';
-import { provideAppTitle } from '@oluso/ui-core';
+import { provideAppTitle } from '@syndew/oluso-ui-core';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
-import { tenantInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@oluso/auth';
+import { tenantInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@syndew/oluso-auth';
 import {
   ADMIN_ROUTES,
   ApiService,
@@ -10,21 +10,21 @@ import {
   AdminAuthService,
   serverUrl,
   apiUrl,
-} from '@oluso/admin-ui';
+} from '@syndew/oluso-admin-ui';
 import {
   PluginService,
   API_BASE_URL,
   provideTerminology,
   loadTerminology,
   LocaleService,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { firstValueFrom } from 'rxjs';
-import { FIDO2_PLUGIN } from '@oluso/plugins/fido2';
-import { LDAP_PLUGIN } from '@oluso/plugins/ldap';
-import { SAML_PLUGIN } from '@oluso/plugins/saml';
-import { SCIM_PLUGIN } from '@oluso/plugins/scim';
-import { VERIFICATION_PLUGIN } from '@oluso/plugins/verification';
-import { TELEMETRY_PLUGIN } from '@oluso/plugins/telemetry';
+import { FIDO2_PLUGIN } from '@syndew/oluso-plugin-fido2';
+import { LDAP_PLUGIN } from '@syndew/oluso-plugin-ldap';
+import { SAML_PLUGIN } from '@syndew/oluso-plugin-saml';
+import { SCIM_PLUGIN } from '@syndew/oluso-plugin-scim';
+import { VERIFICATION_PLUGIN } from '@syndew/oluso-plugin-verification';
+import { TELEMETRY_PLUGIN } from '@syndew/oluso-plugin-telemetry';
 
 function initializeApp(): () => Promise<void> {
   return async () => {

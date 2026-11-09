@@ -2,7 +2,7 @@ import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { CardComponent, ButtonComponent, InputComponent, ModalComponent, BadgeComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, InputComponent, ModalComponent, BadgeComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { AccountService } from '../../services/account.service';
 import { SecurityOverview, MfaStatus, ChangePasswordRequest, ExternalLogin } from '../../models';
 

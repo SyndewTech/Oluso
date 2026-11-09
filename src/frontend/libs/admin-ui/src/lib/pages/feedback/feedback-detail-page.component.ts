@@ -8,7 +8,7 @@ import {
   IconComponent,
   ModalComponent,
   AuthFilePipe,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { FeedbackAdminService } from '../../services/feedback-admin.service';
 import { FeedbackDto, FEEDBACK_STATUSES } from '../../models/feedback.model';
 

@@ -5,9 +5,9 @@ import { firstValueFrom, filter } from 'rxjs';
 import { WorkspaceUser } from '../models';
 import { WorkspaceApiService } from './workspace-api.service';
 import { WorkspaceAppsConfigService } from './workspace-apps-config.service';
-import { FeatureService, ModuleSeatService, PermissionsService } from '@oluso/ui-core';
+import { FeatureService, ModuleSeatService, PermissionsService } from '@syndew/oluso-ui-core';
 import { OidcSecurityService, PublicEventsService, EventTypes } from 'angular-auth-oidc-client';
-import { AuthStore, checkAuthRenewingSession, rememberReturnUrl } from '@oluso/auth';
+import { AuthStore, checkAuthRenewingSession, rememberReturnUrl } from '@syndew/oluso-auth';
 
 /**
  * Workspace authentication and authorization service.

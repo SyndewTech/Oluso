@@ -1,15 +1,15 @@
 import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CardComponent, ButtonComponent, IconComponent, TAB_CONTEXT } from '@oluso/ui-core';
-import { AuthStore } from '@oluso/auth';
+import { CardComponent, ButtonComponent, IconComponent, TAB_CONTEXT } from '@syndew/oluso-ui-core';
+import { AuthStore } from '@syndew/oluso-auth';
 import {
   LocaleService,
   LocaleSettings,
   CurrencyInfo,
   LocaleInfo,
   DEFAULT_LOCALE_SETTINGS,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { TenantService } from '../../services/tenant.service';
 
 const COMMON_TIMEZONES = [

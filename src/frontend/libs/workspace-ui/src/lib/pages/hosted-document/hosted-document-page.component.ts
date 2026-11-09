@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpBackend, HttpClient } from '@angular/common/http';
-import { LocaleDatePipe } from '@oluso/ui-core';
+import { LocaleDatePipe } from '@syndew/oluso-ui-core';
 import { apiUrl } from '../../auth/oidc.config';
 
 /**

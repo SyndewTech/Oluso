@@ -4,7 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
-import { PluginService, ToastService } from '@oluso/ui-core';
+import { PluginService, ToastService } from '@syndew/oluso-ui-core';
 import { SettingsPageComponent } from './settings-page.component';
 import { SettingsService } from '../../services/settings.service';
 import { ServerSettings, prefixScopeSuffixMaxLengthError } from '../../models/server-settings.model';

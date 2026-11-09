@@ -19,7 +19,7 @@ import {
   extractErrorMessage,
   HasPermissionDirective,
   ConfirmDialogComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { UserService } from '../../services/user.service';
 import { RoleService } from '../../services/role.service';
 import { UserDto, UserClaimDto, UserSessionDto, ExternalLoginDto, RoleDto } from '../../models/index';

@@ -1,9 +1,15 @@
 {
-  "name": "@oluso/auth",
+  "name": "@syndew/oluso-auth",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyndewTech/Oluso.git",
+    "directory": "src/frontend/libs/auth"
+  },
   "peerDependencies": {
     "@angular/common": "^21.1.0",
-    "@angular/core": "^21.1.0"
+    "@angular/core": "^21.1.0",
+    "@syndew/oluso-ui-core": "*"
   },
   "sideEffects": false,
   "publishConfig": {

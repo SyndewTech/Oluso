@@ -1,7 +1,7 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ToastService } from '@oluso/ui-core';
+import { ToastService } from '@syndew/oluso-ui-core';
 import { RealtimeService } from './realtime.service';
 
 /**

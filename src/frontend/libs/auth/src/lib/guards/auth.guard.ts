@@ -1,7 +1,7 @@
 import { inject } from '@angular/core';
 import { Router, CanActivateFn, ActivatedRouteSnapshot, RouterStateSnapshot } from '@angular/router';
 import { AuthStore } from '../stores/auth.store';
-import { PermissionsService } from '@oluso/ui-core';
+import { PermissionsService } from '@syndew/oluso-ui-core';
 
 /**
  * Auth Guard

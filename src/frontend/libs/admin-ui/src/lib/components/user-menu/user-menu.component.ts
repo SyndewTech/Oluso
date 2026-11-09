@@ -1,7 +1,7 @@
 import { Component, ElementRef, EventEmitter, HostListener, Input, Output, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { AuthStore } from '@oluso/auth';
-import { IconComponent } from '@oluso/ui-core';
+import { AuthStore } from '@syndew/oluso-auth';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import { accountUrl, workspaceUrl } from '../../config';
 
 @Component({

@@ -15,7 +15,7 @@ import {
 import { JourneyPolicyListItem } from '../models/journey.model';
 import { IdentityProvider } from '../models/identity-provider.model';
 import { PaginationParams } from '../models/pagination-params.model';
-import { PaginatedResponse, LocaleSettings } from '@oluso/ui-core';
+import { PaginatedResponse, LocaleSettings } from '@syndew/oluso-ui-core';
 
 export interface CustomWorkspaceApp {
   id: string;

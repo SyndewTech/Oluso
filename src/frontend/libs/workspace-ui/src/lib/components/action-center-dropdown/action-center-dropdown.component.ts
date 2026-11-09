@@ -1,7 +1,7 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { IconComponent } from '@oluso/ui-core';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import { ActionCenterService } from '../../services/action-center.service';
 import { AppSwitcherService } from '../../services/app-switcher.service';
 import { ActionItem } from '../../models';

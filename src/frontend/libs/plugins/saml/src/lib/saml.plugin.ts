@@ -1,4 +1,4 @@
-import { AdminPlugin, NavItem } from '@oluso/ui-core';
+import { AdminPlugin, NavItem } from '@syndew/oluso-ui-core';
 import { SamlIdpSettingsTabComponent } from './components/saml-idp-settings-tab/saml-idp-settings-tab.component';
 import { SAML_ROUTES } from './saml.routes';
 

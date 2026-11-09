@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil, interval } from 'rxjs';
-import { IconComponent } from '@oluso/ui-core';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import { TelemetryService } from '../../services/telemetry.service';
 import { LogEntry, LOG_LEVEL_CONFIG, LogLevel } from '../../models/telemetry.model';
 

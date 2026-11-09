@@ -2,7 +2,7 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { LocaleDatePipe, PaginationComponent, ToastService, extractErrorMessage } from '@oluso/ui-core';
+import { LocaleDatePipe, PaginationComponent, ToastService, extractErrorMessage } from '@syndew/oluso-ui-core';
 import { VerificationService } from '../../services/verification.service';
 import {
   BusinessVerificationStatus,

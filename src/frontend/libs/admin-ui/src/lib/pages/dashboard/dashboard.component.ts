@@ -1,8 +1,8 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { CardComponent, IconComponent } from '@oluso/ui-core';
-import { PluginService } from '@oluso/ui-core';
+import { CardComponent, IconComponent } from '@syndew/oluso-ui-core';
+import { PluginService } from '@syndew/oluso-ui-core';
 import { DashboardService, StatCard, DashboardStats } from '../../services/dashboard.service';
 import { AuditLogService } from '../../services/audit-log.service';
 import { AuditLog } from '../../models/audit-log.model';

@@ -1,4 +1,4 @@
-import { AdminPlugin, AccountPlugin, NavItem } from '@oluso/ui-core';
+import { AdminPlugin, AccountPlugin, NavItem } from '@syndew/oluso-ui-core';
 import { UserPasskeysTabComponent } from './components/user-passkeys-tab/user-passkeys-tab.component';
 import { PasskeysPageComponent } from './pages/account/passkeys-page.component';
 import { FIDO2_ROUTES } from './fido2.routes';

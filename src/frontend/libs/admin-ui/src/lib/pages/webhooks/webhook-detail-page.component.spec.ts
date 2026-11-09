@@ -3,7 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
-import { ToastService } from '@oluso/ui-core';
+import { ToastService } from '@syndew/oluso-ui-core';
 import { WebhookDetailPageComponent, WebhookSecretHandoff, validateWebhookForm } from './webhook-detail-page.component';
 import { WebhookService } from '../../services/webhook.service';
 import { ClientService } from '../../services/client.service';

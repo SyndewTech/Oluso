@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
-import { IconComponent, LocaleService } from '@oluso/ui-core';
+import { IconComponent, LocaleService } from '@syndew/oluso-ui-core';
 import {
   TerminologyService,
   ResolvedTerminologyKey,

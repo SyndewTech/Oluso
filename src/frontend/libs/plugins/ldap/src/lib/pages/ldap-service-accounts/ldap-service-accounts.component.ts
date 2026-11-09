@@ -1,7 +1,7 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { IconComponent, ModalComponent } from '@oluso/ui-core';
+import { IconComponent, ModalComponent } from '@syndew/oluso-ui-core';
 import { LdapService } from '../../services/ldap.service';
 import {
   ServiceAccount,

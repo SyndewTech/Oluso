@@ -3,7 +3,7 @@
  * No external dependencies — pure functions that take form data and declarative rules.
  *
  * Usage:
- *   import { validateForm, extractErrorMessage, type ValidationRule } from '@oluso/ui-core';
+ *   import { validateForm, extractErrorMessage, type ValidationRule } from '@syndew/oluso-ui-core';
  *
  *   const RULES: ValidationRule[] = [
  *     { field: 'name', label: 'Name', required: true, minLength: 2 },

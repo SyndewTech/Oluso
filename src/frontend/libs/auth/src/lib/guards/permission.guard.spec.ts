@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRouteSnapshot, CanActivateFn, Router, UrlTree, provideRouter } from '@angular/router';
 import { Observable, firstValueFrom, isObservable } from 'rxjs';
-import { PermissionsService } from '@oluso/ui-core';
+import { PermissionsService } from '@syndew/oluso-ui-core';
 import {
   PERMISSION_GUARD_TIMEOUT_MS,
   allPermissionsGuard,

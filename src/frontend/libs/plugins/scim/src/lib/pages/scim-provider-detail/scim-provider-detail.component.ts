@@ -2,8 +2,8 @@ import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { IconComponent } from '@oluso/ui-core';
-import { RoleService, TeamService, RoleDto, TeamSummary } from '@oluso/admin-ui';
+import { IconComponent } from '@syndew/oluso-ui-core';
+import { RoleService, TeamService, RoleDto, TeamSummary } from '@syndew/oluso-admin-ui';
 import { ScimService } from '../../services/scim.service';
 import {
   ScimProvider,

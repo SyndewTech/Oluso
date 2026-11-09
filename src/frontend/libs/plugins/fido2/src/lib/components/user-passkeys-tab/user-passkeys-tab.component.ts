@@ -1,6 +1,6 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ButtonComponent, IconComponent, TAB_CONTEXT, TabContext } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent, TAB_CONTEXT, TabContext } from '@syndew/oluso-ui-core';
 import { Fido2Service } from '../../services/fido2.service';
 import { Fido2Credential } from '../../models/fido2.model';
 

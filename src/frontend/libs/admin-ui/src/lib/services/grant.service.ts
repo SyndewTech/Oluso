@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
-import { PaginatedResponse } from '@oluso/ui-core';
+import { PaginatedResponse } from '@syndew/oluso-ui-core';
 import { PersistedGrant, DeviceFlowCode, ServerSideSession, GrantFilter } from '../models/grant.model';
 
 @Injectable({

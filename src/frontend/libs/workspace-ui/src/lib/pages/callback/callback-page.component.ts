@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { readAndClearReturnUrl } from '@oluso/auth';
+import { readAndClearReturnUrl } from '@syndew/oluso-auth';
 import { WorkspaceAuthService } from '../../services/workspace-auth.service';
 
 @Component({

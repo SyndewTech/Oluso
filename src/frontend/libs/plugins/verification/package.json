@@ -1,9 +1,16 @@
 {
-  "name": "@oluso/plugin-verification",
+  "name": "@syndew/oluso-plugin-verification",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyndewTech/Oluso.git",
+    "directory": "src/frontend/libs/plugins/verification"
+  },
   "peerDependencies": {
     "@angular/common": "^21.1.0",
-    "@angular/core": "^21.1.0"
+    "@angular/core": "^21.1.0",
+    "@syndew/oluso-admin-ui": "*",
+    "@syndew/oluso-ui-core": "*"
   },
   "sideEffects": false,
   "publishConfig": {

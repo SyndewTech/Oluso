@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { PaginatedResponse } from '@oluso/ui-core';
+import { PaginatedResponse } from '@syndew/oluso-ui-core';
 import { ApiService } from './api.service';
 import { PaginationParams } from '../models/pagination-params.model';
 import {

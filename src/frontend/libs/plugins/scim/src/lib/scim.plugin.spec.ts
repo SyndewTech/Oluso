@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { NavItem } from '@oluso/ui-core';
+import { NavItem } from '@syndew/oluso-ui-core';
 import { SCIM_PLUGIN } from './scim.plugin';
 
 /** Every full route path the plugin declares, e.g. '/scim/dashboard' or '/scim/items/:id'. */

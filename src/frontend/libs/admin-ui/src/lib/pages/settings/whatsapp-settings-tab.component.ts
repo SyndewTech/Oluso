@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ButtonComponent, IconComponent, LocaleDatePipe } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent, LocaleDatePipe } from '@syndew/oluso-ui-core';
 import { WhatsAppService } from '../../services/whatsapp.service';
 import {
   WhatsAppContact,

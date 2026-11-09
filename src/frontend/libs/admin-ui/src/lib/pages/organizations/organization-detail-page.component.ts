@@ -9,7 +9,7 @@ import {
   ModalComponent,
   IconComponent,
   DataTableComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { OrganizationService } from '../../services/organization.service';
 import {
   Organization,

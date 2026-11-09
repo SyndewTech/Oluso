@@ -1,5 +1,5 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
-import { IconComponent, LocaleService, describeZoneGap, timeZoneDifference } from '@oluso/ui-core';
+import { IconComponent, LocaleService, describeZoneGap, timeZoneDifference } from '@syndew/oluso-ui-core';
 
 /**
  * Shown in the top bar only when the organisation's time zone, which every time on the site is shown in, gives a

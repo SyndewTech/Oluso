@@ -2,7 +2,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { forkJoin } from 'rxjs';
-import { ButtonComponent, IconComponent, ToastService, extractErrorMessage } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent, ToastService, extractErrorMessage } from '@syndew/oluso-ui-core';
 import { VerificationService } from '../services/verification.service';
 import {
   BusinessVerificationCountry,

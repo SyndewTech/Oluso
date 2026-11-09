@@ -8,7 +8,7 @@ import {
   TAB_CONTEXT,
   TabContext,
   FileUploadService,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { SettingsService } from '../../services/settings.service';
 import { BrandingSettings, DEFAULT_BRANDING_SETTINGS } from '../../models/server-settings.model';
 

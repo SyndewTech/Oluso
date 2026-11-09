@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { CardComponent, ButtonComponent, BadgeComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { ApiScopeService } from '../../services/api-scope.service';
 import { ApiScopeDto } from '../../models/api-scope.model';
 import { PaginationParams } from '../../models/pagination-params.model';

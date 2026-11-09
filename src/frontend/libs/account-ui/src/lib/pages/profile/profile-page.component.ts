@@ -1,7 +1,7 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CardComponent, ButtonComponent, InputComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, InputComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { AccountService } from '../../services/account.service';
 import { AccountAuthService } from '../../services/account-auth.service';
 import { UserProfile, UpdateProfileRequest } from '../../models';

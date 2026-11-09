@@ -118,18 +118,18 @@ dotnet add package Syndew.Oluso.Enterprise.Saml
 
 Every project under `src/backend` is published this way (`Syndew.Oluso.Core`, `Syndew.Oluso.Enterprise.Fido2`, `Syndew.Oluso.Enterprise.Scim`, `Syndew.Oluso.Telemetry.OpenTelemetry` and so on). Namespaces and assembly names stay `Oluso.*`.
 
-npm packages are published under `@oluso/`:
+npm packages are published under `@syndew/oluso-*`:
 
 | Package | Description |
 |---------|-------------|
-| `@oluso/sdk` | JavaScript/TypeScript SDK: journey forms, OIDC and embedded sign-in, React components, drop-in embed scripts |
-| `@oluso/ui-core` | Shared Angular components |
-| `@oluso/auth` | Angular authentication helpers |
-| `@oluso/admin-ui` | Admin portal |
-| `@oluso/account-ui` | End-user account portal |
-| `@oluso/workspace-ui` | Workspace portal |
-| `@oluso/journey-ui` | Journey host component |
-| `@oluso/plugin-fido2`, `@oluso/plugin-ldap`, `@oluso/plugin-saml`, `@oluso/plugin-scim`, `@oluso/plugin-telemetry`, `@oluso/plugin-verification` | Admin UI plugins for the enterprise add-ons |
+| `@syndew/oluso-sdk` | JavaScript/TypeScript SDK: journey forms, OIDC and embedded sign-in, React components, drop-in embed scripts |
+| `@syndew/oluso-ui-core` | Shared Angular components |
+| `@syndew/oluso-auth` | Angular authentication helpers |
+| `@syndew/oluso-admin-ui` | Admin portal |
+| `@syndew/oluso-account-ui` | End-user account portal |
+| `@syndew/oluso-workspace-ui` | Workspace portal |
+| `@syndew/oluso-journey-ui` | Journey host component |
+| `@syndew/oluso-plugin-fido2`, `@syndew/oluso-plugin-ldap`, `@syndew/oluso-plugin-saml`, `@syndew/oluso-plugin-scim`, `@syndew/oluso-plugin-telemetry`, `@syndew/oluso-plugin-verification` | Admin UI plugins for the enterprise add-ons |
 
 ## Project Structure
 
@@ -147,7 +147,7 @@ npm packages are published under `@oluso/`:
 │   └── frontend/                       # Angular / Nx workspace
 │       ├── apps/                       # admin-, account- and workspace-standalone
 │       └── libs/                       # admin-ui, account-ui, workspace-ui, journey-ui, ui-core, auth, plugins
-├── sdk/js/                             # @oluso/sdk
+├── sdk/js/                             # @syndew/oluso-sdk
 ├── samples/
 │   ├── Oluso.Sample/                   # Complete sample server
 │   ├── Oluso.TestClient/               # Sample OIDC client

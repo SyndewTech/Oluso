@@ -1,7 +1,7 @@
 import { HttpInterceptorFn, HttpRequest, HttpHandlerFn, HttpEvent, HttpErrorResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { Observable, catchError, throwError } from 'rxjs';
-import { ToastService, SKIP_ERROR_TOAST } from '@oluso/ui-core';
+import { ToastService, SKIP_ERROR_TOAST } from '@syndew/oluso-ui-core';
 
 /**
  * Error Interceptor

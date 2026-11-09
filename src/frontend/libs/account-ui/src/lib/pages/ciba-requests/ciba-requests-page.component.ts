@@ -1,6 +1,6 @@
 import { Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { CardComponent, ButtonComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { AccountService } from '../../services/account.service';
 import { CibaRequest } from '../../models';
 

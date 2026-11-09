@@ -1,4 +1,4 @@
-import { AdminPlugin, NavItem } from '@oluso/ui-core';
+import { AdminPlugin, NavItem } from '@syndew/oluso-ui-core';
 import { LdapServerSettingsTabComponent } from './components/ldap-server-settings-tab/ldap-server-settings-tab.component';
 import { LDAP_ROUTES } from './ldap.routes';
 

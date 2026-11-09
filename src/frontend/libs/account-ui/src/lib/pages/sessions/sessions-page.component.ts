@@ -1,6 +1,6 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { CardComponent, ButtonComponent, BadgeComponent, ModalComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, ModalComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { AccountService } from '../../services/account.service';
 import { Session } from '../../models';
 

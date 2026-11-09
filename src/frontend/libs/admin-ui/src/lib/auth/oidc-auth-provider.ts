@@ -2,7 +2,7 @@ import { Injectable, EnvironmentProviders, inject, makeEnvironmentProviders } fr
 import { Observable } from 'rxjs';
 import { filter, map, share } from 'rxjs/operators';
 import { AbstractSecurityStorage, EventTypes, OidcSecurityService, OpenIdConfiguration, PublicEventsService, provideAuth } from 'angular-auth-oidc-client';
-import { AuthProvider, AuthRefreshResult, RememberMeSecurityStorage, RenewAwareAuthProvider } from '@oluso/auth';
+import { AuthProvider, AuthRefreshResult, RememberMeSecurityStorage, RenewAwareAuthProvider } from '@syndew/oluso-auth';
 import { adminOidcConfig } from './oidc.config';
 
 @Injectable({ providedIn: 'root' })

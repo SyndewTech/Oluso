@@ -1,5 +1,5 @@
 import { PassedInitialConfig, LogLevel } from 'angular-auth-oidc-client';
-import { readTenantSso, resolveTenantSsoAuthority, tenantSsoAuthorizeParams } from '@oluso/auth';
+import { readTenantSso, resolveTenantSsoAuthority, tenantSsoAuthorizeParams } from '@syndew/oluso-auth';
 import { serverUrl } from '../config';
 
 const sso = readTenantSso();

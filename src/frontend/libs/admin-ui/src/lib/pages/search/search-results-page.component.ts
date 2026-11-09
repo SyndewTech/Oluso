@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Subject, catchError, of, switchMap, takeUntil } from 'rxjs';
-import { IconComponent } from '@oluso/ui-core';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import {
   AdminSearchService, AdminSearchProvider, AdminSearchResultItem, AdminSearchResponse,
   AdminSearchBadgeTone, PLATFORM_MODULE, MIN_SEARCH_LENGTH,

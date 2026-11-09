@@ -2,7 +2,7 @@ import { InjectionToken, inject } from '@angular/core';
 import { toObservable } from '@angular/core/rxjs-interop';
 import { Router, CanActivateFn, ActivatedRouteSnapshot, UrlTree } from '@angular/router';
 import { Observable, filter, map, of, take, timeout } from 'rxjs';
-import { PermissionsService } from '@oluso/ui-core';
+import { PermissionsService } from '@syndew/oluso-ui-core';
 
 /**
  * How long a permission guard waits for the app to load the current user's

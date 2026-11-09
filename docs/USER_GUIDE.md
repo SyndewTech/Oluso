@@ -1255,7 +1255,7 @@ builder.Services.AddOlusoVerificationForProvider(provider, connectionString); //
 The step only appears in the journey builder when the module is added. The host also needs
 file storage (`AddLocalFileStorage(...)` or blob storage) for documents, and an email sender
 (`AddMessaging(...)`) for the "email me the outcome" option; without one the option isn't
-offered. The admin pages ship as the `@oluso/plugins/verification` admin plugin
+offered. The admin pages ship as the `@syndew/oluso-plugin-verification` admin plugin
 (`pluginService.registerAdminPlugin(VERIFICATION_PLUGIN)`).
 
 Permissions: `business_verification.read` (businesses, applicants, documents),

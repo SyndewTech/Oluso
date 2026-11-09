@@ -2,8 +2,8 @@ import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { IconComponent } from '@oluso/ui-core';
-import { ClientService } from '@oluso/admin-ui';
+import { IconComponent } from '@syndew/oluso-ui-core';
+import { ClientService } from '@syndew/oluso-admin-ui';
 import { ScimService } from '../../services/scim.service';
 import { ScimClient, ScimProvisioningLog, ScimAttributeMapping } from '../../models/scim.model';
 

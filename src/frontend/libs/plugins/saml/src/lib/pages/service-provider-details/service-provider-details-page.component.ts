@@ -2,7 +2,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { ButtonComponent, IconComponent } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { SamlService } from '../../services/saml.service';
 import {
   CreateSamlServiceProviderRequest,

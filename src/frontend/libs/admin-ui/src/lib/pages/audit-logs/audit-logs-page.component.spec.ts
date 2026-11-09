@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { of } from 'rxjs';
-import { ToastService } from '@oluso/ui-core';
+import { ToastService } from '@syndew/oluso-ui-core';
 import { AuditLogsPageComponent } from './audit-logs-page.component';
 import { AuditLogService } from '../../services/audit-log.service';
 import { ClientService } from '../../services/client.service';

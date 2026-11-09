@@ -1,7 +1,7 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { IconComponent } from '@oluso/ui-core';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import { LdapService } from '../../services/ldap.service';
 import { LdapServerInfo } from '../../models/ldap.model';
 

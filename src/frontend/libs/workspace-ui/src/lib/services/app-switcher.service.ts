@@ -1,6 +1,6 @@
 import { Injectable, inject, signal, computed, effect } from '@angular/core';
 import { Router } from '@angular/router';
-import { PluginService, WorkspaceApp, WorkspaceNavItem } from '@oluso/ui-core';
+import { PluginService, WorkspaceApp, WorkspaceNavItem } from '@syndew/oluso-ui-core';
 import { WorkspaceAuthService } from './workspace-auth.service';
 import { WorkspaceAppsConfigService } from './workspace-apps-config.service';
 

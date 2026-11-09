@@ -2,7 +2,7 @@ import { Component, inject, signal, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, ActivatedRoute } from '@angular/router';
-import { IconComponent } from '@oluso/ui-core';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import { TelemetryService } from '../../services/telemetry.service';
 import {
   Trace,

@@ -5,4 +5,4 @@ export type {
   WorkspaceQuickAction,
   WorkspaceStatItem,
   WorkspaceDashboardWidget,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';

@@ -2,7 +2,7 @@ import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { IconComponent, ModalComponent } from '@oluso/ui-core';
+import { IconComponent, ModalComponent } from '@syndew/oluso-ui-core';
 import { ScimService } from '../../services/scim.service';
 import { ScimClient } from '../../models/scim.model';
 

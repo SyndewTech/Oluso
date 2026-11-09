@@ -4,7 +4,7 @@ import {
   WorkspacePlugin,
   WorkspaceNavItem,
   WorkspaceDashboardWidget,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { WorkspaceAuthService } from './workspace-auth.service';
 
 /**

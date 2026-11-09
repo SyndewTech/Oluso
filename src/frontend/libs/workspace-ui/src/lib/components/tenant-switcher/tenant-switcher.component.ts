@@ -1,8 +1,8 @@
 import { Component, inject, signal, computed, OnInit, ElementRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { AuthProvider, AuthStore } from '@oluso/auth';
-import { IconComponent, ToastService, extractErrorMessage } from '@oluso/ui-core';
+import { AuthProvider, AuthStore } from '@syndew/oluso-auth';
+import { IconComponent, ToastService, extractErrorMessage } from '@syndew/oluso-ui-core';
 import { apiUrl } from '../../auth/oidc.config';
 
 interface UserTenant {

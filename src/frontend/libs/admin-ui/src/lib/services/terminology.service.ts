@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { LocaleService } from '@oluso/ui-core';
+import { LocaleService } from '@syndew/oluso-ui-core';
 import { ApiService } from './api.service';
 
 /** A single key in the Terminology Center grid (matches backend ResolvedTerminologyKey). */

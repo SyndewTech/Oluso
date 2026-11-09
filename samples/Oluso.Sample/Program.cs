@@ -27,11 +27,12 @@ var builder = WebApplication.CreateBuilder(args);
 // Data Protection encrypts the signing keys' private keys and protected tenant settings, so its key
 // ring has to outlive the process. dotnet run keeps it in your user profile; in a container, set
 // DataProtection:KeysPath to a directory on a volume (the Docker image uses /app/data/dataprotection-keys).
+// A relative path is under the app's folder (App_Data/dataprotection-keys on IIS hosting).
 var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
 if (!string.IsNullOrEmpty(dataProtectionKeysPath))
 {
     builder.Services.AddDataProtection()
-        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+        .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, dataProtectionKeysPath)));
 }
 
 // Add database logging for telemetry

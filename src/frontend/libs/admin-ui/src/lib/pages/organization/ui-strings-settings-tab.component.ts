@@ -1,5 +1,5 @@
 import { Component, inject } from '@angular/core';
-import { TAB_CONTEXT, TabContext } from '@oluso/ui-core';
+import { TAB_CONTEXT, TabContext } from '@syndew/oluso-ui-core';
 import { LocaleOverrideEditorComponent } from '../../components/locale-override-editor.component';
 
 @Component({

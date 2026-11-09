@@ -1,7 +1,7 @@
 import { Component, computed, inject, input, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ButtonComponent, IconComponent } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { LocaleOverridesService } from '../services/locale-overrides.service';
 
 interface StringEntry {

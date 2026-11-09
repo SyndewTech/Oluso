@@ -8,7 +8,7 @@ import {
   BadgeComponent,
   IconComponent,
   ModalComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { TeamService } from '../../services/team.service';
 import { UserService } from '../../services/user.service';
 import { Team, TeamMembership, TeamMemberRole, managedByLabel } from '../../models/team.model';

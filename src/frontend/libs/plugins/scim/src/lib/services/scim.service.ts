@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiService } from '@oluso/admin-ui';
-import type { PaginatedResponse } from '@oluso/ui-core';
+import { ApiService } from '@syndew/oluso-admin-ui';
+import type { PaginatedResponse } from '@syndew/oluso-ui-core';
 import {
   ScimClient,
   CreateScimClientRequest,

@@ -8,7 +8,7 @@ import {
 } from '@microsoft/signalr';
 import { BehaviorSubject, Observable, Subject, filter, firstValueFrom } from 'rxjs';
 import { HttpClient } from '@angular/common/http';
-import { LoggerService } from '@oluso/ui-core';
+import { LoggerService } from '@syndew/oluso-ui-core';
 import { apiUrl } from '../auth/oidc.config';
 
 export interface RealtimeEvent<TPayload = unknown> {

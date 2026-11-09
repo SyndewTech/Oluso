@@ -12,7 +12,7 @@ import {
   IconComponent,
   ToastService,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { ApiScopeService } from '../../services/api-scope.service';
 import { SettingsService } from '../../services/settings.service';
 import { ApiScopeDto, CreateApiScopeRequest } from '../../models/api-scope.model';

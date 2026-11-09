@@ -58,7 +58,7 @@ import type { OlusoConfig } from './types';
  *
  * @example
  * ```typescript
- * import { createClient } from '@oluso/sdk';
+ * import { createClient } from '@syndew/oluso-sdk';
  *
  * const oluso = createClient({
  *   serverUrl: 'https://auth.yoursite.com',

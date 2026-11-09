@@ -1,4 +1,4 @@
-import { PaginatedResponse } from '@oluso/ui-core';
+import { PaginatedResponse } from '@syndew/oluso-ui-core';
 
 /**
  * Telemetry overview metrics

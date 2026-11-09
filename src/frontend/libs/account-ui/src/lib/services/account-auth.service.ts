@@ -2,8 +2,8 @@ import { Injectable, inject, signal, computed } from '@angular/core';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { OidcSecurityService } from 'angular-auth-oidc-client';
-import { checkAuthRenewingSession } from '@oluso/auth';
-import { PluginService } from '@oluso/ui-core';
+import { checkAuthRenewingSession } from '@syndew/oluso-auth';
+import { PluginService } from '@syndew/oluso-ui-core';
 import { ApiService } from './api.service';
 
 export interface AccountMe {

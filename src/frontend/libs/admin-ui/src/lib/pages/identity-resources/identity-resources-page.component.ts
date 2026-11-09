@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { CardComponent, ButtonComponent, BadgeComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { IdentityResourceService } from '../../services/identity-resource.service';
 import { IdentityResourceDto } from '../../models/identity-resource.model';
 

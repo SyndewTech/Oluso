@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { CardComponent, ButtonComponent, BadgeComponent, IconComponent, ConfirmDialogComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, IconComponent, ConfirmDialogComponent } from '@syndew/oluso-ui-core';
 import { PlatformClientService } from '../../services/platform-client.service';
 import { Client } from '../../models/client.model';
 

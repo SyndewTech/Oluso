@@ -2,7 +2,7 @@ import { Component, computed, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { CardComponent, ButtonComponent, BadgeComponent, IconComponent, InputComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, IconComponent, InputComponent } from '@syndew/oluso-ui-core';
 import { IdentityProviderService } from '../../services/identity-provider.service';
 import { ExternalProviderType, IdentityProvider, ProviderTypeInfo, ProviderTypes } from '../../models/identity-provider.model';
 

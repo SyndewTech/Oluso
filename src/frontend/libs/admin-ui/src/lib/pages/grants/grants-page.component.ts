@@ -1,6 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { CardComponent, ButtonComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { GrantService } from '../../services/grant.service';
 import { PersistedGrant, ServerSideSession, GrantFilter } from '../../models/grant.model';
 

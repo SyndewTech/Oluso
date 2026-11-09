@@ -1,7 +1,7 @@
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ButtonComponent, CardComponent, IconComponent, LocaleDatePipe, TAB_CONTEXT, TabContext } from '@oluso/ui-core';
+import { ButtonComponent, CardComponent, IconComponent, LocaleDatePipe, TAB_CONTEXT, TabContext } from '@syndew/oluso-ui-core';
 import { Observable } from 'rxjs';
 import { SenderProfilesService, TenantReplyTo } from '../../services/sender-profiles.service';
 import {

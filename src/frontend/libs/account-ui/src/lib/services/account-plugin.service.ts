@@ -1,5 +1,5 @@
 import { Injectable, inject, computed } from '@angular/core';
-import { PluginService, NavItem } from '@oluso/ui-core';
+import { PluginService, NavItem } from '@syndew/oluso-ui-core';
 import { AccountAuthService } from './account-auth.service';
 
 /**

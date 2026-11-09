@@ -1,7 +1,7 @@
 import { Component, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { IconComponent, PageSlotHostComponent } from '@oluso/ui-core';
+import { IconComponent, PageSlotHostComponent } from '@syndew/oluso-ui-core';
 import { WorkspaceAuthService } from '../../services/workspace-auth.service';
 import { WorkspacePluginService } from '../../services/workspace-plugin.service';
 @Component({

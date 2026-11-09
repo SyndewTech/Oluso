@@ -101,6 +101,6 @@ export * from './lib/components/journey/index';
 // Tenant Switcher
 export * from './lib/components/tenant-switcher/tenant-switcher.component';
 
-// Toast — moved to @oluso/ui-core. Re-exported here so existing
-// imports from @oluso/admin-ui keep working.
-export { ToastContainerComponent } from '@oluso/ui-core';
+// Toast — moved to @syndew/oluso-ui-core. Re-exported here so existing
+// imports from @syndew/oluso-admin-ui keep working.
+export { ToastContainerComponent } from '@syndew/oluso-ui-core';

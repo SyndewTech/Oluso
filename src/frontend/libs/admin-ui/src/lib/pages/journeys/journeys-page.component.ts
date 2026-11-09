@@ -11,7 +11,7 @@ import {
   PromptDialogComponent,
   ToastService,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { JourneyService } from '../../services/journey.service';
 import {
   JourneyPolicyListItem,

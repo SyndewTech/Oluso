@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
-import { IconComponent, ModalComponent } from '@oluso/ui-core';
+import { IconComponent, ModalComponent } from '@syndew/oluso-ui-core';
 import { ScimService } from '../../services/scim.service';
 import {
   ScimProvider,

@@ -10,7 +10,7 @@ import {
 } from './terminology-loader';
 
 /**
- * Wire Transloco once, here in `@oluso/ui-core`, so every app and lib
+ * Wire Transloco once, here in `@syndew/oluso-ui-core`, so every app and lib
  * relabels consistently with no per-lib setup. The three standalone apps opt in
  * with a single
  * `provideTerminology({ endpoint })` in their `app.config.ts`.

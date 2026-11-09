@@ -422,6 +422,8 @@ FodyWeavers.xsd
 src/AdminUI/dist/index.html
 appsettings*.json
 !templates/appsettings*.json
+# The demo deploy's settings; the connection string comes from a GitHub secret.
+!deploy/demo/appsettings.Production.json
 # The public sample runs from a fresh clone with these development defaults.
 !samples/Oluso.Sample/appsettings.json
 .DS_Store

@@ -2,7 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { ButtonComponent, BadgeComponent, ModalComponent, DataTableComponent, IconComponent } from '@oluso/ui-core';
+import { ButtonComponent, BadgeComponent, ModalComponent, DataTableComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { OrganizationService } from '../../services/organization.service';
 import { Organization, CreateOrganizationRequest, ProvisionOrganizationRequest, ProvisionOrganizationResponse, TenantEnvironment } from '../../models/organization.model';
 import { PaginationParams } from '../../models/pagination-params.model';

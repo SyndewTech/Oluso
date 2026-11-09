@@ -7,7 +7,7 @@ import {
   BadgeComponent,
   ModalComponent,
   IconComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { ModuleSeatsService, ModuleSeatSummary, ModuleSeatDetail, ModuleSeatUser } from '../../services/module-seats.service';
 import { UserService } from '../../services/user.service';
 import { UserDto } from '../../models/user.model';

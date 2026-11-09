@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams, HttpContext } from '@angular/common/http';
-import { SKIP_ERROR_TOAST } from '@oluso/ui-core';
+import { SKIP_ERROR_TOAST } from '@syndew/oluso-ui-core';
 import { Observable } from 'rxjs';
 import { WorkspaceUserProfile } from '../models';
 

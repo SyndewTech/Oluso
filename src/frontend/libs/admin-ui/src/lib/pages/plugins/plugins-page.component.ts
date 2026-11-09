@@ -1,7 +1,7 @@
 import { Component, inject, signal, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CardComponent, ButtonComponent, ModalComponent, IconComponent, LocaleService } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, ModalComponent, IconComponent, LocaleService } from '@syndew/oluso-ui-core';
 import { PluginService } from '../../services/plugin.service';
 import {
   Plugin,

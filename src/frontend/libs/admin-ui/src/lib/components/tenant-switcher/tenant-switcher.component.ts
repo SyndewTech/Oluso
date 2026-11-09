@@ -2,8 +2,8 @@ import { Component, inject, signal, computed, OnInit, ElementRef, HostListener }
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { forkJoin, of, catchError } from 'rxjs';
-import { AuthProvider, AuthStore } from '@oluso/auth';
-import { IconComponent, ToastService, extractErrorMessage } from '@oluso/ui-core';
+import { AuthProvider, AuthStore } from '@syndew/oluso-auth';
+import { IconComponent, ToastService, extractErrorMessage } from '@syndew/oluso-ui-core';
 import { ContextService } from '../../services/context.service';
 import {
   TenantSwitch,

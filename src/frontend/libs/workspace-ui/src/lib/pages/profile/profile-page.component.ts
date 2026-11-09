@@ -1,7 +1,7 @@
 import { Component, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { WorkspaceAuthService } from '../../services/workspace-auth.service';
-import { CardComponent, PageSlotHostComponent } from '@oluso/ui-core';
+import { CardComponent, PageSlotHostComponent } from '@syndew/oluso-ui-core';
 
 @Component({
   selector: 'workspace-profile-page',

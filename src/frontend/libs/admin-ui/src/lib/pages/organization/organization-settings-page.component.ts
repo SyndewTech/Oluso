@@ -11,8 +11,8 @@ import {
   TabDefinition,
   TabContext,
   TAB_CONTEXT,
-} from '@oluso/ui-core';
-import { AuthStore } from '@oluso/auth';
+} from '@syndew/oluso-ui-core';
+import { AuthStore } from '@syndew/oluso-auth';
 import { TenantService } from '../../services/tenant.service';
 import {
   Tenant,

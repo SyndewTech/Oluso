@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { NavItem } from '@oluso/ui-core';
+import { NavItem } from '@syndew/oluso-ui-core';
 import { SAML_PLUGIN } from './saml.plugin';
 
 /** Every full route path the plugin declares, e.g. '/saml/dashboard' or '/saml/items/:id'. */

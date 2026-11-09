@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { NavItem } from '@oluso/ui-core';
+import { NavItem } from '@syndew/oluso-ui-core';
 import { VERIFICATION_PLUGIN } from './verification.plugin';
 
 /** Every full route path the plugin declares, e.g. '/verification/dashboard' or '/verification/items/:id'. */

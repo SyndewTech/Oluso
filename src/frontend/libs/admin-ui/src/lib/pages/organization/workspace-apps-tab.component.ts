@@ -6,7 +6,7 @@ import {
   IconComponent,
   IconPickerComponent,
   TAB_CONTEXT,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { TenantService, WorkspaceAppsSettings, CustomWorkspaceApp, RegisteredModuleInfo } from '../../services/tenant.service';
 import { TenantFeature } from '../../models/tenant.model';
 

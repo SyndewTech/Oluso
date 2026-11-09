@@ -1,7 +1,7 @@
 import { Component, DestroyRef, ElementRef, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { OlusoClient, mountJourney, type JourneyMount, type JourneySession, type MountJourneyOptions } from '@oluso/sdk';
-import { httpClientFetch } from '@oluso/auth';
+import { OlusoClient, mountJourney, type JourneyMount, type JourneySession, type MountJourneyOptions } from '@syndew/oluso-sdk';
+import { httpClientFetch } from '@syndew/oluso-auth';
 
 /**
  * Runs a journey session the app's backend started for the signed-in user, drawn by the Oluso SDK. Every step goes

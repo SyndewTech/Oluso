@@ -11,7 +11,7 @@ import {
   TabDefinition,
   TabContext,
   TAB_CONTEXT,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { TenantService } from '../../services/tenant.service';
 import {
   Tenant,

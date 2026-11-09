@@ -5,7 +5,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subject, debounceTime, distinctUntilChanged, switchMap, takeUntil, of, catchError, tap } from 'rxjs';
-import { IconComponent } from '@oluso/ui-core';
+import { IconComponent } from '@syndew/oluso-ui-core';
 import {
   AdminSearchService, AdminSearchGroup, AdminSearchProvider, AdminSearchResultItem, AdminSearchResponse,
   AdminSearchBadgeTone, PLATFORM_MODULE, MIN_SEARCH_LENGTH,

@@ -3,7 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
-import { ToastService } from '@oluso/ui-core';
+import { ToastService } from '@syndew/oluso-ui-core';
 import { ClientDetailPageComponent, STRICT_SCOPES_PROPERTY } from './client-detail-page.component';
 import { ClientService } from '../../services/client.service';
 import { PlatformClientService } from '../../services/platform-client.service';

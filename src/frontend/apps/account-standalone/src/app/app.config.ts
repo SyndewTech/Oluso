@@ -1,12 +1,12 @@
 import { ApplicationConfig, provideBrowserGlobalErrorListeners, APP_INITIALIZER, inject } from '@angular/core';
 import { provideRouter } from '@angular/router';
-import { provideAppTitle } from '@oluso/ui-core';
+import { provideAppTitle } from '@syndew/oluso-ui-core';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor as oidcAuthInterceptor } from 'angular-auth-oidc-client';
-import { ngrokInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@oluso/auth';
-import { ACCOUNT_ROUTES, ApiService, AccountAuthService, provideAccountAuth, apiUrl, serverUrl } from '@oluso/account-ui';
-import { PluginService, API_BASE_URL } from '@oluso/ui-core';
-import { FIDO2_ACCOUNT_PLUGIN, PasskeysAccountService } from '@oluso/plugins/fido2';
+import { ngrokInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@syndew/oluso-auth';
+import { ACCOUNT_ROUTES, ApiService, AccountAuthService, provideAccountAuth, apiUrl, serverUrl } from '@syndew/oluso-account-ui';
+import { PluginService, API_BASE_URL } from '@syndew/oluso-ui-core';
+import { FIDO2_ACCOUNT_PLUGIN, PasskeysAccountService } from '@syndew/oluso-plugin-fido2';
 
 /**
  * Initialize the API services with the correct base URLs.

@@ -1,7 +1,7 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { LocaleDatePipe } from '@oluso/ui-core';
+import { LocaleDatePipe } from '@syndew/oluso-ui-core';
 import {
   BlueprintsService,
   BlueprintListEntry,

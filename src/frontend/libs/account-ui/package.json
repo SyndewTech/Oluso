@@ -1,9 +1,16 @@
 {
-  "name": "@oluso/account-ui",
+  "name": "@syndew/oluso-account-ui",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyndewTech/Oluso.git",
+    "directory": "src/frontend/libs/account-ui"
+  },
   "peerDependencies": {
     "@angular/common": "^21.1.0",
-    "@angular/core": "^21.1.0"
+    "@angular/core": "^21.1.0",
+    "@syndew/oluso-auth": "*",
+    "@syndew/oluso-ui-core": "*"
   },
   "sideEffects": false,
   "publishConfig": {

@@ -10,7 +10,7 @@ import {
   PageSlotHostComponent,
   DetailSectionHostComponent,
   IconComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { IdentityResourceService } from '../../services/identity-resource.service';
 import {
   IdentityResourceDto,

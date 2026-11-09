@@ -1,4 +1,4 @@
-import { AdminPlugin, NavItem } from '@oluso/ui-core';
+import { AdminPlugin, NavItem } from '@syndew/oluso-ui-core';
 import { TELEMETRY_ROUTES } from './telemetry.routes';
 
 /**

@@ -1,7 +1,7 @@
 import { Component, inject, signal, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ButtonComponent, IconComponent, ModalComponent } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent, ModalComponent } from '@syndew/oluso-ui-core';
 import { Fido2Service } from '../../services/fido2.service';
 import { Fido2UserSummary, Fido2Credential } from '../../models/fido2.model';
 

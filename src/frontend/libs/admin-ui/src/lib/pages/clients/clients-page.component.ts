@@ -2,7 +2,7 @@ import { Component, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { CardComponent, ButtonComponent, BadgeComponent, IconComponent, ModalComponent, InputComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, IconComponent, ModalComponent, InputComponent } from '@syndew/oluso-ui-core';
 import { ClientService } from '../../services/client.service';
 import { Client } from '../../models/client.model';
 import { ClientConnectionPanelComponent } from '../../components/client-connection-panel/client-connection-panel.component';

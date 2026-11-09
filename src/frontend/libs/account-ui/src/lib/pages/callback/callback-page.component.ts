@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { OidcSecurityService } from 'angular-auth-oidc-client';
-import { readAndClearReturnUrl } from '@oluso/auth';
+import { readAndClearReturnUrl } from '@syndew/oluso-auth';
 import { AccountAuthService } from '../../services/account-auth.service';
 import { takeReturnUrl } from '../../services/account-return-url';
 

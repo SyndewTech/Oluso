@@ -9,7 +9,7 @@ import {
   IconComponent,
   ToastService,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { WebhookService } from '../../services/webhook.service';
 import { WebhookEndpoint, WebhookEventInfo } from '../../models/webhook.model';
 

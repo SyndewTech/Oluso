@@ -7,7 +7,7 @@ import {
   BadgeComponent,
   ModalComponent,
   IconComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { EntitlementService } from '../../services/entitlement.service';
 import { EntitlementDto } from '../../models/entitlement.model';
 

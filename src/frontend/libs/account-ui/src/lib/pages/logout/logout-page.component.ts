@@ -2,8 +2,8 @@ import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { OidcSecurityService } from 'angular-auth-oidc-client';
-import { ButtonComponent, IconComponent } from '@oluso/ui-core';
-import { clearTenantSso } from '@oluso/auth';
+import { ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
+import { clearTenantSso } from '@syndew/oluso-auth';
 
 @Component({
   selector: 'account-logout-page',

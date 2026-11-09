@@ -433,7 +433,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/plugins/telemetry",
+              "packageName": "@syndew/oluso-plugin-telemetry",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -700,7 +700,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/plugins/fido2",
+              "packageName": "@syndew/oluso-plugin-fido2",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -835,7 +835,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/plugins/ldap",
+              "packageName": "@syndew/oluso-plugin-ldap",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -970,7 +970,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/plugins/saml",
+              "packageName": "@syndew/oluso-plugin-saml",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -1105,7 +1105,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/plugins/scim",
+              "packageName": "@syndew/oluso-plugin-scim",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -1308,7 +1308,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/account-ui",
+              "packageName": "@syndew/oluso-account-ui",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -1443,7 +1443,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/admin-ui",
+              "packageName": "@syndew/oluso-admin-ui",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -1578,7 +1578,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/ui-core",
+              "packageName": "@syndew/oluso-ui-core",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -1713,7 +1713,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/auth",
+              "packageName": "@syndew/oluso-auth",
               "packageVersion": "0.0.1",
               "isInPackageManagerWorkspaces": false
             }
@@ -1734,12 +1734,12 @@
           "implicitDependencies": []
         }
       },
-      "@oluso/access-management-frontend": {
-        "name": "@oluso/access-management-frontend",
+      "@syndew/oluso-frontend": {
+        "name": "@syndew/oluso-frontend",
         "type": "app",
         "data": {
           "root": ".",
-          "name": "@oluso/access-management-frontend",
+          "name": "@syndew/oluso-frontend",
           "includedScripts": [],
           "tags": [
             "npm:private"
@@ -1747,7 +1747,7 @@
           "metadata": {
             "targetGroups": {},
             "js": {
-              "packageName": "@oluso/access-management-frontend",
+              "packageName": "@syndew/oluso-frontend",
               "packageVersion": "0.0.0",
               "isInPackageManagerWorkspaces": true
             }
@@ -1939,7 +1939,7 @@
           "type": "static"
         }
       ],
-      "@oluso/access-management-frontend": []
+      "@syndew/oluso-frontend": []
     }
   }
 }

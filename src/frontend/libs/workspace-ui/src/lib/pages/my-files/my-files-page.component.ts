@@ -2,7 +2,7 @@ import { Component, inject, signal, computed, OnInit, OnDestroy } from '@angular
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Subject, takeUntil } from 'rxjs';
-import { FileUploadComponent, AuthFilePipe } from '@oluso/ui-core';
+import { FileUploadComponent, AuthFilePipe } from '@syndew/oluso-ui-core';
 import { apiUrl } from '../../auth/oidc.config';
 
 interface MyFile {

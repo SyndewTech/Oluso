@@ -10,7 +10,7 @@ import {
   PageSlotHostComponent,
   DetailSectionHostComponent,
   IconComponent,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { ResourceService } from '../../services/resource.service';
 import { ResourceDto, CreateResourceRequest } from '../../models/resource.model';
 import { ApiScopeSummaryDto } from '../../models/api-scope.model';

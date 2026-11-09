@@ -1,7 +1,7 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { ButtonComponent, IconComponent } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { SamlService } from '../../services/saml.service';
 import { SamlIdpInfo, SamlServiceProvider } from '../../models/saml.model';
 import { forkJoin } from 'rxjs';

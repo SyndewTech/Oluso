@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable, tap, catchError, of } from 'rxjs';
 import { ApiService } from './api.service';
 import { PermissionsResponse } from '../models/permission.model';
-import { PermissionsService, MyPermissionsResponse } from '@oluso/ui-core';
+import { PermissionsService, MyPermissionsResponse } from '@syndew/oluso-ui-core';
 
 @Injectable({
   providedIn: 'root',

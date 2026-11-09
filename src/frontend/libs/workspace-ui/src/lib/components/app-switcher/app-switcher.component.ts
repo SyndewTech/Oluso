@@ -1,6 +1,6 @@
 import { Component, inject, input } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { WorkspaceApp, IconComponent } from '@oluso/ui-core';
+import { WorkspaceApp, IconComponent } from '@syndew/oluso-ui-core';
 import { AppSwitcherService } from '../../services/app-switcher.service';
 
 /**

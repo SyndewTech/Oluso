@@ -9,7 +9,7 @@ import {
   IconComponent,
   ToastService,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { OrganizationService } from '../../services/organization.service';
 import {
   OrganizationInvitation,

@@ -1,9 +1,16 @@
 {
-  "name": "@oluso/plugin-saml",
+  "name": "@syndew/oluso-plugin-saml",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyndewTech/Oluso.git",
+    "directory": "src/frontend/libs/plugins/saml"
+  },
   "peerDependencies": {
     "@angular/common": "^21.1.0",
-    "@angular/core": "^21.1.0"
+    "@angular/core": "^21.1.0",
+    "@syndew/oluso-admin-ui": "*",
+    "@syndew/oluso-ui-core": "*"
   },
   "sideEffects": false,
   "publishConfig": {

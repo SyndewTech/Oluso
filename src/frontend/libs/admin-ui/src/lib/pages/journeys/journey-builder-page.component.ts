@@ -2,7 +2,7 @@ import { Component, inject, signal, computed, OnInit, viewChild, ElementRef } fr
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { CardComponent, ButtonComponent, ModalComponent, IconComponent, CountryCatalogService, PermissionsService } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, ModalComponent, IconComponent, CountryCatalogService, PermissionsService } from '@syndew/oluso-ui-core';
 import { JourneyService } from '../../services/journey.service';
 import { ConditionBuilderComponent } from '../../components/journey/condition-builder.component';
 import { MappingBuilderComponent } from '../../components/journey/mapping-builder.component';

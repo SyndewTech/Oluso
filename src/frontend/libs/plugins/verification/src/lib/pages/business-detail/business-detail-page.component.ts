@@ -10,7 +10,7 @@ import {
   ToastService,
   extractErrorMessage,
   openFetchedFile,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { VerificationService } from '../../services/verification.service';
 import {
   BusinessApplicant,

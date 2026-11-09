@@ -231,6 +231,35 @@ If your portals or app run on other origins, set the `Oluso__Urls__*` values to 
 start, so the seeded clients get the right redirect URIs, and add the origins to `Oluso__Cors__Origins__0`,
 `Oluso__Cors__Origins__1` and so on.
 
+### Portals on a static host
+
+To serve the admin, account and workspace portals from a static host such as Cloudflare Pages, instead of
+Caddy, build each one with `scripts/build-pages.sh`. It builds the portal and writes its `config.js` from
+environment variables:
+
+```bash
+OLUSO_SERVER_URL=https://auth.example.com \
+OLUSO_ACCOUNT_URL=https://account.example.com \
+OLUSO_WORKSPACE_URL=https://workspace.example.com \
+./scripts/build-pages.sh admin        # or account, workspace
+```
+
+`OLUSO_SERVER_URL` is required; `OLUSO_API_URL`, `OLUSO_ADMIN_URL`, `OLUSO_ACCOUNT_URL` and `OLUSO_WORKSPACE_URL`
+are optional. The site is in `src/frontend/dist/apps/<app>-standalone/browser`. For a Cloudflare Pages project:
+
+| Setting | Value |
+|---------|-------|
+| Root directory | the repository root |
+| Build command | `./scripts/build-pages.sh admin` (or `account`, `workspace`) |
+| Build output directory | `src/frontend/dist/apps/admin-standalone/browser` (matching the app) |
+| Environment variables | `NODE_VERSION=22`, `OLUSO_SERVER_URL`, and any of the optional ones |
+
+The server has to accept the portals' origins: set `Oluso__Urls__AdminPortalUrl`, `Oluso__Urls__WorkspacePortalUrl`
+and `Oluso__Urls__AccountUiUrl` to their URLs before the first start, so the portal clients are seeded with those
+redirect URIs, and add the origins to `Oluso__Cors__Origins__0`, `Oluso__Cors__Origins__1` and so on. On a server
+that was already seeded, add the redirect and post-logout URIs to `admin-portal`, `workspace-portal` and
+`account-ui` in the admin portal.
+
 ## Running a single instance on a domain
 
 This puts the sample, as it is, on a domain: one server container, its database and Caddy. It suits a

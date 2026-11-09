@@ -80,7 +80,7 @@ const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
  * Signal-based locale settings management, shared across all apps.
  * Uses the /api/locale endpoint which is accessible to any authenticated user.
  *
- * Admin-specific CRUD (get/update by tenantId) is in TenantService (@oluso/admin-ui).
+ * Admin-specific CRUD (get/update by tenantId) is in TenantService (@syndew/oluso-admin-ui).
  */
 @Injectable({ providedIn: 'root' })
 export class LocaleService {

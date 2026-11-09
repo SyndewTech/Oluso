@@ -26,7 +26,7 @@ export interface CommandPaletteCommand {
    * when registered outside any app (e.g. at bootstrap).
    */
   app?: string | null;
-  /** Icon name (matching @oluso/ui-core IconComponent name registry). */
+  /** Icon name (matching @syndew/oluso-ui-core IconComponent name registry). */
   icon?: string;
   /** Keyboard shortcut hint shown on the right (e.g., "⌘N", "G then P"). */
   shortcut?: string;

@@ -1,4 +1,4 @@
-import { AdminPlugin, NavItem } from '@oluso/ui-core';
+import { AdminPlugin, NavItem } from '@syndew/oluso-ui-core';
 import { VerificationSettingsTabComponent } from './components/verification-settings-tab.component';
 import { VERIFICATION_ROUTES } from './verification.routes';
 

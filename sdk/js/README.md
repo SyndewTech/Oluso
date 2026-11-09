@@ -1,22 +1,22 @@
-# @oluso/sdk
+# @syndew/oluso-sdk
 
 JavaScript/TypeScript SDK for Oluso. Includes journey forms (waitlists, surveys), authentication (inline/modal journeys and OIDC redirect), role/permission checks, and drop-in embed scripts.
 
 ## Installation
 
 ```bash
-npm install @oluso/sdk
+npm install @syndew/oluso-sdk
 ```
 
 ## Packages
 
 | Entry Point | Description |
 |-------------|-------------|
-| `@oluso/sdk` | Core client + auth SDK (ESM/CJS) |
-| `@oluso/sdk/react` | React components and hooks |
-| `@oluso/sdk/embed` | Drop-in `<script>` for journey modals |
-| `@oluso/sdk/auth` | Auth SDK standalone (ESM/CJS) |
-| `@oluso/sdk/auth-embed` | Drop-in `<script>` for auth modals |
+| `@syndew/oluso-sdk` | Core client + auth SDK (ESM/CJS) |
+| `@syndew/oluso-sdk/react` | React components and hooks |
+| `@syndew/oluso-sdk/embed` | Drop-in `<script>` for journey modals |
+| `@syndew/oluso-sdk/auth` | Auth SDK standalone (ESM/CJS) |
+| `@syndew/oluso-sdk/auth-embed` | Drop-in `<script>` for auth modals |
 
 ---
 
@@ -25,7 +25,7 @@ npm install @oluso/sdk
 ### Vanilla JavaScript
 
 ```typescript
-import { createClient } from '@oluso/sdk';
+import { createClient } from '@syndew/oluso-sdk';
 
 const oluso = createClient({
   serverUrl: 'https://auth.yoursite.com',
@@ -51,7 +51,7 @@ if (result.success) {
 ### React
 
 ```tsx
-import { OlusoProvider, JourneyForm, useJourney } from '@oluso/sdk/react';
+import { OlusoProvider, JourneyForm, useJourney } from '@syndew/oluso-sdk/react';
 
 function App() {
   return (
@@ -181,7 +181,7 @@ The auth SDK provides inline and modal authentication (using the journey system)
 ### Setup
 
 ```typescript
-import { OlusoAuth } from '@oluso/sdk';
+import { OlusoAuth } from '@syndew/oluso-sdk';
 
 const auth = new OlusoAuth({
   serverUrl: 'https://auth.yoursite.com',
@@ -506,5 +506,5 @@ import type {
   JourneyStepView,
   StepResult,
   JourneyStepData,
-} from '@oluso/sdk';
+} from '@syndew/oluso-sdk';
 ```

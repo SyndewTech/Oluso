@@ -2,7 +2,7 @@ import { Component, inject, input, signal, effect, OnDestroy } from '@angular/co
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
-import { ModalComponent, IconComponent, ToastService, validateForm, extractErrorMessage } from '@oluso/ui-core';
+import { ModalComponent, IconComponent, ToastService, validateForm, extractErrorMessage } from '@syndew/oluso-ui-core';
 import { ApiService } from '../../services/api.service';
 
 interface EmailDomainDto {

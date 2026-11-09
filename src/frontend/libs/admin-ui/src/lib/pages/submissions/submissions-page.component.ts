@@ -2,7 +2,7 @@ import { Component, inject, signal, computed, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject, takeUntil } from 'rxjs';
-import { CardComponent, ButtonComponent, BadgeComponent, ModalComponent, IconComponent } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, ModalComponent, IconComponent } from '@syndew/oluso-ui-core';
 import { SubmissionService } from '../../services/submission.service';
 import { ApiService } from '../../services/api.service';
 import {

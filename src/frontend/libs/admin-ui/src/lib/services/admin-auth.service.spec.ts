@@ -2,8 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { NEVER, Observable, Subject, of } from 'rxjs';
 import { OidcSecurityService, PublicEventsService } from 'angular-auth-oidc-client';
-import { AuthProvider, AuthStore } from '@oluso/auth';
-import { MyPermissionsResponse, PermissionsService } from '@oluso/ui-core';
+import { AuthProvider, AuthStore } from '@syndew/oluso-auth';
+import { MyPermissionsResponse, PermissionsService } from '@syndew/oluso-ui-core';
 import { AdminAuthService } from './admin-auth.service';
 import { ApiService } from './api.service';
 

@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { NavItem } from '@oluso/ui-core';
+import { NavItem } from '@syndew/oluso-ui-core';
 import { TELEMETRY_PLUGIN } from './telemetry.plugin';
 
 /** Every full route path the plugin declares, e.g. '/telemetry/dashboard' or '/telemetry/items/:id'. */

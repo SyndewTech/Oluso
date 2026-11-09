@@ -1,7 +1,7 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { ButtonComponent, IconComponent } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent } from '@syndew/oluso-ui-core';
 
 @Component({
   selector: 'workspace-placeholder-page',

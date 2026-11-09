@@ -14,7 +14,7 @@ import {
   ToastService,
   SKIP_ERROR_TOAST,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { WebhookService } from '../../services/webhook.service';
 import { ClientService } from '../../services/client.service';
 import { ApiService } from '../../services/api.service';

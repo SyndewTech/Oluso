@@ -1,9 +1,9 @@
 import { ApplicationConfig, provideBrowserGlobalErrorListeners, APP_INITIALIZER, Injector, inject } from '@angular/core';
 import { provideRouter } from '@angular/router';
-import { provideAppTitle } from '@oluso/ui-core';
+import { provideAppTitle } from '@syndew/oluso-ui-core';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor as oidcAuthInterceptor } from 'angular-auth-oidc-client';
-import { ngrokInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@oluso/auth';
+import { ngrokInterceptor, authRefreshInterceptor, tokenRefreshRetryInterceptor, dpopInterceptor } from '@syndew/oluso-auth';
 import {
   WORKSPACE_ROUTES,
   WorkspaceApiService,
@@ -13,14 +13,14 @@ import {
   RealtimeService,
   provideWorkspaceAuth,
   apiUrl,
-} from '@oluso/workspace-ui';
+} from '@syndew/oluso-workspace-ui';
 import {
   API_BASE_URL,
   provideTerminology,
   loadTerminology,
   TerminologyRefreshService,
   LocaleService,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { firstValueFrom } from 'rxjs';
 
 /**

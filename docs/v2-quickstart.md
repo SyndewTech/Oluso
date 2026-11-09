@@ -68,18 +68,18 @@ src/
     │   ├── account-standalone/     # End-user self-service portal
     │   └── workspace-standalone/   # Workspace SPA
     └── libs/
-        ├── ui-core/                # Shared components and plugin models (@oluso/ui-core)
+        ├── ui-core/                # Shared components and plugin models (@syndew/oluso-ui-core)
         ├── admin-ui/ account-ui/ workspace-ui/ journey-ui/ auth/
         └── plugins/                # UI plugins
-            ├── fido2/              # @oluso/plugin-fido2
-            ├── ldap/               # @oluso/plugin-ldap
-            ├── saml/               # @oluso/plugin-saml
-            ├── scim/               # @oluso/plugin-scim
-            ├── telemetry/          # @oluso/plugin-telemetry
-            └── verification/       # @oluso/plugin-verification
+            ├── fido2/              # @syndew/oluso-plugin-fido2
+            ├── ldap/               # @syndew/oluso-plugin-ldap
+            ├── saml/               # @syndew/oluso-plugin-saml
+            ├── scim/               # @syndew/oluso-plugin-scim
+            ├── telemetry/          # @syndew/oluso-plugin-telemetry
+            └── verification/       # @syndew/oluso-plugin-verification
 ```
 
-The JavaScript/TypeScript client SDK (`@oluso/sdk`) lives in `sdk/js`; see `sdk/js/README.md`.
+The JavaScript/TypeScript client SDK (`@syndew/oluso-sdk`) lives in `sdk/js`; see `sdk/js/README.md`.
 
 ### NuGet Packages
 
@@ -123,10 +123,10 @@ Each app reads its backend URL at runtime from `public/config.js` (`serverUrl`, 
 ### UI Plugin Architecture
 
 The Admin and Account UIs are extended with plugins. The plugin models (`AdminPlugin`, `AccountPlugin`) are
-defined in `@oluso/ui-core`:
+defined in `@syndew/oluso-ui-core`:
 
 ```typescript
-import { AdminPlugin, AccountPlugin } from '@oluso/ui-core';
+import { AdminPlugin, AccountPlugin } from '@syndew/oluso-ui-core';
 
 // Admin plugin (for the Admin UI)
 export const SAML_PLUGIN: AdminPlugin = {
@@ -2897,7 +2897,7 @@ builder.Services.AddOlusoNullTelemetry(); // NullOlusoTelemetry
 
 ## Telemetry Dashboard (Admin UI)
 
-The `@oluso/plugin-telemetry` Admin UI plugin (`libs/plugins/telemetry`) provides a dashboard for viewing logs,
+The `@syndew/oluso-plugin-telemetry` Admin UI plugin (`libs/plugins/telemetry`) provides a dashboard for viewing logs,
 traces, and metrics. It is shown to super admins.
 
 ### Installation
@@ -2905,7 +2905,7 @@ traces, and metrics. It is shown to super admins.
 The Admin UI app registers it at start-up:
 
 ```typescript
-import { TELEMETRY_PLUGIN } from '@oluso/plugins/telemetry';
+import { TELEMETRY_PLUGIN } from '@syndew/oluso-plugin-telemetry';
 
 pluginService.registerAdminPlugin(TELEMETRY_PLUGIN);
 ```

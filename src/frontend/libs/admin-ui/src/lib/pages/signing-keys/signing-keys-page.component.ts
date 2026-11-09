@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CardComponent, ButtonComponent, BadgeComponent, ModalComponent, ConfirmDialogComponent, IconComponent, LocaleService } from '@oluso/ui-core';
+import { CardComponent, ButtonComponent, BadgeComponent, ModalComponent, ConfirmDialogComponent, IconComponent, LocaleService } from '@syndew/oluso-ui-core';
 import { SigningKeyService } from '../../services/signing-key.service';
 import {
   SigningKey,

@@ -12,7 +12,7 @@ import {
   LocaleDatePipe,
   ToastService,
   extractErrorMessage,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { IdentityProviderService } from '../../services/identity-provider.service';
 import { RoleService } from '../../services/role.service';
 import { RoleDto } from '../../models/role.model';

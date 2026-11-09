@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
 import { PaginationParams } from '../models/pagination-params.model';
-import { PaginatedResponse } from '@oluso/ui-core';
+import { PaginatedResponse } from '@syndew/oluso-ui-core';
 import { UserDto, UserRoleDto } from '../models/user.model';
 import { UserClaimDto } from '../models/user-claim.model';
 import { UserSessionDto } from '../models/user-session.model';

@@ -1,6 +1,6 @@
 import { Component, inject, input, signal, OnInit, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { IconComponent, ToastService } from '@oluso/ui-core';
+import { IconComponent, ToastService } from '@syndew/oluso-ui-core';
 import { ClientService } from '../../services/client.service';
 import { PlatformClientService } from '../../services/platform-client.service';
 import { ClientConnection } from '../../models/client-connection.model';

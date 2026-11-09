@@ -3,8 +3,8 @@ import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { Subject, firstValueFrom, filter, switchMap } from 'rxjs';
 import { OidcSecurityService, PublicEventsService, EventTypes } from 'angular-auth-oidc-client';
-import { AuthStore, checkAuthRenewingSession, rememberReturnUrl } from '@oluso/auth';
-import { PermissionsService, FeatureService } from '@oluso/ui-core';
+import { AuthStore, checkAuthRenewingSession, rememberReturnUrl } from '@syndew/oluso-auth';
+import { PermissionsService, FeatureService } from '@syndew/oluso-ui-core';
 import { PermissionService } from './permission.service';
 import { ApiService } from './api.service';
 
@@ -268,7 +268,7 @@ export class AdminAuthService {
   /**
    * Extract user information from a JWT access token.
    */
-  private extractUserFromToken(token: string, idToken?: string): import('@oluso/auth').AuthUser {
+  private extractUserFromToken(token: string, idToken?: string): import('@syndew/oluso-auth').AuthUser {
     try {
       const payload = decodeJwtPayload(token);
       // Profile claims (picture, given/family name) are released on the ID

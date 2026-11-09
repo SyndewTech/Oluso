@@ -18,7 +18,7 @@ import {
   OrganizationUser,
 } from '../models/organization.model';
 import { PaginationParams } from '../models/pagination-params.model';
-import { PaginatedResponse } from '@oluso/ui-core';
+import { PaginatedResponse } from '@syndew/oluso-ui-core';
 import { CreateTenantRequest } from '../models/tenant.model';
 
 @Injectable({

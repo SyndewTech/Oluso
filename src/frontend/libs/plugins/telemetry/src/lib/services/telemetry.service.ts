@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiService } from '@oluso/admin-ui';
+import { ApiService } from '@syndew/oluso-admin-ui';
 import {
   TelemetryMetrics,
   MetricSeries,

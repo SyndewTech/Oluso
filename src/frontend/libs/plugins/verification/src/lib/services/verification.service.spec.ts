@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Observable } from 'rxjs';
-import { ApiService } from '@oluso/admin-ui';
+import { ApiService } from '@syndew/oluso-admin-ui';
 import { VerificationService } from './verification.service';
 
 const API = 'https://idp.example/api/admin';

@@ -1,6 +1,11 @@
 {
-  "name": "@oluso/sdk",
+  "name": "@syndew/oluso-sdk",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyndewTech/Oluso.git",
+    "directory": "sdk/js"
+  },
   "description": "Oluso JavaScript SDK for embedding journeys and forms",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

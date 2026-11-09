@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 import { AutoLoginPartialRoutesGuard } from 'angular-auth-oidc-client';
-import { superAdminGuard, orgAdminGuard, permissionGuard } from '@oluso/auth';
+import { superAdminGuard, orgAdminGuard, permissionGuard } from '@syndew/oluso-auth';
 
 /**
  * Admin UI Routes

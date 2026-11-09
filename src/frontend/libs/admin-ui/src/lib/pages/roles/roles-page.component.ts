@@ -11,7 +11,7 @@ import {
   extractErrorMessage,
   InputComponent,
   ToastService,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { RoleService } from '../../services/role.service';
 import { PermissionService } from '../../services/permission.service';
 import { EntitlementService } from '../../services/entitlement.service';

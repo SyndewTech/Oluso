@@ -36,6 +36,6 @@ find "${LIB_DIRS[@]}" "$ROOT_DIR/sdk/js" \
 find "${LIB_DIRS[@]}" \
   -name package.json \
   -not -path '*/node_modules/*' \
-  -exec perl -pi -e "s/\"(\@oluso\/[a-z0-9-]+)\": \"\*\"/\"\$1\": \"^$VERSION\"/g" {} \;
+  -exec perl -pi -e "s/\"(\@syndew\/oluso-[a-z0-9-]+)\": \"\*\"/\"\$1\": \"^$VERSION\"/g" {} \;
 
 echo "Done. Updated all frontend lib and SDK package.json files to version $VERSION"

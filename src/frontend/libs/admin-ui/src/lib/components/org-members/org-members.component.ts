@@ -2,7 +2,7 @@ import { Component, inject, input, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { forkJoin, Observable } from 'rxjs';
-import { ButtonComponent, BadgeComponent, ModalComponent, DataTableComponent, IconComponent, ToastService, extractErrorMessage } from '@oluso/ui-core';
+import { ButtonComponent, BadgeComponent, ModalComponent, DataTableComponent, IconComponent, ToastService, extractErrorMessage } from '@syndew/oluso-ui-core';
 import { OrganizationService } from '../../services/organization.service';
 import { UserService } from '../../services/user.service';
 import { OrganizationMember, MemberTenantAccess, OrganizationUser } from '../../models/organization.model';

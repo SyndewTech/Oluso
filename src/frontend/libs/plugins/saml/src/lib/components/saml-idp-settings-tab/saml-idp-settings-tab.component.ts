@@ -1,7 +1,7 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ButtonComponent, IconComponent, TAB_CONTEXT } from '@oluso/ui-core';
+import { ButtonComponent, IconComponent, TAB_CONTEXT } from '@syndew/oluso-ui-core';
 import { SamlService } from '../../services/saml.service';
 import { SamlIdpConfiguration, SamlIdpInfo, SamlCertificateInfo } from '../../models/saml.model';
 import { forkJoin, catchError, of } from 'rxjs';

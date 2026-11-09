@@ -10,7 +10,7 @@ import { TerminologyTranslocoLoader, ensureTerminologyLang } from './terminology
  * terminology realtime channel; a consumer calls {@link refresh} so open
  * screens pick up the new wording without a full reload.
  *
- * Lives in `@oluso/ui-core` (no realtime dependency) so any app can wire it to
+ * Lives in `@syndew/oluso-ui-core` (no realtime dependency) so any app can wire it to
  * whatever transport it already has.
  */
 @Injectable({ providedIn: 'root' })

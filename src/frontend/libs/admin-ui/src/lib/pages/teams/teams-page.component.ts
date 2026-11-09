@@ -9,7 +9,7 @@ import {
   DataTableComponent,
   IconComponent,
   PaginatedResponse,
-} from '@oluso/ui-core';
+} from '@syndew/oluso-ui-core';
 import { TeamService } from '../../services/team.service';
 import { Team, TeamType, TeamVisibility, CreateTeamRequest, managedByLabel } from '../../models/team.model';
 import { PaginationParams } from '../../models/pagination-params.model';

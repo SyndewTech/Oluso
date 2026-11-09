@@ -1,5 +1,5 @@
 import { Route } from '@angular/router';
-import { NavItem } from '@oluso/ui-core';
+import { NavItem } from '@syndew/oluso-ui-core';
 import { FIDO2_PLUGIN } from './fido2.plugin';
 
 /** Every full route path the plugin declares, e.g. '/fido2/dashboard' or '/fido2/items/:id'. */

@@ -1,6 +1,6 @@
 import { Component, inject, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { CardComponent, BadgeComponent, IconComponent, LocaleDatePipe } from '@oluso/ui-core';
+import { CardComponent, BadgeComponent, IconComponent, LocaleDatePipe } from '@syndew/oluso-ui-core';
 import { ApiService } from '../../services/api.service';
 
 interface LicenseStatus {
