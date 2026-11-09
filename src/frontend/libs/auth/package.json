@@ -1,6 +1,20 @@
 {
   "name": "@syndew/oluso-auth",
   "version": "0.0.1",
+  "description": "Angular authentication for apps signing in with Oluso: OIDC auth provider, auth store, guards and the token refresh, tenant and DPoP interceptors.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "oidc",
+    "oauth2",
+    "authentication",
+    "dpop"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/auth#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",
@@ -9,6 +23,8 @@
   "peerDependencies": {
     "@angular/common": "^21.1.0",
     "@angular/core": "^21.1.0",
+    "@angular/router": "^21.1.0",
+    "rxjs": "^7.8.0",
     "@syndew/oluso-ui-core": "*"
   },
   "sideEffects": false,

@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Oluso.Functions.Common</RootNamespace>
     <PackageId>Oluso.Functions.Common</PackageId>
-    <Description>Shared infrastructure for Oluso Azure Functions projects — tenant job dispatching and common utilities.</Description>
+    <Description>Shared infrastructure for Oluso Azure Functions projects: tenant job dispatching and common utilities.</Description>
     <PackageTags>oluso;functions;azure;tenant;jobs</PackageTags>
   </PropertyGroup>
 

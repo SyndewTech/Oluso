@@ -26,8 +26,8 @@ builder.Services.AddOluso(builder.Configuration)
 var app = builder.Build();
 
 app.UseRouting();
-app.UseOluso();  // Adds tenant resolution and OIDC middleware
 app.UseAuthentication();
+app.UseOluso();  // After UseAuthentication: tenant resolution and validation need the signed-in user's claims
 app.UseAuthorization();
 
 app.MapControllers();

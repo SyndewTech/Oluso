@@ -1,6 +1,20 @@
 {
   "name": "@syndew/oluso-plugin-verification",
   "version": "0.0.1",
+  "description": "Business verification (KYB) for the Oluso admin portal: verified businesses, a review queue and the verification provider settings.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "kyb",
+    "verification",
+    "compliance",
+    "plugin"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/plugins/verification#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",
@@ -9,6 +23,9 @@
   "peerDependencies": {
     "@angular/common": "^21.1.0",
     "@angular/core": "^21.1.0",
+    "@angular/forms": "^21.1.0",
+    "@angular/router": "^21.1.0",
+    "rxjs": "^7.8.0",
     "@syndew/oluso-admin-ui": "*",
     "@syndew/oluso-ui-core": "*"
   },

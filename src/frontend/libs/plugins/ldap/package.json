@@ -1,6 +1,19 @@
 {
   "name": "@syndew/oluso-plugin-ldap",
   "version": "0.0.1",
+  "description": "LDAP for the Oluso admin portal: an LDAP dashboard, service accounts and the built-in LDAP server settings.",
+  "keywords": [
+    "angular",
+    "oluso",
+    "ldap",
+    "directory",
+    "plugin"
+  ],
+  "homepage": "https://github.com/SyndewTech/Oluso/tree/main/src/frontend/libs/plugins/ldap#readme",
+  "bugs": {
+    "url": "https://github.com/SyndewTech/Oluso/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/SyndewTech/Oluso.git",
@@ -9,6 +22,9 @@
   "peerDependencies": {
     "@angular/common": "^21.1.0",
     "@angular/core": "^21.1.0",
+    "@angular/forms": "^21.1.0",
+    "@angular/router": "^21.1.0",
+    "rxjs": "^7.8.0",
     "@syndew/oluso-admin-ui": "*",
     "@syndew/oluso-ui-core": "*"
   },
