@@ -207,6 +207,19 @@ missing. Once the administrator exists the two values are no longer read, so rem
 anything; change or disable those accounts and clients in the admin portal. Email and SMS providers, external sign-in providers, SAML and SCIM are configured per tenant in the
 admin portal; the [User Guide](./USER_GUIDE.md) covers them.
 
+#### Public demos
+
+On a demo where visitors share the test accounts, one visitor can lock the others out by changing a password,
+turning on MFA or disabling an account. `Sample:DemoReset` puts the four test accounts back as seeded on a
+schedule: email, name, password, role and the org admin's organization ownership are restored, and MFA,
+passkeys, external logins, lockouts and sessions are cleared. A deleted account is created again.
+
+| Setting | Value |
+|---------|-------|
+| `Sample:DemoReset:Enabled` | `true` |
+| `Sample:DemoReset:Interval` | How often, for example `1.00:00:00` for daily (the default). The first reset runs at startup |
+| `Sample:DemoReset:SuperAdminPassword` | The super admin's password after each reset, so it isn't the published one. Required when enabled |
+
 ## Running the server image on its own
 
 To run the server without Caddy or the portals, for example to use its APIs and protocol endpoints from

@@ -32,7 +32,7 @@ public static class SeedData
         await SeedIdentityResourcesAsync(dbContext);
         await SeedRolesAsync(dbContext);
         if (seedTestData)
-            await SeedUsersAsync(dbContext);
+            await SeedUsersAsync(dbContext, configuration);
         else
             await SeedPlatformAdministratorAsync(scope.ServiceProvider, dbContext, configuration);
         await SeedJourneyPoliciesAsync(dbContext, "default");
@@ -757,62 +757,101 @@ public static class SeedData
         await dbContext.SaveChangesAsync();
     }
 
-    private static async Task SeedUsersAsync(OlusoDbContext dbContext)
+    /// <summary>
+    /// A test account the sample seeds; <see cref="DemoAccountReset"/> restores the same accounts. The fixed
+    /// <paramref name="Id"/> lets the reset find an account whose email and user name were both changed.
+    /// <paramref name="RoleTenantId"/> is the tenant the role is defined in (null for the platform roles).
+    /// </summary>
+    internal sealed record TestAccount(string Id, string Email, string FirstName, string LastName, string DisplayName, string RoleName, string? RoleTenantId, string Password);
+
+    internal const string OrgAdminOrganizationId = "default-org";
+
+    internal static readonly TestAccount[] TestAccounts =
+    [
+        new("test-superadmin", "superadmin@oluso.local", "Super", "Admin", "Super Administrator", "SuperAdmin", null, "SuperAdmin123!"),
+        new("test-orgadmin", "orgadmin@oluso.local", "Org", "Admin", "Organization Administrator", "OrgAdmin", null, "OrgAdmin123!"),
+        new("test-tenantadmin", "admin@default.local", "Tenant", "Admin", "Default Tenant Administrator", "Admin", "default", "TenantAdmin123!"),
+        new("test-user", "testuser@example.com", "Test", "User", "Test User", "User", "default", "Password123!"),
+    ];
+
+    /// <summary>
+    /// The tenant an account lives in: the platform tenant for the super admin, the first tenant of the
+    /// organization it owns for the org admin, and the default tenant for the others.
+    /// </summary>
+    internal static async Task<string> TestAccountTenantIdAsync(OlusoDbContext dbContext, TestAccount account) => account.RoleName switch
     {
-        if (await dbContext.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == "superadmin@oluso.local"))
-            return;
-
-        var passwordHasher = new PasswordHasher<OlusoUser>();
-        var superAdminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "SuperAdmin");
-        var orgAdminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "OrgAdmin");
-        var adminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "Admin");
-        var userRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "User");
-
-        const string orgAdminOrgId = "default-org";
-        var orgAdminHomeTenantId = await dbContext.Tenants!
+        "SuperAdmin" => PlatformConstants.TenantId,
+        "OrgAdmin" => await dbContext.Tenants!
             .IgnoreQueryFilters()
-            .Where(t => t.OrganizationId == orgAdminOrgId)
+            .Where(t => t.OrganizationId == OrgAdminOrganizationId)
             .OrderBy(t => t.Created)
             .Select(t => t.Id)
-            .FirstAsync();
+            .FirstAsync(),
+        _ => "default",
+    };
 
-        var superAdmin = CreateUser("superadmin@oluso.local", "Super", "Admin", "Super Administrator", tenantId: PlatformConstants.TenantId);
-        superAdmin.PasswordHash = passwordHasher.HashPassword(superAdmin, "SuperAdmin123!");
-        dbContext.Users.Add(superAdmin);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = superAdmin.Id, RoleId = superAdminRole.Id, TenantId = superAdmin.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+    /// <summary>The seeded role, matched on its tenant too, so a same-named role in another tenant can't stand in.</summary>
+    internal static Task<OlusoRole> TestAccountRoleAsync(OlusoDbContext dbContext, TestAccount account, CancellationToken cancellationToken = default) =>
+        dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == account.RoleName && r.TenantId == account.RoleTenantId, cancellationToken);
 
-        // OrgAdmin's home tenant is the first tenant of the org they own.
-        var orgAdmin = CreateUser("orgadmin@oluso.local", "Org", "Admin", "Organization Administrator", tenantId: orgAdminHomeTenantId);
-        orgAdmin.PasswordHash = passwordHasher.HashPassword(orgAdmin, "OrgAdmin123!");
-        dbContext.Users.Add(orgAdmin);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = orgAdmin.Id, RoleId = orgAdminRole.Id, TenantId = orgAdmin.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+    /// <summary>The tenant the account's role assignment is recorded under.</summary>
+    internal static string TestAccountRoleAssignmentTenantId(TestAccount account, OlusoUser user, OlusoRole role) =>
+        account.RoleName is "SuperAdmin" or "OrgAdmin" ? user.TenantId! : role.TenantId!;
 
-        var tenantAdmin = CreateUser("admin@default.local", "Tenant", "Admin", "Default Tenant Administrator", tenantId: "default");
-        tenantAdmin.PasswordHash = passwordHasher.HashPassword(tenantAdmin, "TenantAdmin123!");
-        dbContext.Users.Add(tenantAdmin);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = tenantAdmin.Id, RoleId = adminRole.Id, TenantId = adminRole.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+    /// <summary>
+    /// The password an account is seeded and reset with: the published one, except the super admin's
+    /// when the demo reset is on, which is never the published one, not even before the first reset.
+    /// </summary>
+    internal static string TestAccountPassword(TestAccount account, DemoAccountResetOptions demoReset) =>
+        account.RoleName == "SuperAdmin" && demoReset.Enabled ? demoReset.SuperAdminPassword! : account.Password;
 
-        var testUser = CreateUser("testuser@example.com", "Test", "User", "Test User", tenantId: "default");
-        testUser.PasswordHash = passwordHasher.HashPassword(testUser, "Password123!");
-        dbContext.Users.Add(testUser);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = testUser.Id, RoleId = userRole.Id, TenantId = userRole.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
-
-        dbContext.OrganizationMemberships.Add(new OrganizationMembership
+    /// <summary>Adds a test account (not saved): the user, its role, and for the org admin its organization ownership.</summary>
+    internal static async Task<OlusoUser> AddTestAccountAsync(OlusoDbContext dbContext, TestAccount account, string password)
+    {
+        var role = await TestAccountRoleAsync(dbContext, account);
+        var user = CreateUser(account.Email, account.FirstName, account.LastName, account.DisplayName,
+            tenantId: await TestAccountTenantIdAsync(dbContext, account), id: account.Id);
+        user.PasswordHash = new PasswordHasher<OlusoUser>().HashPassword(user, password);
+        user.PasswordChangedAt = DateTime.UtcNow;
+        dbContext.Users.Add(user);
+        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole
         {
-            Id = Guid.NewGuid().ToString(),
-            OrganizationId = orgAdminOrgId,
-            UserId = orgAdmin.Id,
-            Role = OrganizationRole.Owner,
-            JoinedAt = DateTime.UtcNow
+            UserId = user.Id,
+            RoleId = role.Id,
+            TenantId = TestAccountRoleAssignmentTenantId(account, user, role),
+            AssignedAt = DateTime.UtcNow,
+            AssignedBy = "system"
         });
+
+        if (account.RoleName == "OrgAdmin")
+        {
+            dbContext.OrganizationMemberships.Add(new OrganizationMembership
+            {
+                Id = Guid.NewGuid().ToString(),
+                OrganizationId = OrgAdminOrganizationId,
+                UserId = user.Id,
+                Role = OrganizationRole.Owner,
+                JoinedAt = DateTime.UtcNow
+            });
+        }
+
+        return user;
+    }
+
+    private static async Task SeedUsersAsync(OlusoDbContext dbContext, IConfiguration configuration)
+    {
+        if (await dbContext.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == TestAccounts[0].Email))
+            return;
+
+        var demoReset = DemoAccountResetOptions.From(configuration);
+        foreach (var account in TestAccounts)
+            await AddTestAccountAsync(dbContext, account, TestAccountPassword(account, demoReset));
 
         await dbContext.SaveChangesAsync();
 
         Console.WriteLine("Seeded users:");
-        Console.WriteLine("  SuperAdmin:   superadmin@oluso.local / SuperAdmin123!");
-        Console.WriteLine("  Org Admin:    orgadmin@oluso.local / OrgAdmin123!");
-        Console.WriteLine("  Tenant Admin: admin@default.local / TenantAdmin123!");
-        Console.WriteLine("  Test User:    testuser@example.com / Password123!");
+        foreach (var account in TestAccounts)
+            Console.WriteLine($"  {account.DisplayName}: {account.Email}" + (TestAccountPassword(account, demoReset) == account.Password ? $" / {account.Password}" : " (password from Sample:DemoReset)"));
     }
 
     /// <summary>
@@ -852,11 +891,11 @@ public static class SeedData
         Console.WriteLine($"Seeded platform administrator: {email}");
     }
 
-    private static OlusoUser CreateUser(string email, string firstName, string lastName, string displayName, string tenantId)
+    private static OlusoUser CreateUser(string email, string firstName, string lastName, string displayName, string tenantId, string? id = null)
     {
         return new OlusoUser
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = id ?? Guid.NewGuid().ToString(),
             UserName = email,
             NormalizedUserName = email.ToUpperInvariant(),
             Email = email,
