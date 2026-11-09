@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
+using Oluso.Admin.Dto.Grants;
 
 namespace Oluso.Admin.Controllers;
 
@@ -43,6 +45,7 @@ public class GrantsController : AdminBaseController
         [FromQuery] string? subjectId,
         [FromQuery] string? clientId,
         [FromQuery] string? type,
+        [FromQuery] bool includeExpired = false,
         [FromQuery] int pageNumber = 1,
         [FromQuery] int pageSize = 20,
         CancellationToken cancellationToken = default)
@@ -55,7 +58,11 @@ public class GrantsController : AdminBaseController
         };
 
         var grants = await _grantStore.GetAllAsync(filter, cancellationToken);
-        var grantsList = grants.ToList();
+        var now = DateTime.UtcNow;
+        var grantsList = grants
+            .Where(g => includeExpired || g.Expiration == null || g.Expiration > now)
+            .OrderByDescending(g => g.CreationTime)
+            .ToList();
 
         var paged = grantsList
             .Skip((pageNumber - 1) * pageSize)
@@ -279,7 +286,8 @@ public class GrantsController : AdminBaseController
         Description = grant.Description,
         CreationTime = grant.CreationTime,
         Expiration = grant.Expiration,
-        ConsumedTime = grant.ConsumedTime
+        ConsumedTime = grant.ConsumedTime,
+        IsExpired = grant.Expiration is { } exp && exp <= DateTime.UtcNow
     };
 
     private static ServerSideSessionDto MapSessionToDto(ServerSideSession session) => new()
@@ -292,45 +300,7 @@ public class GrantsController : AdminBaseController
         DisplayName = session.DisplayName,
         Created = session.Created,
         Renewed = session.Renewed,
-        Expires = session.Expires
+        Expires = session.Expires,
+        IsExpired = session.Expires is { } exp && exp <= DateTime.UtcNow
     };
 }
-
-#region DTOs
-
-public class PaginatedResult<T>
-{
-    public List<T> Items { get; set; } = new();
-    public int TotalCount { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
-    public int TotalPages { get; set; }
-}
-
-public class PersistedGrantDto
-{
-    public string Key { get; set; } = null!;
-    public string Type { get; set; } = null!;
-    public string? SubjectId { get; set; }
-    public string? SessionId { get; set; }
-    public string ClientId { get; set; } = null!;
-    public string? Description { get; set; }
-    public DateTime CreationTime { get; set; }
-    public DateTime? Expiration { get; set; }
-    public DateTime? ConsumedTime { get; set; }
-}
-
-public class ServerSideSessionDto
-{
-    public int Id { get; set; }
-    public string Key { get; set; } = null!;
-    public string Scheme { get; set; } = null!;
-    public string SubjectId { get; set; } = null!;
-    public string? SessionId { get; set; }
-    public string? DisplayName { get; set; }
-    public DateTime Created { get; set; }
-    public DateTime Renewed { get; set; }
-    public DateTime? Expires { get; set; }
-}
-
-#endregion

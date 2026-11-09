@@ -1,8 +1,8 @@
 @using Oluso.UserJourneys.Steps
 @model SignUpViewModel
 
-<h1 class="title">Create Account</h1>
-<p class="subtitle">Sign up to get started</p>
+<h1 class="title">@Localizer["signup_title"]</h1>
+<p class="subtitle">@Localizer["signup_subtitle"]</p>
 
 @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
 {
@@ -17,62 +17,91 @@
 <form method="post" id="signupForm">
     <div class="form-row">
         <div class="form-group">
-            <label for="firstName">First Name</label>
+            <label for="firstName">@Localizer["signup_first_name_label"]</label>
             <input type="text"
                    id="firstName"
                    name="firstName"
                    class="form-control"
                    value="@Model?.FirstName"
-                   placeholder="John"
+                   placeholder="@Localizer["signup_first_name_placeholder"].Value"
                    autocomplete="given-name" />
         </div>
         <div class="form-group">
-            <label for="lastName">Last Name</label>
+            <label for="lastName">@Localizer["signup_last_name_label"]</label>
             <input type="text"
                    id="lastName"
                    name="lastName"
                    class="form-control"
                    value="@Model?.LastName"
-                   placeholder="Doe"
+                   placeholder="@Localizer["signup_last_name_placeholder"].Value"
                    autocomplete="family-name" />
         </div>
     </div>
 
     <div class="form-group">
-        <label for="email">Email</label>
+        <label for="email">@Localizer["signup_email_label"]</label>
         <input type="email"
                id="email"
                name="email"
                class="form-control"
                value="@Model?.Email"
-               placeholder="john@example.com"
+               placeholder="@Localizer["signup_email_placeholder"].Value"
                @(Model?.IsEmailDisabled == true ? "readonly" : "")
-               autocomplete="email"
+               autocomplete="@(Model?.AskUsername == true ? "email" : "username")"
                required />
     </div>
 
-    <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password"
-               id="password"
-               name="password"
-               class="form-control"
-               placeholder="Create a strong password"
-               autocomplete="new-password"
-               required />
-        <span class="form-text">At least 8 characters with uppercase, lowercase, and a number</span>
-    </div>
+    @if (Model?.AskUsername == true)
+    {
+        <div class="form-group">
+            <label for="username">@Localizer["signup_username_label"]</label>
+            <input type="text"
+                   id="username"
+                   name="username"
+                   class="form-control"
+                   value="@Model.Username"
+                   placeholder="@Localizer["signup_username_placeholder"].Value"
+                   autocomplete="username"
+                   autocapitalize="none"
+                   spellcheck="false"
+                   required />
+        </div>
+    }
 
-    <div class="form-group">
-        <label for="confirmPassword">Confirm Password</label>
-        <input type="password"
-               id="confirmPassword"
-               name="confirmPassword"
-               class="form-control"
-               placeholder="Confirm your password"
-               autocomplete="new-password"
-               required />
-    </div>
+    @if (Model?.RequirePassword != false)
+    {
+        <div class="form-group">
+            <label for="password">@Localizer["signup_password_label"]</label>
+            <input type="password"
+                   id="password"
+                   name="password"
+                   class="form-control"
+                   placeholder="@Localizer["signup_password_placeholder"].Value"
+                   autocomplete="new-password"
+                   required />
+            <span class="form-text">@Localizer["signup_password_help"]</span>
+        </div>
+
+        <div class="form-group">
+            <label for="confirmPassword">@Localizer["signup_confirm_password_label"]</label>
+            <input type="password"
+                   id="confirmPassword"
+                   name="confirmPassword"
+                   class="form-control"
+                   placeholder="@Localizer["signup_confirm_password_placeholder"].Value"
+                   autocomplete="new-password"
+                   required />
+        </div>
+    }
+    else
+    {
+        <div class="passkey-notice">
+            <svg viewBox="0 0 24 24" width="20" height="20">
+                <path fill="currentColor" d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+            </svg>
+            <span>@Localizer["signup_passkey_notice"]</span>
+        </div>
+    }
 
     @if (Model?.RequireTermsAcceptance == true)
     {
@@ -84,37 +113,34 @@
                    value="true"
                    required />
             <label class="form-check-label" for="acceptTerms">
-                I agree to the
+                @Localizer["signup_terms_prefix"]
                 @if (!string.IsNullOrEmpty(Model.TermsUrl))
                 {
-                    <a href="@Model.TermsUrl" target="_blank">Terms of Service</a>
+                    <a href="@Model.TermsUrl" target="_blank">@Localizer["signup_terms_link"]</a>
                 }
                 else
                 {
-                    <span>Terms of Service</span>
+                    <span>@Localizer["signup_terms_link"]</span>
                 }
                 @if (!string.IsNullOrEmpty(Model.PrivacyUrl))
                 {
-                    <text> and </text>
-                    <a href="@Model.PrivacyUrl" target="_blank">Privacy Policy</a>
+                    <text> @Localizer["signup_terms_and"] </text>
+                    <a href="@Model.PrivacyUrl" target="_blank">@Localizer["signup_privacy_link"]</a>
                 }
             </label>
         </div>
     }
 
-    <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+    <button type="submit" class="btn btn-primary btn-block">@Localizer["signup_button"]</button>
 </form>
 
-<div class="journey-footer">
-    <p>Already have an account? <button type="button" class="btn-link" onclick="switchToLogin()">Sign in</button></p>
-</div>
+@if (Model.ShowSignInLink)
+{
+    <div class="journey-footer">
+        <p>@Localizer["signup_signin_prefix"] <button type="button" class="btn-link" onclick="document.getElementById('switchForm').submit()">@Localizer["signup_signin_link"]</button></p>
+    </div>
 
-<form method="post" id="switchForm" style="display: none;">
-    <input type="hidden" name="action_type" value="login" />
-</form>
-
-<script>
-function switchToLogin() {
-    document.getElementById('switchForm').submit();
+    <form method="post" id="switchForm" style="display: none;">
+        <input type="hidden" name="action_type" value="login" />
+    </form>
 }
-</script>

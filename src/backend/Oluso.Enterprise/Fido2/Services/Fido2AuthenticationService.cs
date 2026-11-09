@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
+using Oluso.Core.Storage;
 using Oluso.Enterprise.Fido2.Configuration;
 using Oluso.Enterprise.Fido2.Entities;
 using Oluso.Enterprise.Fido2.Stores;
@@ -23,8 +24,19 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
     private readonly IFido2CredentialStore _credentialStore;
     private readonly ITenantContext _tenantContext;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IIssuerResolver _issuerResolver;
     private readonly Fido2Options _options;
     private readonly ILogger<Fido2AuthenticationService> _logger;
+    private readonly IEntityReferenceProtector? _decoyKeys;
+
+    /// <summary>Key purpose of the decoy credential IDs (<see cref="DecoyCredentialsAsync"/>).</summary>
+    public const string DecoyCredentialPurpose = "fido2-assertion-decoy";
+
+    /// <summary>Looked up for an unknown username, so the lookup costs the same whether or not the account exists.</summary>
+    private const string NoSuchUserId = "00000000-0000-0000-0000-000000000000";
+
+    // Used only when no entity-reference keys are configured: stable for the process, not across instances.
+    private static readonly byte[] ProcessDecoyKey = RandomNumberGenerator.GetBytes(32);
 
     // COSE algorithm identifiers
     private static readonly int[] SupportedAlgorithms =
@@ -42,13 +54,17 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
         IFido2CredentialStore credentialStore,
         ITenantContext tenantContext,
         IHttpContextAccessor httpContextAccessor,
+        IIssuerResolver issuerResolver,
         IOptions<Fido2Options> options,
-        ILogger<Fido2AuthenticationService> logger)
+        ILogger<Fido2AuthenticationService> logger,
+        IEntityReferenceProtector? decoyKeys = null)
     {
+        _decoyKeys = decoyKeys;
         _userService = userService;
         _credentialStore = credentialStore;
         _tenantContext = tenantContext;
         _httpContextAccessor = httpContextAccessor;
+        _issuerResolver = issuerResolver;
         _options = options.Value;
         _logger = logger;
     }
@@ -73,7 +89,7 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
         var challenge = GenerateChallenge();
 
         // Get effective RP ID (supports tenant custom domains)
-        var rpId = GetEffectiveRpId();
+        var rpId = await GetEffectiveRpIdAsync(cancellationToken);
         var rpName = _tenantContext.Tenant?.DisplayName ?? _tenantContext.Tenant?.Name ?? _options.RelyingPartyName;
 
         _logger.LogDebug("Created registration options for user {UserId} with RP ID {RpId}", user.Id, rpId);
@@ -128,7 +144,7 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
 
             // Determine origin and RP ID for verification (supports tenant origins)
             var origin = GetEffectiveOrigin();
-            var rpId = GetEffectiveRpId();
+            var rpId = await GetEffectiveRpIdAsync(cancellationToken);
 
             // Parse and verify attestation
             var result = WebAuthnVerifier.ParseAttestation(
@@ -212,32 +228,29 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
 
         if (!string.IsNullOrEmpty(username))
         {
-            var userInfo = await _userService.FindByUsernameAsync(username, cancellationToken)
-                        ?? await _userService.FindByEmailAsync(username, cancellationToken);
+            // The answer must not tell whether the account exists or has passkeys: both lookups and the
+            // credential query always run, and an unknown account (or one without passkeys) gets stable decoy
+            // credential IDs shaped like real ones instead of none. Its sign-in simply never completes.
+            var byUsername = await _userService.FindByUsernameAsync(username, cancellationToken);
+            var byEmail = await _userService.FindByEmailAsync(username, cancellationToken);
+            var userInfo = byUsername ?? byEmail;
 
-            if (userInfo != null)
-            {
-                var activeCredentials = await _credentialStore.GetActiveByUserIdAsync(userInfo.Id, cancellationToken);
+            var activeCredentials = await _credentialStore.GetActiveByUserIdAsync(userInfo?.Id ?? NoSuchUserId, cancellationToken);
 
-                if (activeCredentials.Count > 0)
+            allowCredentials = userInfo != null && activeCredentials.Count > 0
+                ? activeCredentials.Select(c => new CredentialDescriptor
                 {
-                    allowCredentials = activeCredentials.Select(c => new CredentialDescriptor
-                    {
-                        Type = "public-key",
-                        Id = c.CredentialId,
-                        Transports = c.GetTransports().Count > 0 ? c.GetTransports() : null
-                    }).ToList();
-
-                    _logger.LogDebug("Found {Count} credentials for user {Username}",
-                        allowCredentials.Count, username);
-                }
-            }
+                    Type = "public-key",
+                    Id = c.CredentialId,
+                    Transports = c.GetTransports().Count > 0 ? c.GetTransports() : null
+                }).ToList()
+                : await DecoyCredentialsAsync(username, cancellationToken);
         }
 
         var challenge = GenerateChallenge();
 
         // Get effective RP ID (supports tenant custom domains)
-        var rpId = GetEffectiveRpId();
+        var rpId = await GetEffectiveRpIdAsync(cancellationToken);
 
         _logger.LogDebug("Created assertion options with RP ID {RpId}", rpId);
 
@@ -248,6 +261,38 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
             RpId = rpId,
             AllowCredentials = allowCredentials,
             UserVerification = _options.UserVerificationRequirement
+        };
+    }
+
+    /// <summary>
+    /// One credential descriptor for a username with no passkeys, derived with a keyed hash so it is the same
+    /// on every request (and every instance) for that username, and can't be told from a real one.
+    /// </summary>
+    private async Task<List<CredentialDescriptor>> DecoyCredentialsAsync(string username, CancellationToken cancellationToken)
+    {
+        var normalized = username.Trim().ToLowerInvariant();
+        byte[] id;
+        try
+        {
+            id = _decoyKeys != null
+                ? Convert.FromHexString(await _decoyKeys.BlindIndexAsync(
+                    _tenantContext.TenantId ?? Oluso.Core.PlatformConstants.TenantId, DecoyCredentialPurpose, normalized, cancellationToken))
+                : HMACSHA256.HashData(ProcessDecoyKey, Encoding.UTF8.GetBytes(normalized));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Decoy credential key unavailable; using the process key");
+            id = HMACSHA256.HashData(ProcessDecoyKey, Encoding.UTF8.GetBytes(normalized));
+        }
+
+        return new List<CredentialDescriptor>
+        {
+            new()
+            {
+                Type = "public-key",
+                Id = Base64UrlEncode(id),
+                Transports = new List<string> { "hybrid", "internal" }
+            }
         };
     }
 
@@ -297,7 +342,7 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
 
             // Determine origin and RP ID for verification (supports tenant origins)
             var origin = GetEffectiveOrigin();
-            var rpId = GetEffectiveRpId();
+            var rpId = await GetEffectiveRpIdAsync(cancellationToken);
             var storedPublicKey = Base64UrlDecode(storedCredential.PublicKey);
 
             // Verify the assertion
@@ -567,36 +612,40 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
     }
 
     /// <summary>
-    /// Gets the effective relying party ID.
-    /// Uses tenant custom domain or configured RP ID.
+    /// Gets the effective relying party ID by delegating to
+    /// <see cref="IIssuerResolver"/> — the same cascade everything else
+    /// uses to determine the tenant's issuer URI. Cascade order:
+    ///   1. Tenant TokenSettings.IssuerUri (explicit per-tenant override)
+    ///   2. Tenant.CustomDomain (CNAMEd brand domain)
+    ///   3. Auto-subdomain &lt;identifier&gt;.&lt;issuer-host&gt; (per-tenant)
+    ///   4. Configured Oluso:IssuerUri (platform fallback)
+    ///   5. Request host (last-resort)
+    ///
+    /// The host portion of the resolved issuer URI is the RP ID, so a
+    /// passkey registered against tenant Acme is scoped to Acme's host
+    /// and never bleeds into another tenant on the same platform.
+    /// On any resolver failure, falls back to the configured
+    /// <see cref="Fido2Options.RelyingPartyId"/> baseline so registration
+    /// flows don't crash when the resolver is misconfigured.
     /// </summary>
-    private string GetEffectiveRpId()
+    private async Task<string> GetEffectiveRpIdAsync(CancellationToken cancellationToken = default)
     {
-        // Check tenant custom domain first
-        var tenant = _tenantContext.Tenant;
-        if (!string.IsNullOrEmpty(tenant?.CustomDomain))
+        try
         {
-            return tenant.CustomDomain;
+            var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
+            if (Uri.TryCreate(issuer, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+            {
+                return uri.Host;
+            }
+            _logger.LogWarning(
+                "IssuerResolver returned a value that didn't parse to an absolute URI ('{Issuer}'); falling back to configured RP ID '{RpId}'",
+                issuer, _options.RelyingPartyId);
         }
-
-        // Try to extract from current request host
-        var httpContext = _httpContextAccessor.HttpContext;
-        if (httpContext != null && !string.IsNullOrEmpty(_options.RelyingPartyId))
+        catch (Exception ex)
         {
-            var requestHost = httpContext.Request.Host.Host;
-
-            // If request host ends with configured RP ID, it's valid
-            // e.g., RP ID = "example.com", host = "auth.example.com" -> valid
-            if (requestHost.EndsWith(_options.RelyingPartyId, StringComparison.OrdinalIgnoreCase))
-            {
-                return _options.RelyingPartyId;
-            }
-
-            // For localhost development, use the request host
-            if (requestHost == "localhost" || requestHost.StartsWith("127."))
-            {
-                return requestHost;
-            }
+            _logger.LogWarning(ex,
+                "IssuerResolver threw while resolving RP ID; falling back to configured RP ID '{RpId}'",
+                _options.RelyingPartyId);
         }
 
         return _options.RelyingPartyId;

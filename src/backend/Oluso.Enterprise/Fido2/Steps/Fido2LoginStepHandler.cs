@@ -15,9 +15,22 @@ namespace Oluso.Enterprise.Fido2.Steps;
 /// For composite login (passkey + password + external), use the composite_login step
 /// which integrates passkey support when FIDO2 is enabled.
 /// </remarks>
-public class Fido2LoginStepHandler : IStepHandler
+public class Fido2LoginStepHandler : ICustomStepHandler, ICustomStepHandlerMetadata, IPrimaryAuthenticationStep
 {
     public string StepType => "fido2_login";
+    public string DisplayName => "Passkey Login";
+    public string Description => "Authenticate using FIDO2/WebAuthn passkey (supports username-based and usernameless flows)";
+    public string Category => "Authentication";
+    public string? Icon => "fingerprint";
+
+    public Dictionary<string, object>? GetConfigurationSchema() => new()
+    {
+        ["allowUsernameless"] = new { type = "boolean", @default = true, description = "Let users sign in with a passkey without typing a username" },
+        ["showAsOption"] = new { type = "boolean", @default = true, description = "Offer passkey sign-in as an option next to other sign-in methods" },
+        ["title"] = new Dictionary<string, object> { ["type"] = "string", ["description"] = "Heading of the passkey sign-in page", ["x-localizable"] = true },
+        ["description"] = new Dictionary<string, object> { ["type"] = "string", ["description"] = "Text under the heading", ["x-localizable"] = true },
+    };
+    public string? Module => "Oluso.Enterprise.Fido2";
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
@@ -25,6 +38,19 @@ public class Fido2LoginStepHandler : IStepHandler
         var userService = context.ServiceProvider.GetRequiredService<IOlusoUserService>();
         var tenantContext = context.ServiceProvider.GetRequiredService<ITenantContext>();
         var logger = context.ServiceProvider.GetRequiredService<ILogger<Fido2LoginStepHandler>>();
+
+        // Tenant-level kill switch — admin has disabled passkey for this
+        // tenant via Tenant.EnablePasskey. Skip the step so the journey
+        // moves to the next step (typically a password fallback). Mirrors
+        // the same toggle that filters the passkey provider out of the
+        // standalone Login page's PasswordlessProviders list.
+        if (tenantContext.Tenant?.EnablePasskey == false)
+        {
+            logger.LogDebug(
+                "Skipping Fido2 login step — passkey is disabled for tenant {TenantId}",
+                tenantContext.TenantId);
+            return StepHandlerResult.Skip();
+        }
 
         // Check if this is a verification callback
         var assertionResponse = context.GetInput("assertionResponse");
@@ -49,8 +75,8 @@ public class Fido2LoginStepHandler : IStepHandler
             AllowUsernameless = allowUsernameless,
             ShowAsOption = showAsOption,
             TenantName = tenantContext.Tenant?.Name,
-            Title = context.GetConfig("title", "Sign in with Passkey"),
-            Description = context.GetConfig("description", "Use your fingerprint, face, or security key to sign in securely.")
+            Title = context.GetLocalizedConfig("title") ?? Oluso.Core.Locale.UiStringDefaults.Resolve("fido2_login_title"),
+            Description = context.GetLocalizedConfig("description") ?? Oluso.Core.Locale.UiStringDefaults.Resolve("fido2_login_subtitle")
         });
     }
 
@@ -89,12 +115,12 @@ public class Fido2LoginStepHandler : IStepHandler
 
             // Store challenge in journey data for verification
             context.SetData("fido2_challenge", options.Challenge);
-            context.SetData("fido2_assertion_id", options.AssertionId);
+            JourneyPasskeyAssertion.Remember(context, options.AssertionId);
 
             logger.LogDebug("Created FIDO2 assertion options for {Username}", username ?? "(usernameless)");
 
             // Return options to client for WebAuthn API call
-            return StepHandlerResult.ShowUi("Journey/_Fido2Assertion", new Fido2AssertionViewModel
+            return StepHandlerResult.ShowUi("Journey/_Fido2Assertion", new Oluso.Core.Services.Fido2AssertionViewModel
             {
                 Options = options,
                 AssertionId = options.AssertionId
@@ -119,11 +145,17 @@ public class Fido2LoginStepHandler : IStepHandler
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        var assertionId = context.GetInput("assertionId") ?? context.GetData<string>("fido2_assertion_id");
+        // Only the assertion this journey asked for, once (JourneyPasskeyAssertion).
+        var assertionId = JourneyPasskeyAssertion.Take(context);
 
         if (string.IsNullOrEmpty(assertionId))
         {
-            return StepHandlerResult.Fail("invalid_request", "Missing assertion ID");
+            logger.LogWarning("Passkey response posted with no matching assertion pending in this journey");
+            return StepHandlerResult.ShowUi("Journey/_Fido2Login", new Fido2LoginViewModel
+            {
+                ErrorMessage = "Your passkey request expired. Please try again.",
+                AllowUsernameless = context.GetConfig("allowUsernameless", true)
+            });
         }
 
         try
@@ -157,7 +189,7 @@ public class Fido2LoginStepHandler : IStepHandler
             context.UserId = user.Id;
             context.SetData("authenticated_at", DateTime.UtcNow);
             context.SetData("auth_method", "fido2");
-            context.SetData("credential_id", result.CredentialId);
+            context.SetData("credential_id", result.CredentialId ?? "");
 
             await userService.RecordLoginAsync(user.Id, cancellationToken);
 

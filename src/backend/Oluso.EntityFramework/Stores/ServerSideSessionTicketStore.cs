@@ -55,6 +55,34 @@ public class ServerSideSessionTicketStore : ITicketStore
             ?? ticket.Principal.FindFirstValue("name");
         var tenantId = ticket.Principal.FindFirstValue("tenant_id") ?? string.Empty;
 
+        // The cookie principal is what /authorize reads, so the session id has to be
+        // on it for tokens and refresh grants to belong to this login session. Sign-in
+        // paths build principals without one; stamp it here, once, for all of them.
+        if (ticket.Principal.FindFirst("sid") == null && ticket.Principal.Identity is ClaimsIdentity identity)
+        {
+            identity.AddClaim(new Claim("sid", sessionId));
+        }
+
+        // Where the login happened, kept with the ticket so the sessions page can show it.
+        var http = _httpContextAccessor.HttpContext;
+        if (http != null)
+        {
+            var userAgent = http.Request.Headers.UserAgent.ToString();
+            if (!string.IsNullOrEmpty(userAgent))
+            {
+                ticket.Properties.Items[SessionTicketProperties.UserAgent] = userAgent;
+            }
+            var ip = http.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',').FirstOrDefault()?.Trim();
+            if (string.IsNullOrEmpty(ip))
+            {
+                ip = http.Connection.RemoteIpAddress?.ToString();
+            }
+            if (!string.IsNullOrEmpty(ip))
+            {
+                ticket.Properties.Items[SessionTicketProperties.IpAddress] = ip;
+            }
+        }
+
         var session = new ServerSideSession
         {
             Key = key,
@@ -96,6 +124,7 @@ public class ServerSideSessionTicketStore : ITicketStore
 
         session.Renewed = DateTime.UtcNow;
         session.Expires = ticket.Properties.ExpiresUtc?.UtcDateTime;
+        EnsureSessionIdClaim(ticket, session.SessionId ?? key);
         session.Data = SerializeTicket(ticket);
 
         await sessionStore.UpdateSessionAsync(session);
@@ -134,6 +163,7 @@ public class ServerSideSessionTicketStore : ITicketStore
             return null;
         }
 
+        EnsureSessionIdClaim(ticket, session.SessionId ?? key);
         return ticket;
     }
 
@@ -149,6 +179,17 @@ public class ServerSideSessionTicketStore : ITicketStore
         await sessionStore.DeleteSessionAsync(key);
 
         _logger.LogInformation("Removed server-side session {Key}", key);
+    }
+
+    // A principal rebuilt by a validator (security stamp refresh, claims re-issue)
+    // arrives without the sid; put the session's id back so tokens issued from this
+    // cookie keep belonging to the same login session.
+    private static void EnsureSessionIdClaim(AuthenticationTicket ticket, string sessionId)
+    {
+        if (ticket.Principal.FindFirst("sid") == null && ticket.Principal.Identity is ClaimsIdentity identity)
+        {
+            identity.AddClaim(new Claim("sid", sessionId));
+        }
     }
 
     private IServerSideSessionStore? GetSessionStore()
@@ -224,4 +265,11 @@ public class ServerSideSessionTicketStore : ITicketStore
         public string ValueType { get; set; } = ClaimValueTypes.String;
         public string Issuer { get; set; } = ClaimsIdentity.DefaultIssuer;
     }
+}
+
+/// <summary>Ticket property keys the session list reads back out of the serialized ticket.</summary>
+public static class SessionTicketProperties
+{
+    public const string UserAgent = "oluso:user_agent";
+    public const string IpAddress = "oluso:ip_address";
 }

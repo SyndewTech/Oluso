@@ -1,0 +1,29 @@
+@import 'tailwindcss' source('../../../');
+@plugin "@tailwindcss/forms";
+@import '../../../libs/ui-core/src/lib/ui-core/ui-core.css';
+
+/* Custom theme configuration matching existing React project */
+@theme {
+  --color-primary-50: oklch(0.97 0.02 250);
+  --color-primary-100: oklch(0.93 0.04 250);
+  --color-primary-200: oklch(0.86 0.08 250);
+  --color-primary-300: oklch(0.76 0.12 250);
+  --color-primary-400: oklch(0.66 0.16 250);
+  --color-primary-500: oklch(0.55 0.18 250);
+  --color-primary-600: oklch(0.48 0.18 250);
+  --color-primary-700: oklch(0.4 0.16 250);
+  --color-primary-800: oklch(0.34 0.12 250);
+  --color-primary-900: oklch(0.28 0.08 250);
+  --color-primary-950: oklch(0.2 0.06 250);
+}
+
+/* Base layer customizations */
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+}

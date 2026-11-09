@@ -1,13 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
     <!-- NuGet Package Metadata -->
     <PackageId>Oluso.Admin</PackageId>
-    <Version>1.0.0</Version>
     <Description>Admin API controllers for Oluso identity server. Provides REST endpoints for user, role, client, and policy management.</Description>
     <PackageTags>oauth;oidc;identity;admin;api</PackageTags>
 
@@ -21,12 +20,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Oluso.Admin.Dto\Oluso.Admin.Dto.csproj" />
     <ProjectReference Include="..\Oluso.Core\Oluso.Core.csproj" />
+    <ProjectReference Include="..\Oluso.Imaging\Oluso.Imaging.csproj" />
+    <ProjectReference Include="..\Oluso.Core.Generators\Oluso.Core.Generators.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\Oluso.EntityFramework\Oluso.EntityFramework.csproj" />
     <ProjectReference Include="..\Oluso.Telemetry.Abstractions\Oluso.Telemetry.Abstractions.csproj" />
   </ItemGroup>
 

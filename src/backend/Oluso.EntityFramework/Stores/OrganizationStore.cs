@@ -33,7 +33,9 @@ public class OrganizationStore : IOrganizationStore
 
     public async Task<IEnumerable<Organization>> GetAllAsync(bool includeDisabled = false, CancellationToken cancellationToken = default)
     {
-        var query = _context.Organizations.AsQueryable();
+        var query = _context.Organizations
+            .Include(o => o.Tenants)
+            .AsQueryable();
 
         if (!includeDisabled)
         {
@@ -80,6 +82,34 @@ public class OrganizationStore : IOrganizationStore
     {
         return await _context.Organizations
             .AnyAsync(o => o.Slug == slug, cancellationToken);
+    }
+    public async Task<(IReadOnlyList<Organization> Items, int TotalCount)> SearchAsync(OrganizationSearchQuery query, CancellationToken cancellationToken = default)
+    {
+        if (query.OrganizationIds is { Count: 0 })
+            return (Array.Empty<Organization>(), 0);
+
+        var organizations = _context.Organizations.AsQueryable();
+
+        if (query.OrganizationIds != null)
+            organizations = organizations.Where(o => query.OrganizationIds.Contains(o.Id));
+        if (query.Enabled is { } enabled)
+            organizations = organizations.Where(o => o.Enabled == enabled);
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var term = query.Search.Trim().ToLower();
+            organizations = organizations.Where(o =>
+                o.Name.ToLower().Contains(term)
+                || o.Slug.ToLower().Contains(term)
+                || (o.Description != null && o.Description.ToLower().Contains(term)));
+        }
+
+        var total = await organizations.CountAsync(cancellationToken);
+        var items = await organizations
+            .OrderBy(o => o.Name)
+            .Skip(Math.Max(0, query.Skip))
+            .Take(Math.Max(1, query.Take))
+            .ToListAsync(cancellationToken);
+        return (items, total);
     }
 }
 
@@ -363,4 +393,5 @@ public class OrganizationInvitationStore : IOrganizationInvitationStore
             .Replace("/", "_")
             .Replace("=", "");
     }
+
 }

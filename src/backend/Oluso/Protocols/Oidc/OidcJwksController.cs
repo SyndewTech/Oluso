@@ -10,7 +10,7 @@ namespace Oluso.Protocols.Oidc;
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
 
-public class OidcJwksController : ControllerBase
+public class OidcJwksController : OidcControllerBase
 {
     private readonly ISigningCredentialStore _signingCredentialStore;
 
@@ -25,7 +25,9 @@ public class OidcJwksController : ControllerBase
         var keys = await _signingCredentialStore.GetValidationKeysAsync(cancellationToken);
         var jwks = new
         {
-            keys = keys.Select(k => GetJwk(k.Key, k.SigningAlgorithm)).ToArray()
+            // Public keys only: a symmetric key (e.g. a module's HS256 data-protection key) is a secret, never published.
+            keys = keys.Where(k => k.Key is RsaSecurityKey or ECDsaSecurityKey or X509SecurityKey)
+                .Select(k => GetJwk(k.Key, k.SigningAlgorithm)).ToArray()
         };
 
         return Ok(jwks);
@@ -38,11 +40,13 @@ public class OidcJwksController : ControllerBase
             var parameters = rsaKey.Rsa?.ExportParameters(false)
                 ?? throw new InvalidOperationException("Unable to export RSA parameters");
 
+            var kid = rsaKey.KeyId ?? ComputeKid(parameters.Modulus!);
+
             return new
             {
                 kty = "RSA",
                 use = "sig",
-                kid = rsaKey.KeyId,
+                kid,
                 alg = algorithm,
                 n = Base64UrlEncode(parameters.Modulus!),
                 e = Base64UrlEncode(parameters.Exponent!)
@@ -60,11 +64,13 @@ public class OidcJwksController : ControllerBase
                 _ => throw new InvalidOperationException($"Unsupported curve: {parameters.Curve.Oid?.FriendlyName}")
             };
 
+            var kid = ecKey.KeyId ?? ComputeKid(parameters.Q.X!);
+
             return new
             {
                 kty = "EC",
                 use = "sig",
-                kid = ecKey.KeyId,
+                kid,
                 alg = algorithm,
                 crv,
                 x = Base64UrlEncode(parameters.Q.X!),
@@ -74,6 +80,8 @@ public class OidcJwksController : ControllerBase
 
         if (key is X509SecurityKey x509Key)
         {
+            var certKid = x509Key.KeyId ?? Base64UrlEncode(x509Key.Certificate.GetCertHash());
+
             var rsa = x509Key.Certificate.GetRSAPublicKey();
             if (rsa != null)
             {
@@ -82,7 +90,7 @@ public class OidcJwksController : ControllerBase
                 {
                     kty = "RSA",
                     use = "sig",
-                    kid = x509Key.KeyId,
+                    kid = certKid,
                     alg = algorithm,
                     n = Base64UrlEncode(parameters.Modulus!),
                     e = Base64UrlEncode(parameters.Exponent!),
@@ -106,7 +114,7 @@ public class OidcJwksController : ControllerBase
                 {
                     kty = "EC",
                     use = "sig",
-                    kid = x509Key.KeyId,
+                    kid = certKid,
                     alg = algorithm,
                     crv,
                     x = Base64UrlEncode(parameters.Q.X!),
@@ -117,6 +125,13 @@ public class OidcJwksController : ControllerBase
         }
 
         throw new InvalidOperationException($"Unsupported key type: {key.GetType().Name}");
+    }
+
+    private static string ComputeKid(byte[] keyMaterial)
+    {
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var hash = sha256.ComputeHash(keyMaterial);
+        return Base64UrlEncode(hash[..16]);
     }
 
     private static string Base64UrlEncode(byte[] input)

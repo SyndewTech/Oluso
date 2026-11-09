@@ -13,7 +13,6 @@ public class Tenant
     public string Identifier { get; set; } = default!;
     public bool Enabled { get; set; } = true;
     public string? Description { get; set; }
-    public string? Configuration { get; set; }
     public DateTime Created { get; set; } = DateTime.UtcNow;
     public DateTime? Updated { get; set; }
 
@@ -98,10 +97,22 @@ public class Tenant
     public string? AllowedEmailDomains { get; set; }
 
     /// <summary>
-    /// Whether to use journey-based authentication flow or standalone pages.
-    /// Defaults to true (use journeys). Can be overridden per-client.
+    /// Whether this tenant routes authentication through the user-journey
+    /// engine (custom policies + interactive UI) or the standalone classic
+    /// Razor pages. Defaults to <c>false</c> so a freshly provisioned tenant
+    /// works out of the box on standalone auth; flip to <c>true</c> via the
+    /// admin UI once journey policies have been configured. Can be
+    /// overridden per-client (Client.UseJourneyFlow).
     /// </summary>
-    public bool UseJourneyFlow { get; set; } = true;
+    public bool UseJourneyFlow { get; set; } = false;
+
+    /// <summary>
+    /// With journey-based flow on, what happens when a sign-in names no policy (no
+    /// <c>?policy=</c>) and the tenant has no enabled policy for it: true sends the user to
+    /// the standard pages; false (the default) stops with an error, so a tenant that relies on
+    /// its journeys can't have them bypassed. A policy that is named never falls back.
+    /// </summary>
+    public bool JourneyFallbackToStandard { get; set; }
 
     /// <summary>
     /// Whether local username/password login is enabled for this tenant.
@@ -109,22 +120,91 @@ public class Tenant
     /// Can be overridden per-client.
     /// </summary>
     public bool EnableLocalLogin { get; set; } = true;
+
+    /// <summary>
+    /// Whether passkey / WebAuthn login is offered on the login page for
+    /// this tenant. When false, the passkey provider is filtered out of
+    /// the available authentication methods even if Fido2 is configured at
+    /// the platform level — lets a tenant disable passkeys for compliance
+    /// or UX reasons without affecting other tenants.
+    /// </summary>
+    public bool EnablePasskey { get; set; } = true;
+
+    /// <summary>
+    /// Scheme of the IdentityProvider that should be auto-selected when a
+    /// "Login with SSO" flow targets this tenant. Returned by the public
+    /// /api/tenant/resolve endpoint and used by host apps as the
+    /// <c>domain_hint</c> on the OIDC authorize call so the picker is skipped.
+    /// Null = no default; the picker is shown.
+    /// </summary>
+    public string? DefaultIdpScheme { get; set; }
+
+    /// <summary>
+    /// Optional journey policy to run when "Login with SSO" targets this
+    /// tenant, by the policy's slug (not its ID): the value is handed to clients
+    /// as-is. Returned by /api/tenant/resolve so host
+    /// apps can forward it as the <c>policy</c> query parameter on the OIDC
+    /// authorize call, which ResolvePolicyAsync picks up via its
+    /// ExplicitPolicyId branch. Null = fall through to the platform's
+    /// standard SignIn policy.
+    /// </summary>
+    public string? DefaultSignInPolicyId { get; set; }
+
+    /// <summary>
+    /// UI mode this tenant prefers for SSO-driven sign-ins (the flow kicked
+    /// off from a "Login with SSO" landing). Forwarded as <c>ui_mode</c> on
+    /// the OIDC authorize call so the AuthenticationCoordinator can route
+    /// past the journey for SSO when the tenant wants a lean redirect-only
+    /// experience. Other journeys (self-service signup, password reset)
+    /// are unaffected — they don't go through the SSO landing. Null = follow
+    /// the tenant/client's general UseJourneyFlow setting.
+    /// Allowed values: "Journey" or "Standalone".
+    /// </summary>
+    public string? DefaultSsoUiMode { get; set; }
+
+    /// <summary>
+    /// Whether users of this tenant may start sign-in from the platform login
+    /// page by entering the tenant identifier ("Sign in with your organisation").
+    /// When true, the platform hands the browser to this tenant's own login
+    /// (its identity providers, journey and MFA) and receives the signed-in user
+    /// back, so a client registered only against the platform issuer can still
+    /// reach the tenant's identity providers. When false, the platform answers an
+    /// attempt with the same generic error it gives for an unknown identifier.
+    /// </summary>
+    public bool AllowPlatformOrgSignIn { get; set; } = true;
+
+    /// <summary>
+    /// Feature entitlements for this tenant.
+    /// Controls which ERP modules this tenant can access (within org-level limits).
+    /// </summary>
+    public ICollection<TenantFeature> Features { get; set; } = new List<TenantFeature>();
 }
 
 /// <summary>
-/// Branding settings for a tenant (logo, colors, custom CSS)
+/// Platform-licensing branding flag for a tenant. Visual branding (logo,
+/// favicon, colours, CSS, support email, footer text, terms / privacy URLs)
+/// lives in the <c>BrandingSettings</c> tenant-config section instead, with
+/// reads/writes through <see cref="Oluso.Core.Domain.Interfaces.ITenantSettingsProvider"/>
+/// and <c>/api/admin/settings/branding</c> respectively.
+///
+/// This entity exists only to hold <see cref="HideEmbedBranding"/>, a
+/// SuperAdmin-only toggle that controls whether tenant logins can hide the
+/// "Powered by Oluso" mark on embedded auth modals. It has its own write
+/// path with a separate access policy from tenant-admin branding edits,
+/// which is why it stays on the entity instead of moving into the config
+/// section.
 /// </summary>
 public class TenantBranding
 {
     public int Id { get; set; }
     public string TenantId { get; set; } = default!;
     public Tenant Tenant { get; set; } = default!;
-    public string? LogoUrl { get; set; }
-    public string? FaviconUrl { get; set; }
-    public string? PrimaryColor { get; set; }
-    public string? SecondaryColor { get; set; }
-    public string? BackgroundColor { get; set; }
-    public string? CustomCss { get; set; }
+
+    /// <summary>
+    /// When true, hides the "Powered by Oluso" branding on embedded auth modals.
+    /// SuperAdmin-only — platform licensing concern, not a tenant-admin choice.
+    /// </summary>
+    public bool HideEmbedBranding { get; set; }
 }
 
 /// <summary>
@@ -201,6 +281,14 @@ public class TenantPasswordPolicy
     /// Uses k-anonymity so the actual password is never transmitted.
     /// </summary>
     public bool CheckBreachedPasswords { get; set; } = false;
+
+    /// <summary>
+    /// What the breached-password check does when the breach database can't be reached
+    /// (timeout, outage). False (default) accepts the password so an outage doesn't block
+    /// sign-ups and password changes; true rejects it and asks the user to try again.
+    /// Only applies when <see cref="CheckBreachedPasswords"/> is on.
+    /// </summary>
+    public bool RejectWhenBreachCheckUnavailable { get; set; } = false;
 
     /// <summary>
     /// Custom regex pattern for password validation (optional)
@@ -286,6 +374,13 @@ public class TenantProtocolConfiguration
     public bool AllowPlainPkce { get; set; }
 
     /// <summary>
+    /// Whether to enforce OAuth 2.1 security profile.
+    /// When true: implicit grant is rejected, PKCE is required, plain PKCE is disallowed,
+    /// and Resource Owner Password Credentials (ROPC) grant is rejected.
+    /// </summary>
+    public bool EnforceOAuth21 { get; set; }
+
+    /// <summary>
     /// Whether DPoP is required for all clients.
     /// </summary>
     public bool RequireDPoP { get; set; }
@@ -314,6 +409,24 @@ public class TenantProtocolConfiguration
     /// Whether backchannel logout is enabled.
     /// </summary>
     public bool BackchannelLogoutSupported { get; set; } = true;
+
+    // ========================================
+    // Prefix scopes
+    // ========================================
+
+    /// <summary>
+    /// The longest suffix a prefix scope accepts when it doesn't set its own <c>suffix_max_length</c>
+    /// (<see cref="Oluso.Core.Services.ApiScopePrefixes"/>). Null means
+    /// <see cref="Oluso.Core.Services.ApiScopePrefixes.DefaultSuffixMaxLength"/>.
+    /// </summary>
+    public int? PrefixScopeSuffixMaxLength { get; set; }
+
+    /// <summary>
+    /// Scopes that earn a refresh token without <c>offline_access</c> (JSON array). Null means the Matrix client API
+    /// scopes (<see cref="Oluso.Core.Domain.Interfaces.TenantProtocolSettings.DefaultRefreshImplyingScopes"/>);
+    /// <c>[]</c> turns it off.
+    /// </summary>
+    public string? RefreshImplyingScopesJson { get; set; }
 
     // ========================================
     // Dynamic Client Registration (RFC 7591)
@@ -373,8 +486,8 @@ public class TenantProtocolConfiguration
     /// </summary>
     public string? DynamicRegistrationRequiredClaimValue { get; set; }
 
-    // Note: Package-specific settings (e.g., SAML IdP, SCIM, etc.) are stored in Tenant.Configuration JSON.
-    // Each package uses its own section key (e.g., "SamlIdp", "Scim") to avoid coupling to Core.
+    // Note: Package-specific settings (e.g., SAML IdP, SCIM, etc.) are stored in TenantConfigurationSections.
+    // Each package uses its own section key (e.g., "SamlIdp", "Scim") via ITenantConfigurationService.
 
     public DateTime Created { get; set; } = DateTime.UtcNow;
     public DateTime? Updated { get; set; }

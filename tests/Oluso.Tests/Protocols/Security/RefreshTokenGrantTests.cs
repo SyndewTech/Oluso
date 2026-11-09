@@ -59,7 +59,10 @@ public class RefreshTokenGrantTests
             _grantStore.Object,
             _profileService.Object,
             _clientStore.Object,
-            _userService.Object);
+            _userService.Object,
+            Mock.Of<ITenantStore>(),
+            Mock.Of<ITenantContext>(),
+            ClientUserAccessKit.For(_profileService.Object, _userService.Object));
     }
 
     #region Token Replay Protection Tests
@@ -381,6 +384,41 @@ public class RefreshTokenGrantTests
         result.Error.Should().Be(OidcConstants.Errors.InvalidScope);
     }
 
+    [Fact]
+    public async Task HandleAsync_NamingAScopeBeyondTheGrantThatTheServerLeftOut_StillReturnsError()
+    {
+        // RFC 6749 §6: the request may not name a scope beyond the original grant, even one the scope validator
+        // left out (so RequestedScopes alone would look like a subset).
+        var grant = CreateValidGrant(scopes: new[] { "openid", "profile" });
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+
+        var request = CreateValidTokenRequest();
+        request.ScopesAsRequested = new List<string> { "openid", "permissions" };
+        request.RequestedScopes = new List<string> { "openid" };
+
+        var result = await _handler.HandleAsync(request);
+
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Be(OidcConstants.Errors.InvalidScope);
+        result.ErrorDescription.Should().Contain("permissions");
+    }
+
+    [Fact]
+    public async Task HandleAsync_NarrowingWithAScopeTheServerLeftOut_GrantsWhatIsLeft()
+    {
+        var grant = CreateValidGrant(scopes: new[] { "openid", "profile", "api.gated" });
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+
+        var request = CreateValidTokenRequest();
+        request.ScopesAsRequested = new List<string> { "openid", "api.gated" };
+        request.RequestedScopes = new List<string> { "openid" }; // api.gated left out by the validator
+
+        var result = await _handler.HandleAsync(request);
+
+        result.IsValid.Should().BeTrue();
+        result.Scopes.Should().Equal("openid");
+    }
+
     #endregion
 
     #region Token Rotation Signal Tests
@@ -420,6 +458,173 @@ public class RefreshTokenGrantTests
             AbsoluteRefreshTokenLifetime = 86400
         };
     }
+
+    #region Stored claims
+
+    [Fact]
+    public async Task HandleAsync_KeepsHowTheUserSignedIn()
+    {
+        var grant = CreateValidGrant();
+        grant.Data = JsonSerializer.Serialize(new RefreshTokenData
+        {
+            CreatedAt = DateTime.UtcNow.AddHours(-1),
+            Scopes = new[] { "openid", "profile" },
+            Claims = RefreshTokenData.StoreClaims(new Dictionary<string, object>
+            {
+                ["auth_time"] = "1700000000",
+                ["max_age_requested"] = "true"
+            }),
+            ClaimsFormat = RefreshTokenData.JsonClaimsFormat,
+            Amr = new[] { "fido2", "hwk" },
+            Acr = "urn:oluso:passkey"
+        });
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest(TokenUsage.ReUse));
+
+        result.IsValid.Should().BeTrue();
+        result.Amr.Should().Equal("fido2", "hwk");
+        result.Acr.Should().Be("urn:oluso:passkey");
+        result.Claims["auth_time"].Should().Be("1700000000");
+    }
+
+    [Fact]
+    public async Task HandleAsync_KeepsTheSignInTimeWhenClaimsAreRebuilt()
+    {
+        var grant = CreateValidGrant();
+        grant.Data = JsonSerializer.Serialize(new
+        {
+            CreatedAt = DateTime.UtcNow.AddHours(-1),
+            Scopes = new[] { "openid", "profile" },
+            Claims = new Dictionary<string, string> { ["auth_time"] = "1700000000", ["max_age_requested"] = "true" },
+            Amr = new[] { "pwd" }
+        });
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest(TokenUsage.ReUse));
+
+        result.IsValid.Should().BeTrue();
+        result.Claims["auth_time"].Should().Be("1700000000");
+        result.Claims["max_age_requested"].Should().Be("true");
+        result.Amr.Should().Equal("pwd");
+    }
+
+    [Fact]
+    public async Task HandleAsync_CarriesMultiValuedClaimsIntoTheNextTokenAsLists()
+    {
+        var grant = CreateValidGrant();
+        grant.Data = JsonSerializer.Serialize(new RefreshTokenData
+        {
+            CreatedAt = DateTime.UtcNow.AddHours(-1),
+            Scopes = new[] { "openid", "profile" },
+            Claims = RefreshTokenData.StoreClaims(new Dictionary<string, object>
+            {
+                ["tenant_id"] = "default",
+                ["role"] = new List<string> { "TenantAdmin", "Clinician" },
+            }),
+            ClaimsFormat = RefreshTokenData.JsonClaimsFormat,
+        });
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest(TokenUsage.ReUse));
+
+        result.IsValid.Should().BeTrue();
+        result.Claims["tenant_id"].Should().Be("default");
+        result.Claims["role"].Should().BeAssignableTo<IEnumerable<string>>()
+            .Which.Should().Equal("TenantAdmin", "Clinician");
+    }
+
+    [Fact]
+    public async Task HandleAsync_RebuildsClaimsStoredInTheOldTextFormFromTheProfile()
+    {
+        // Refresh tokens issued before claims kept their shape: a list was stored as its .NET type name.
+        var grant = CreateValidGrant();
+        grant.Data = JsonSerializer.Serialize(new
+        {
+            CreatedAt = DateTime.UtcNow.AddHours(-1),
+            Scopes = new[] { "openid", "profile" },
+            Claims = new Dictionary<string, string>
+            {
+                ["tenant_id"] = "default",
+                ["role"] = "System.Collections.Generic.List`1[System.String]",
+            },
+        });
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+        _profileService.Setup(x => x.GetProfileDataAsync(It.IsAny<ProfileDataRequestContext>()))
+            .Callback<ProfileDataRequestContext>(c => c.IssuedClaims.AddRange(new[]
+            {
+                new System.Security.Claims.Claim("tenant_id", "default"),
+                new System.Security.Claims.Claim("role", "TenantAdmin"),
+                new System.Security.Claims.Claim("role", "Clinician"),
+            }))
+            .Returns(Task.CompletedTask);
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest(TokenUsage.ReUse));
+
+        result.IsValid.Should().BeTrue();
+        result.Claims["role"].Should().BeAssignableTo<IEnumerable<string>>()
+            .Which.Should().BeEquivalentTo("TenantAdmin", "Clinician");
+    }
+
+    #endregion
+
+    #region Resource indicators (RFC 8707)
+
+    private static PersistedGrant CreateGrantWithResources(params string[] resources)
+    {
+        var grant = CreateValidGrant();
+        grant.Data = JsonSerializer.Serialize(new RefreshTokenData
+        {
+            CreatedAt = DateTime.UtcNow.AddHours(-1),
+            Scopes = new[] { "openid", "profile" },
+            Resources = resources,
+        });
+        return grant;
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithoutResource_UsesTheGrantsResources()
+    {
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateGrantWithResources("https://api.example/a", "https://api.example/b"));
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest(TokenUsage.ReUse));
+
+        result.IsValid.Should().BeTrue();
+        result.Resources.Should().BeEquivalentTo("https://api.example/a", "https://api.example/b");
+        result.GrantedResources.Should().BeEquivalentTo("https://api.example/a", "https://api.example/b");
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithASubsetOfTheGrantsResources_NarrowsTheTokenButKeepsTheGrant()
+    {
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateGrantWithResources("https://api.example/a", "https://api.example/b"));
+        var request = CreateValidTokenRequest(TokenUsage.ReUse);
+        request.Resource = new List<string> { "https://api.example/b" };
+
+        var result = await _handler.HandleAsync(request);
+
+        result.Resources.Should().Equal("https://api.example/b");
+        result.GrantedResources.Should().BeEquivalentTo("https://api.example/a", "https://api.example/b");
+    }
+
+    [Fact]
+    public async Task HandleAsync_WithAResourceOutsideTheGrant_IsInvalidTargetAndDoesNotConsumeTheToken()
+    {
+        var grant = CreateGrantWithResources("https://api.example/a");
+        _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
+        var request = CreateValidTokenRequest(TokenUsage.OneTimeOnly);
+        request.Resource = new List<string> { "https://other.example" };
+
+        var result = await _handler.HandleAsync(request);
+
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Be(OidcConstants.Errors.InvalidTarget);
+        grant.ConsumedTime.Should().BeNull();
+    }
+
+    #endregion
 
     private static TokenRequest CreateValidTokenRequest(
         TokenUsage refreshTokenUsage = TokenUsage.OneTimeOnly,

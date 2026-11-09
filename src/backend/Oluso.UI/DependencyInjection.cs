@@ -1,7 +1,13 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Localization;
+using Oluso.Core.UserJourneys;
+using Oluso.UI.Localization;
 
 namespace Oluso.UI;
 
@@ -36,6 +42,18 @@ public static class DependencyInjection
             opts.Conventions.AddAreaPageRoute("OlusoUI", "/Error", "/error");
         });
 
+        // JSON-based localization for journey/account views
+        services.AddLocalization();
+        services.AddHttpContextAccessor();
+        services.AddSingleton<HostFileLocaleOverrides>();
+        services.AddSingleton<JsonUiLocalizer>();
+        services.Replace(ServiceDescriptor.Singleton<IStringLocalizerFactory, JsonUiLocalizerFactory>());
+        services.AddScoped<ITenantLocaleOverrideProvider, TenantConfigLocaleOverrideProvider>();
+
+        // Headless clients (the SDK) draw the hosted views from their descriptions, or from the view's HTML.
+        services.AddJourneyStepFormDescribers(typeof(DependencyInjection).Assembly);
+        services.TryAddScoped<IJourneyStepHtmlRenderer, Headless.RazorStepHtmlRenderer>();
+
         return services;
     }
 
@@ -64,6 +82,26 @@ public static class DependencyInjection
             FileProvider = embeddedProvider,
             RequestPath = "/oluso"
         });
+
+        var regionCodes = Oluso.Core.Locale.SupportedLocales.All.Select(l => l.Code);
+        var translationCodes = Oluso.Core.Locale.UiStringDefaults.AvailableLocales;
+        var supportedCodes = regionCodes.Concat(translationCodes).Distinct().ToArray();
+        var locOptions = new RequestLocalizationOptions()
+            .AddSupportedCultures(supportedCodes)
+            .AddSupportedUICultures(supportedCodes);
+
+        // Read ui_locales from query string (standalone pages get it from
+        // the coordinator redirect, same pattern as domain_hint/loginHint).
+        locOptions.RequestCultureProviders.Insert(0, new CustomRequestCultureProvider(ctx =>
+        {
+            var uiLocales = ctx.Request.Query["ui_locales"].FirstOrDefault();
+            if (string.IsNullOrEmpty(uiLocales)) return Task.FromResult<ProviderCultureResult?>(null);
+            var locale = uiLocales.Split(' ', ',').FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+            return Task.FromResult<ProviderCultureResult?>(
+                string.IsNullOrEmpty(locale) ? null : new ProviderCultureResult(locale));
+        }));
+
+        app.UseRequestLocalization(locOptions);
 
         return app;
     }

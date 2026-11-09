@@ -1,37 +1,39 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 using System.Security.Claims;
 using System.Text.Json;
 
 namespace Oluso.Core.Authentication;
 
 /// <summary>
-/// Claims principal factory that adds tenant claims, organization claims, and plugin-provided claims to the user identity.
-/// This is used for cookie authentication (ASP.NET Identity Sign-In) flows.
-///
-/// For token-based authentication (OIDC), claims are collected via IClaimsProviderRegistry in TokenService.
-/// This factory ensures cookie sessions also have plugin claims available.
+/// Claims principal factory for cookie authentication (ASP.NET Identity Sign-In).
+/// Plugin claims and the derived authorization claims (super_admin, is_org_admin,
+/// org_ids, org_roles, allowed_tenants) are sourced from IProfileService — the
+/// same service the OIDC token path uses — so cookie and bearer sessions emit
+/// identical claim shapes.
 /// </summary>
 public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser, OlusoRole>
 {
     private readonly ITenantContext _tenantContext;
-    private readonly IClaimsProviderRegistry _claimsProviderRegistry;
-    private readonly IOrganizationMembershipStore? _organizationMembershipStore;
+    private readonly IServiceProvider _serviceProvider;
 
+    // Resolve IProfileService lazily — direct injection creates a cycle:
+    // IProfileService -> IOlusoUserService -> SignInManager -> IUserClaimsPrincipalFactory -> back here.
     public OlusoClaimsPrincipalFactory(
         UserManager<OlusoUser> userManager,
         RoleManager<OlusoRole> roleManager,
         IOptions<IdentityOptions> options,
         ITenantContext tenantContext,
-        IClaimsProviderRegistry claimsProviderRegistry,
-        IOrganizationMembershipStore? organizationMembershipStore = null)
+        IServiceProvider serviceProvider)
         : base(userManager, roleManager, options)
     {
         _tenantContext = tenantContext;
-        _claimsProviderRegistry = claimsProviderRegistry;
-        _organizationMembershipStore = organizationMembershipStore;
+        _serviceProvider = serviceProvider;
     }
 
     protected override async Task<ClaimsIdentity> GenerateClaimsAsync(OlusoUser user)
@@ -66,13 +68,52 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
         // Add role claims from the roles the user belongs to
         await AddRoleClaimsAsync(identity, user);
 
-        // Add claims from plugins via IClaimsProviderRegistry
-        await AddPluginClaimsAsync(identity, user, tenantId);
-
-        // Add organization claims
-        await AddOrganizationClaimsAsync(identity, user);
+        // Plugin + authorization claims (super_admin, is_org_admin, org_ids,
+        // org_roles, allowed_tenants) come from IProfileService — same source the
+        // OIDC token path uses. Anything not already on the identity gets added.
+        await AddProfileServiceClaimsAsync(identity, user);
 
         return identity;
+    }
+
+    private async Task AddProfileServiceClaimsAsync(ClaimsIdentity identity, OlusoUser user)
+    {
+        try
+        {
+            var profileService = _serviceProvider.GetRequiredService<IProfileService>();
+            var context = new ProfileDataRequestContext
+            {
+                SubjectId = user.Id,
+                Client = new Client { ClientId = "internal" },
+                RequestedScopes = new[] { "openid", "profile", "email" },
+                Caller = "CookieAuthentication"
+            };
+
+            await profileService.GetProfileDataAsync(context);
+
+            foreach (var claim in context.IssuedClaims)
+            {
+                if (!identity.HasClaim(c => c.Type == claim.Type && c.Value == claim.Value))
+                {
+                    identity.AddClaim(claim);
+                }
+            }
+
+            // Permissions: cookies have no OIDC scope concept and the in-app UI
+            // relies on the permissions claim for live render-time gates, so we
+            // always include them (no scope-gating like the token path does).
+            var permissions = await profileService.GetUserPermissionsAsync(user.Id, user.TenantId);
+            if (permissions.Count > 0)
+            {
+                var permissionsJson = JsonSerializer.Serialize(permissions.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+                identity.AddClaim(new Claim("permissions", permissionsJson));
+            }
+        }
+        catch
+        {
+            // Don't fail cookie authentication if profile service errors —
+            // the user can still sign in with the base claims set.
+        }
     }
 
     /// <summary>
@@ -151,7 +192,11 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
 
     private async Task AddRoleClaimsAsync(ClaimsIdentity identity, OlusoUser user)
     {
+        // Non-permission role claims only. The "permissions" claim comes from
+        // IProfileService.GetUserPermissionsAsync (AddProfileServiceClaimsAsync),
+        // which includes the organization-admin grant derived from membership.
         var roles = await UserManager.GetRolesAsync(user);
+
         foreach (var roleName in roles)
         {
             var role = await RoleManager.FindByNameAsync(roleName);
@@ -160,7 +205,26 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
                 var roleClaims = await RoleManager.GetClaimsAsync(role);
                 foreach (var claim in roleClaims)
                 {
-                    if (!identity.HasClaim(c => c.Type == claim.Type && c.Value == claim.Value))
+                    if (claim.Type == OlusoRole.PermissionClaimType)
+                    {
+                        continue;
+                    }
+                    else if (ReservedClaimKeys.IsReserved(claim.Type))
+                    {
+                        // ReservedAuthInterceptor blocks writing these, but a row
+                        // predating that guard must not reach the identity —
+                        // super_admin / allowed_tenants here would be escalation.
+                        continue;
+                    }
+                    else if (claim.Type == OlusoRole.EntitlementClaimType)
+                    {
+                        // Entitlements are for the tenant's own applications and
+                        // reach them through the scope-gated token path. This is
+                        // Oluso's session cookie — nothing here reads them, so
+                        // including them would only inflate the cookie.
+                        continue;
+                    }
+                    else if (!identity.HasClaim(c => c.Type == claim.Type && c.Value == claim.Value))
                     {
                         identity.AddClaim(claim);
                     }
@@ -169,112 +233,4 @@ public class OlusoClaimsPrincipalFactory : UserClaimsPrincipalFactory<OlusoUser,
         }
     }
 
-    private async Task AddPluginClaimsAsync(ClaimsIdentity identity, OlusoUser user, string? tenantId)
-    {
-        try
-        {
-            var context = new ClaimsProviderContext
-            {
-                SubjectId = user.Id,
-                TenantId = tenantId,
-                Caller = "CookieAuthentication",
-                // For cookie auth, we don't have specific scopes - plugins should provide all claims they have
-                Scopes = new[] { "openid", "profile", "email" }
-            };
-
-            var pluginClaims = await _claimsProviderRegistry.GetAllClaimsAsync(context);
-
-            foreach (var claim in pluginClaims)
-            {
-                var claimValue = claim.Value?.ToString() ?? "";
-                if (!identity.HasClaim(c => c.Type == claim.Key && c.Value == claimValue))
-                {
-                    identity.AddClaim(new Claim(claim.Key, claimValue));
-                }
-            }
-        }
-        catch
-        {
-            // Don't fail authentication if plugin claims fail
-            // The core authentication should still work
-        }
-    }
-
-    /// <summary>
-    /// Adds organization-related claims to the identity.
-    /// These claims enable organization-based access control and tenant switching.
-    /// </summary>
-    private async Task AddOrganizationClaimsAsync(ClaimsIdentity identity, OlusoUser user)
-    {
-        if (_organizationMembershipStore == null)
-        {
-            return;
-        }
-
-        try
-        {
-            // Get all organizations the user is a member of
-            var memberships = await _organizationMembershipStore.GetByUserAsync(user.Id);
-            var membershipList = memberships.ToList();
-
-            if (membershipList.Count == 0)
-            {
-                return;
-            }
-
-            // Add organization IDs as a claim (multiple values if member of multiple orgs)
-            foreach (var membership in membershipList)
-            {
-                identity.AddClaim(new Claim("org_id", membership.OrganizationId));
-            }
-
-            // Add organization roles (format: org_id:role)
-            foreach (var membership in membershipList)
-            {
-                var roleValue = $"{membership.OrganizationId}:{membership.Role.ToString().ToLowerInvariant()}";
-                identity.AddClaim(new Claim("org_role", roleValue));
-            }
-
-            // Add organization names for display purposes
-            foreach (var membership in membershipList)
-            {
-                if (membership.Organization != null)
-                {
-                    identity.AddClaim(new Claim("org_name", membership.Organization.Name));
-                }
-            }
-
-            // Add allowed tenant IDs (aggregated from all memberships)
-            var allowedTenantIds = new HashSet<string>();
-            foreach (var membership in membershipList)
-            {
-                var tenantIds = await _organizationMembershipStore.GetAllowedTenantIdsAsync(
-                    user.Id, membership.OrganizationId);
-                foreach (var tenantId in tenantIds)
-                {
-                    allowedTenantIds.Add(tenantId);
-                }
-            }
-
-            if (allowedTenantIds.Count > 0)
-            {
-                // Add as JSON array for structured data
-                var tenantsJson = JsonSerializer.Serialize(allowedTenantIds);
-                identity.AddClaim(new Claim("allowed_tenants", tenantsJson));
-            }
-
-            // Check if user is an org admin (owner or admin in any org)
-            var isOrgAdmin = membershipList.Any(m =>
-                m.Role == OrganizationRole.Owner || m.Role == OrganizationRole.Admin);
-            if (isOrgAdmin)
-            {
-                identity.AddClaim(new Claim("is_org_admin", "true"));
-            }
-        }
-        catch
-        {
-            // Don't fail authentication if organization claims fail
-            // The core authentication should still work
-        }
-    }
 }

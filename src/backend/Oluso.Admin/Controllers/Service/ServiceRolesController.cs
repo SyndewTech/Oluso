@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -55,20 +56,31 @@ public class ServiceRolesController : ServiceBaseController
         var roles = await _roleStore.GetRolesAsync(TenantId, includeGlobal, cancellationToken);
 
         // Filter out system-level admin roles for service clients
-        roles = roles.Where(r => !ReservedClaimTypes.IsReservedRoleName(r.Name)).ToList();
+        roles = roles.Where(r => !ReservedClaimTypes.IsReservedRoleName(r.Name!)).ToList();
 
-        var result = roles.Select(r => new ServiceRoleDto
+        // Build result with permissions from claims
+        var result = new List<ServiceRoleDto>();
+        foreach (var r in roles)
         {
-            Id = r.Id,
-            Name = r.Name,
-            DisplayName = r.DisplayName ?? r.Name,
-            Description = r.Description,
-            IsSystemRole = r.IsSystemRole,
-            IsGlobal = r.TenantId == null,
-            Permissions = r.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
-            CreatedAt = r.CreatedAt,
-            UpdatedAt = r.UpdatedAt
-        });
+            var claims = await _roleStore.GetRoleClaimsAsync(r.Id, cancellationToken);
+            var permissions = claims
+                .Where(c => c.Type == OlusoRole.PermissionClaimType)
+                .Select(c => c.Value)
+                .ToList();
+
+            result.Add(new ServiceRoleDto
+            {
+                Id = r.Id,
+                Name = r.Name!,
+                DisplayName = r.DisplayName ?? r.Name!,
+                Description = r.Description,
+                IsSystemRole = r.IsSystemRole,
+                IsGlobal = r.TenantId == null,
+                Permissions = permissions,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            });
+        }
 
         return Ok(result);
     }
@@ -98,27 +110,37 @@ public class ServiceRolesController : ServiceBaseController
         }
 
         // Hide system roles from service clients
-        if (ReservedClaimTypes.IsReservedRoleName(role.Name))
+        if (ReservedClaimTypes.IsReservedRoleName(role.Name!))
         {
             return NotFound();
         }
 
         var claims = await _roleStore.GetRoleClaimsAsync(roleId, cancellationToken);
 
-        return Ok(new ServiceRoleDetailDto
-        {
-            Id = role.Id,
-            Name = role.Name,
-            DisplayName = role.DisplayName ?? role.Name,
-            Description = role.Description,
-            IsSystemRole = role.IsSystemRole,
-            IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
-            Claims = claims.Select(c => new ServiceRoleClaimDto
+        // Separate permissions from other claims
+        var permissions = claims
+            .Where(c => c.Type == OlusoRole.PermissionClaimType)
+            .Select(c => c.Value)
+            .ToList();
+
+        var otherClaims = claims
+            .Where(c => c.Type != OlusoRole.PermissionClaimType)
+            .Select(c => new ServiceRoleClaimDto
             {
                 Type = c.Type,
                 Value = c.Value
-            }).ToList(),
+            }).ToList();
+
+        return Ok(new ServiceRoleDetailDto
+        {
+            Id = role.Id,
+            Name = role.Name!,
+            DisplayName = role.DisplayName ?? role.Name!,
+            Description = role.Description,
+            IsSystemRole = role.IsSystemRole,
+            IsGlobal = role.TenantId == null,
+            Permissions = permissions,
+            Claims = otherClaims,
             CreatedAt = role.CreatedAt,
             UpdatedAt = role.UpdatedAt
         });
@@ -148,15 +170,21 @@ public class ServiceRolesController : ServiceBaseController
             return NotFound();
         }
 
+        var claims = await _roleStore.GetRoleClaimsAsync(role.Id, cancellationToken);
+        var permissions = claims
+            .Where(c => c.Type == OlusoRole.PermissionClaimType)
+            .Select(c => c.Value)
+            .ToList();
+
         return Ok(new ServiceRoleDto
         {
             Id = role.Id,
-            Name = role.Name,
-            DisplayName = role.DisplayName ?? role.Name,
+            Name = role.Name!,
+            DisplayName = role.DisplayName ?? role.Name!,
             Description = role.Description,
             IsSystemRole = role.IsSystemRole,
             IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
+            Permissions = permissions,
             CreatedAt = role.CreatedAt,
             UpdatedAt = role.UpdatedAt
         });
@@ -184,23 +212,10 @@ public class ServiceRolesController : ServiceBaseController
             return BadRequest(new { error = $"The role name '{request.Name}' is reserved for system use" });
         }
 
-        // Validate claims don't contain reserved claim types
-        if (request.Claims?.Any() == true)
+        var validationError = ValidateRoleContent(request.Permissions, request.Claims);
+        if (validationError != null)
         {
-            var reservedClaims = ReservedClaimTypes.GetReservedClaimTypes(
-                request.Claims.Select(c => (c.Type, c.Value))).ToList();
-
-            if (reservedClaims.Any())
-            {
-                return BadRequest(new { error = $"The following claim types are reserved: {string.Join(", ", reservedClaims)}" });
-            }
-        }
-
-        // Validate permissions are valid system-defined permissions
-        var permissionValidationError = ValidatePermissions(request.Permissions);
-        if (permissionValidationError != null)
-        {
-            return BadRequest(new { error = permissionValidationError });
+            return BadRequest(new { error = validationError });
         }
 
         // Check if role with same name already exists in tenant
@@ -218,13 +233,19 @@ public class ServiceRolesController : ServiceBaseController
             DisplayName = request.DisplayName ?? request.Name,
             Description = request.Description,
             TenantId = TenantId,
-            IsSystemRole = false,
-            Permissions = request.Permissions != null ? string.Join(",", request.Permissions) : null
+            IsSystemRole = false
         };
 
         var created = await _roleStore.CreateAsync(role, cancellationToken);
 
-        // Add claims if provided
+        // Add permissions as claims
+        var permissionsList = request.Permissions ?? new List<string>();
+        foreach (var permission in permissionsList)
+        {
+            await _roleStore.AddRoleClaimAsync(created.Id, OlusoRole.PermissionClaimType, permission, cancellationToken);
+        }
+
+        // Add other claims if provided
         if (request.Claims?.Any() == true)
         {
             foreach (var claim in request.Claims)
@@ -254,7 +275,7 @@ public class ServiceRolesController : ServiceBaseController
             Description = role.Description,
             IsSystemRole = role.IsSystemRole,
             IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
+            Permissions = permissionsList,
             CreatedAt = role.CreatedAt
         });
     }
@@ -292,6 +313,13 @@ public class ServiceRolesController : ServiceBaseController
             return BadRequest(new { error = "System roles cannot be modified" });
         }
 
+        // Validated before the first write, so a rejected request leaves the role untouched.
+        var validationError = ValidateRoleContent(request.Permissions, request.Claims);
+        if (validationError != null)
+        {
+            return BadRequest(new { error = validationError });
+        }
+
         // Check for name conflict if name is being changed
         if (!string.IsNullOrEmpty(request.Name) && request.Name != role.Name)
         {
@@ -317,39 +345,56 @@ public class ServiceRolesController : ServiceBaseController
         if (request.Description != null)
             role.Description = request.Description;
 
-        if (request.Permissions != null)
-        {
-            // Validate permissions are valid system-defined permissions
-            var permissionValidationError = ValidatePermissions(request.Permissions);
-            if (permissionValidationError != null)
-            {
-                return BadRequest(new { error = permissionValidationError });
-            }
-            role.Permissions = string.Join(",", request.Permissions);
-        }
-
         role.UpdatedAt = DateTime.UtcNow;
 
         await _roleStore.UpdateAsync(role, cancellationToken);
 
-        // Update claims if provided
-        if (request.Claims != null)
-        {
-            // Validate claims don't contain reserved claim types
-            var reservedClaims = ReservedClaimTypes.GetReservedClaimTypes(
-                request.Claims.Select(c => (c.Type, c.Value))).ToList();
+        // Get existing claims
+        var existingClaims = await _roleStore.GetRoleClaimsAsync(roleId, cancellationToken);
 
-            if (reservedClaims.Any())
+        // Update permissions if provided
+        List<string> currentPermissions;
+        if (request.Permissions != null)
+        {
+            // Remove old permission claims
+            var existingPermissions = existingClaims.Where(c => c.Type == OlusoRole.PermissionClaimType).ToList();
+            foreach (var perm in existingPermissions)
             {
-                return BadRequest(new { error = $"The following claim types are reserved: {string.Join(", ", reservedClaims)}" });
+                await _roleStore.RemoveRoleClaimAsync(roleId, perm.Type, perm.Value, cancellationToken);
             }
 
-            var existingClaims = await _roleStore.GetRoleClaimsAsync(roleId, cancellationToken);
-            foreach (var claim in existingClaims)
+            // Add new permission claims
+            foreach (var permission in request.Permissions)
+            {
+                await _roleStore.AddRoleClaimAsync(roleId, OlusoRole.PermissionClaimType, permission, cancellationToken);
+            }
+
+            currentPermissions = request.Permissions.ToList();
+        }
+        else
+        {
+            // Keep existing permissions
+            currentPermissions = existingClaims
+                .Where(c => c.Type == OlusoRole.PermissionClaimType)
+                .Select(c => c.Value)
+                .ToList();
+        }
+
+        // Update other claims if provided
+        if (request.Claims != null)
+        {
+            // Entitlements are managed by the admin entitlements field; the
+            // Service API neither writes nor sweeps them.
+            var existingOtherClaims = existingClaims
+                .Where(c => c.Type != OlusoRole.PermissionClaimType
+                    && c.Type != OlusoRole.EntitlementClaimType)
+                .ToList();
+            foreach (var claim in existingOtherClaims)
             {
                 await _roleStore.RemoveRoleClaimAsync(roleId, claim.Type, claim.Value, cancellationToken);
             }
 
+            // Add new claims
             foreach (var claim in request.Claims)
             {
                 await _roleStore.AddRoleClaimAsync(roleId, claim.Type, claim.Value, cancellationToken);
@@ -366,18 +411,18 @@ public class ServiceRolesController : ServiceBaseController
             IpAddress = ClientIp,
             ResourceId = roleId,
             ResourceName = role.Name,
-            RoleName = role.Name
+            RoleName = role.Name!
         }, cancellationToken);
 
         return Ok(new ServiceRoleDto
         {
             Id = role.Id,
-            Name = role.Name,
-            DisplayName = role.DisplayName ?? role.Name,
+            Name = role.Name!,
+            DisplayName = role.DisplayName ?? role.Name!,
             Description = role.Description,
             IsSystemRole = role.IsSystemRole,
             IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
+            Permissions = currentPermissions,
             CreatedAt = role.CreatedAt,
             UpdatedAt = role.UpdatedAt
         });
@@ -433,7 +478,7 @@ public class ServiceRolesController : ServiceBaseController
             IpAddress = ClientIp,
             ResourceId = roleId,
             ResourceName = role.Name,
-            RoleName = role.Name
+            RoleName = role.Name!
         }, cancellationToken);
 
         return NoContent();
@@ -459,13 +504,16 @@ public class ServiceRolesController : ServiceBaseController
             return NotFound();
         }
 
-        // Check tenant access
-        if (role.TenantId != null && role.TenantId != TenantId)
+        // Check tenant access; system roles are hidden from service clients
+        if ((role.TenantId != null && role.TenantId != TenantId)
+            || ReservedClaimTypes.IsReservedRoleName(role.Name!))
         {
             return NotFound();
         }
 
-        var users = await _roleStore.GetUsersByRoleAsync(roleId, cancellationToken);
+        // Holders in this tenant only: a platform-wide role is held across
+        // tenants, and the ambient lookup widens to all of them at platform scope.
+        var users = await _roleStore.GetUsersByRoleInTenantAsync(roleId, TenantId!, cancellationToken);
 
         return Ok(users.Select(u => new ServiceRoleUserDto
         {
@@ -477,28 +525,16 @@ public class ServiceRolesController : ServiceBaseController
     }
 
     /// <summary>
-    /// Validates that all permissions in the list are valid system-defined permissions.
-    /// Returns an error message if validation fails, null if successful.
+    /// The permission and claim rules a role written by a service client must
+    /// meet — the same <see cref="RolePermissionValidator"/> the admin Roles
+    /// API uses, with a service client's standing (neither SuperAdmin nor
+    /// organization admin).
     /// </summary>
-    private static string? ValidatePermissions(ICollection<string>? permissions)
-    {
-        if (permissions == null || permissions.Count == 0)
-        {
-            return null;
-        }
-
-        var invalidPermissions = permissions
-            .Where(p => !AdminPermissions.Exists(p))
-            .Distinct()
-            .ToList();
-
-        if (invalidPermissions.Count > 0)
-        {
-            return $"The following permissions are not valid: {string.Join(", ", invalidPermissions)}. Use GET /api/admin/permissions to see available permissions.";
-        }
-
-        return null;
-    }
+    private static string? ValidateRoleContent(
+        IEnumerable<string>? permissions,
+        IEnumerable<ServiceRoleClaimDto>? claims) =>
+        RolePermissionValidator.ValidateRoleClaims(claims?.Select(c => c.Type))
+        ?? RolePermissionValidator.Validate(permissions, RolePermissionGrantor.ServiceClient);
 }
 
 #region DTOs
@@ -557,6 +593,7 @@ public class ServiceRoleUserDto
 
 #region Events
 
+[WebhookEvent("Service Role Created", Description = "Fired when a service (M2M) client creates a role")]
 public class ServiceRoleCreatedEvent : ServiceActionEvent
 {
     public override string EventType => "service.role.created";
@@ -566,6 +603,7 @@ public class ServiceRoleCreatedEvent : ServiceActionEvent
     public required string RoleName { get; init; }
 }
 
+[WebhookEvent("Service Role Updated", Description = "Fired when a service (M2M) client updates a role")]
 public class ServiceRoleUpdatedEvent : ServiceActionEvent
 {
     public override string EventType => "service.role.updated";
@@ -575,6 +613,7 @@ public class ServiceRoleUpdatedEvent : ServiceActionEvent
     public required string RoleName { get; init; }
 }
 
+[WebhookEvent("Service Role Deleted", Description = "Fired when a service (M2M) client deletes a role")]
 public class ServiceRoleDeletedEvent : ServiceActionEvent
 {
     public override string EventType => "service.role.deleted";

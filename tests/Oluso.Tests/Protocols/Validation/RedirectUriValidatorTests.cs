@@ -193,6 +193,25 @@ public class RedirectUriValidatorTests
         result.IsValid.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData("http://[::1]/callback", "http://[::1]:53682/callback")]
+    [InlineData("http://127.0.0.1/callback", "http://127.0.0.1:8080/callback")]
+    [InlineData("http://localhost/callback", "http://localhost:1/callback")]
+    public async Task ValidateAsync_Loopback_RegisteredWithoutPort_AcceptsAnyPort(string registered, string requested)
+    {
+        var result = await _validator.ValidateAsync(requested, new[] { registered });
+
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ValidateAsync_Loopback_WithDifferentQuery_ReturnsFail()
+    {
+        var result = await _validator.ValidateAsync("http://[::1]:53682/callback?next=elsewhere", new[] { "http://[::1]/callback" });
+
+        result.IsValid.Should().BeFalse();
+    }
+
     [Fact]
     public async Task ValidateAsync_Loopback_WithDifferentPath_ReturnsFail()
     {

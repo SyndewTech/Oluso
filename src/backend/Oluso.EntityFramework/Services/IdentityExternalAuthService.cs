@@ -23,7 +23,6 @@ public class IdentityExternalAuthService : IExternalAuthService
     private readonly UserManager<OlusoUser> _userManager;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ITenantContext _tenantContext;
-    private readonly IExternalProviderStore? _providerStore;
     private readonly IExternalProviderConfigStore? _providerConfigStore;
     private readonly IClientStore? _clientStore;
     private readonly IDistributedCache? _tokenCache;
@@ -35,7 +34,6 @@ public class IdentityExternalAuthService : IExternalAuthService
         IHttpContextAccessor httpContextAccessor,
         ITenantContext tenantContext,
         ILogger<IdentityExternalAuthService> logger,
-        IExternalProviderStore? providerStore = null,
         IExternalProviderConfigStore? providerConfigStore = null,
         IClientStore? clientStore = null,
         IDistributedCache? tokenCache = null)
@@ -44,7 +42,6 @@ public class IdentityExternalAuthService : IExternalAuthService
         _userManager = userManager;
         _httpContextAccessor = httpContextAccessor;
         _tenantContext = tenantContext;
-        _providerStore = providerStore;
         _providerConfigStore = providerConfigStore;
         _clientStore = clientStore;
         _tokenCache = tokenCache;
@@ -59,25 +56,37 @@ public class IdentityExternalAuthService : IExternalAuthService
         var schemes = await _signInManager.GetExternalAuthenticationSchemesAsync();
         var result = new List<ExternalProviderInfo>();
 
+        // When a config store exists, use it as the source of truth for
+        // which providers are enabled — middleware may register schemes that
+        // haven't been configured for this tenant.
+        var enabledDbProviders = _providerConfigStore != null
+            ? await _providerConfigStore.GetEnabledProvidersAsync(cancellationToken: cancellationToken)
+            : null;
+
         foreach (var scheme in schemes)
         {
-            // Get additional info from provider store if available
+            var dbMatch = enabledDbProviders?.FirstOrDefault(
+                p => p.Scheme.Equals(scheme.Name, StringComparison.OrdinalIgnoreCase));
+
+            if (enabledDbProviders != null && dbMatch == null)
+                continue;
+
             var providerConfig = await GetProviderConfigAsync(scheme.Name, cancellationToken);
 
             result.Add(new ExternalProviderInfo
             {
                 Scheme = scheme.Name,
-                DisplayName = scheme.DisplayName ?? scheme.Name,
-                ProviderType = providerConfig?.ProviderType,
+                DisplayName = dbMatch?.DisplayName ?? scheme.DisplayName ?? scheme.Name,
+                IconUrl = dbMatch?.IconUrl,
+                ProviderType = providerConfig?.ProviderType ?? dbMatch?.ProviderType,
                 Enabled = providerConfig?.StoreUserLocally != false || providerConfig?.ProxyMode == true
             });
         }
 
-        // Also get database-configured providers
-        if (_providerStore != null)
+        // Add DB-only providers (no middleware scheme, e.g. dynamically configured SAML)
+        if (enabledDbProviders != null)
         {
-            var dbProviders = await _providerStore.GetEnabledProvidersAsync(cancellationToken);
-            foreach (var provider in dbProviders)
+            foreach (var provider in enabledDbProviders)
             {
                 if (!result.Any(r => r.Scheme.Equals(provider.Scheme, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -140,9 +149,8 @@ public class IdentityExternalAuthService : IExternalAuthService
 
     public async Task<ExternalProviderConfig?> GetProviderConfigAsync(string provider, CancellationToken cancellationToken = default)
     {
-        if (_providerStore == null)
+        if (_providerConfigStore == null)
         {
-            // Return default config for scheme-based providers
             return new ExternalProviderConfig
             {
                 Scheme = provider,
@@ -152,7 +160,7 @@ public class IdentityExternalAuthService : IExternalAuthService
             };
         }
 
-        var dbProvider = await _providerStore.GetBySchemeAsync(provider, cancellationToken);
+        var dbProvider = await _providerConfigStore.GetBySchemeAsync(provider, cancellationToken: cancellationToken);
         if (dbProvider == null)
         {
             return null;
@@ -171,13 +179,22 @@ public class IdentityExternalAuthService : IExternalAuthService
             ProxyExcludeClaims = dbProvider.ProxyExcludeClaims ?? Array.Empty<string>(),
             IncludeExternalAccessToken = dbProvider.IncludeExternalAccessToken,
             IncludeExternalIdToken = dbProvider.IncludeExternalIdToken,
-            AutoProvisionUsers = dbProvider.AutoProvisionUsers
+            AutoProvisionUsers = dbProvider.AutoProvisionUsers,
+            DefaultRoles = dbProvider.DefaultRoles ?? Array.Empty<string>(),
+            AccessControl = dbProvider.AccessControl
         };
     }
+
+    public Task<ExternalChallengeResult> ChallengeAsync(
+        string provider,
+        string returnUrl,
+        CancellationToken cancellationToken = default)
+        => ChallengeAsync(provider, returnUrl, parameters: null, cancellationToken);
 
     public async Task<ExternalChallengeResult> ChallengeAsync(
         string provider,
         string returnUrl,
+        IDictionary<string, string>? parameters,
         CancellationToken cancellationToken = default)
     {
         try
@@ -185,11 +202,9 @@ public class IdentityExternalAuthService : IExternalAuthService
             // Check if this is a SAML provider - SAML uses its own login endpoint instead of ASP.NET authentication handlers
             if (_providerConfigStore != null)
             {
-                var providerConfig = await _providerConfigStore.GetBySchemeAsync(provider, cancellationToken);
+                var providerConfig = await _providerConfigStore.GetBySchemeAsync(provider, cancellationToken: cancellationToken);
                 if (providerConfig?.ProviderType?.Equals("Saml2", StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    // SAML providers use a custom endpoint - redirect to /saml/login/{scheme}
-                    // The SAML endpoint will handle state management and redirect to the IdP
                     var samlLoginUrl = $"/saml/login/{Uri.EscapeDataString(provider)}?returnUrl={Uri.EscapeDataString(returnUrl)}";
                     _logger.LogInformation("Initiating SAML login for provider {Provider} via {Url}", provider, samlLoginUrl);
                     return ExternalChallengeResult.Success(samlLoginUrl);
@@ -204,9 +219,27 @@ public class IdentityExternalAuthService : IExternalAuthService
                 properties.Items["TenantId"] = _tenantContext.TenantId;
             }
 
-            await HttpContext.ChallengeAsync(provider, properties);
+            // Always forward the resolved locale to external providers so
+            // their login page renders in the same language the user requested.
+            var culture = System.Globalization.CultureInfo.CurrentUICulture;
+            if (culture != System.Globalization.CultureInfo.InvariantCulture
+                && !string.IsNullOrEmpty(culture.Name))
+            {
+                properties.Parameters["ui_locales"] = culture.Name;
+                properties.Items["ui_locales"] = culture.Name;
+            }
 
-            _logger.LogInformation("Initiated external login challenge for provider {Provider}", provider);
+            // Layer explicit per-request parameters on top (journey data wins)
+            if (parameters != null)
+            {
+                foreach (var (key, value) in parameters)
+                {
+                    properties.Parameters[key] = value;
+                    properties.Items[key] = value;
+                }
+            }
+
+            await HttpContext.ChallengeAsync(provider, properties);
 
             return ExternalChallengeResult.Success(properties.RedirectUri ?? returnUrl);
         }
@@ -222,13 +255,18 @@ public class IdentityExternalAuthService : IExternalAuthService
         var authResult = await HttpContext.AuthenticateAsync(IdentityConstants.ExternalScheme);
         if (!authResult.Succeeded || authResult.Principal == null)
         {
+            _logger.LogDebug(
+                "External auth result: Succeeded={Succeeded}, HasPrincipal={HasPrincipal}, Failure={Failure}",
+                authResult.Succeeded, authResult.Principal != null, authResult.Failure?.Message);
             return null;
         }
 
         var loginInfo = await _signInManager.GetExternalLoginInfoAsync();
         if (loginInfo == null)
         {
-            _logger.LogWarning("External login info not found after successful authentication");
+            _logger.LogWarning(
+                "External login info not found after successful authentication. Provider from properties: {Provider}",
+                authResult.Properties?.Items.TryGetValue("LoginProvider", out var lp) == true ? lp : null);
             return ExternalLoginResult.Failed("Could not retrieve external login information");
         }
 

@@ -257,7 +257,7 @@ public class OidcAuthorizationCodeFlowTests : IntegrationTestBase
         var authorizeUrl = "/connect/authorize?" +
             "response_type=code&" +
             "client_id=test-client&" +
-            $"redirect_uri={Uri.EscapeDataString("https://localhost/callback")}&" +
+            $"redirect_uri={Uri.EscapeDataString("http://localhost:5100/signin-oidc")}&" +
             "scope=openid&" +
             $"state={state}&" +
             $"code_challenge={codeChallenge}&" +
@@ -273,8 +273,10 @@ public class OidcAuthorizationCodeFlowTests : IntegrationTestBase
         // Assert - When error redirects happen, state should be preserved
         if (response.Headers.Location != null)
         {
-            var query = HttpUtility.ParseQueryString(response.Headers.Location.Query);
-            // If there's an error redirect, state should be preserved
+            var location = response.Headers.Location.IsAbsoluteUri
+                ? response.Headers.Location
+                : new Uri(new Uri("http://localhost"), response.Headers.Location);
+            var query = HttpUtility.ParseQueryString(location.Query);
             if (query["error"] != null)
             {
                 query["state"].Should().Be(state);
@@ -324,7 +326,7 @@ public class OidcAuthorizationCodeFlowTests : IntegrationTestBase
 
         // Assert - Verify PKCE values are properly formatted
         codeVerifier.Should().NotBeNullOrEmpty();
-        codeVerifier.Length.Should().BeGreaterOrEqualTo(43); // Min length per RFC 7636
+        codeVerifier.Length.Should().BeGreaterThanOrEqualTo(43); // Min length per RFC 7636
 
         codeChallenge.Should().NotBeNullOrEmpty();
         codeChallenge.Should().NotContain("+"); // Base64URL encoding

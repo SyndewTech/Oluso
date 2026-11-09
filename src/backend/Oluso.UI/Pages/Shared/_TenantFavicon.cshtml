@@ -1,0 +1,4 @@
+@using Oluso.Core.Domain.Interfaces
+@inject ITenantSettingsProvider TenantSettings
+@inject Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory
+<link rel="icon" href="@(await Oluso.UI.TenantFavicon.HrefAsync(TenantSettings, LoggerFactory.CreateLogger("Oluso.UI.TenantFavicon"), Context.RequestAborted))" />

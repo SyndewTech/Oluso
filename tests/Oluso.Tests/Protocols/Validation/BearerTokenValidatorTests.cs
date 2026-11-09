@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using Moq;
@@ -24,8 +25,8 @@ public class BearerTokenValidatorTests : IAsyncLifetime
 {
     private readonly Mock<ISigningCredentialStore> _signingCredentialStore;
     private readonly Mock<IPersistedGrantStore> _grantStore;
-    private readonly Mock<IIssuerResolver> _issuerResolver;
     private readonly Mock<IDPoPProofValidator> _dpopValidator;
+    private readonly IConfiguration _configuration;
     private readonly BearerTokenValidator _validator;
 
     private readonly RSA _rsaKey;
@@ -39,17 +40,18 @@ public class BearerTokenValidatorTests : IAsyncLifetime
     {
         _signingCredentialStore = new Mock<ISigningCredentialStore>();
         _grantStore = new Mock<IPersistedGrantStore>();
-        _issuerResolver = new Mock<IIssuerResolver>();
         _dpopValidator = new Mock<IDPoPProofValidator>();
+        _configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Oluso:IssuerUri"] = Issuer
+            })
+            .Build();
 
         // Generate RSA key for signing
         _rsaKey = RSA.Create(2048);
         _securityKey = new RsaSecurityKey(_rsaKey) { KeyId = "test-key-id" };
         _signingCredentials = new SigningCredentials(_securityKey, SecurityAlgorithms.RsaSha256);
-
-        // Setup default mocks
-        _issuerResolver.Setup(x => x.GetIssuerAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Issuer);
 
         _signingCredentialStore.Setup(x => x.GetValidationKeysAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { new SecurityKeyInfo { Key = _securityKey } });
@@ -57,8 +59,8 @@ public class BearerTokenValidatorTests : IAsyncLifetime
         _validator = new BearerTokenValidator(
             _signingCredentialStore.Object,
             _grantStore.Object,
-            _issuerResolver.Object,
             _dpopValidator.Object,
+            _configuration,
             NullLogger<BearerTokenValidator>.Instance);
     }
 

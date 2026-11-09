@@ -25,6 +25,7 @@ public class OidcGrantTypeTests : IntegrationTestBase
 {
     public OidcGrantTypeTests(OlusoWebApplicationFactory factory) : base(factory)
     {
+        Client.DefaultRequestHeaders.Add("X-Tenant-Id", "default");
     }
 
     #region Client Credentials Grant
@@ -556,10 +557,15 @@ public class OidcGrantTypeTests : IntegrationTestBase
         });
 
         var tokenResponse = await Client.PostAsync("/connect/token", tokenRequest);
-        if (!tokenResponse.IsSuccessStatusCode) return;
+        var tokenBody = await tokenResponse.Content.ReadAsStringAsync();
+        tokenResponse.IsSuccessStatusCode.Should().BeTrue(
+            $"initial password grant must succeed to exercise refresh; got {(int)tokenResponse.StatusCode}: {tokenBody}");
 
-        var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonDocument>();
-        var refreshToken = tokens!.RootElement.GetProperty("refresh_token").GetString();
+        var tokens = JsonDocument.Parse(tokenBody);
+        tokens.RootElement.TryGetProperty("refresh_token", out var refreshTokenEl).Should().BeTrue(
+            "offline_access scope must yield a refresh_token");
+        var refreshToken = refreshTokenEl.GetString();
+        refreshToken.Should().NotBeNullOrEmpty();
 
         // Act - Use refresh token to get new tokens
         var refreshRequest = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -572,11 +578,13 @@ public class OidcGrantTypeTests : IntegrationTestBase
 
         var response = await Client.PostAsync("/connect/token", refreshRequest);
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Assert - a new, non-empty access token comes back
+        var refreshBody = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            $"refresh grant should mint a new access token; got {(int)response.StatusCode}: {refreshBody}");
 
-        var newTokens = await response.Content.ReadFromJsonAsync<JsonDocument>();
-        newTokens!.RootElement.TryGetProperty("access_token", out var newAccessToken).Should().BeTrue();
+        var newTokens = JsonDocument.Parse(refreshBody);
+        newTokens.RootElement.TryGetProperty("access_token", out var newAccessToken).Should().BeTrue();
         newAccessToken.GetString().Should().NotBeNullOrEmpty();
     }
 

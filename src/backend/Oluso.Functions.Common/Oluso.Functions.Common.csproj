@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Oluso.Functions.Common</RootNamespace>
+    <PackageId>Oluso.Functions.Common</PackageId>
+    <Description>Shared infrastructure for Oluso Azure Functions projects — tenant job dispatching and common utilities.</Description>
+    <PackageTags>oluso;functions;azure;tenant;jobs</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Storage.Queues" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!-- Worker SDK pulls TimerTrigger + Function attribute so the shared
+         HeartbeatFunction is auto-registered in any host that references
+         this library. Version must match (or be lower than) the host's
+         Microsoft.Azure.Functions.Worker version — else the source
+         generator that produces functions.metadata reads attribute types
+         from an older assembly than the runtime can construct, yielding
+         a malformed gRPC InvocationRequest. -->
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Oluso.EntityFramework\Oluso.EntityFramework.csproj" />
+    <ProjectReference Include="..\Oluso.Telemetry.OpenTelemetry\Oluso.Telemetry.OpenTelemetry.csproj" />
+  </ItemGroup>
+</Project>

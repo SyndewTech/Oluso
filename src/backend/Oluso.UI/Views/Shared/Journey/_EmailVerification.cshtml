@@ -1,0 +1,34 @@
+@model Oluso.UserJourneys.Steps.EmailVerificationViewModel
+
+<div class="email-verification-form">
+    <h2>@Localizer["email_verification_title"]</h2>
+    <p class="description">@(Model.Mode == "magic-link" ? Localizer["email_verification_magic_link_description"] : Localizer["email_verification_code_description"])</p>
+
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">
+            @Model.ErrorMessage
+        </div>
+    }
+
+    <form method="post">
+        <div class="form-group mb-3">
+            <label for="email" class="form-label">@Localizer["email_verification_email_label"]</label>
+            <input type="email"
+                   id="email"
+                   name="email"
+                   class="form-control"
+                   placeholder="@Localizer["email_verification_email_placeholder"]"
+                   value="@Model.Email"
+                   autocomplete="email"
+                   required
+                   autofocus />
+        </div>
+
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-primary">
+                @(Model.Mode == "magic-link" ? Localizer["email_verification_send_link_button"] : Localizer["email_verification_send_code_button"])
+            </button>
+        </div>
+    </form>
+</div>

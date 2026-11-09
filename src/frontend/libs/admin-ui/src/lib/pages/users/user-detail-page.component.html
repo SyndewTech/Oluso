@@ -1,0 +1,753 @@
+@if (loading()) {
+  <div class="flex items-center justify-center h-64">
+    <div class="text-gray-500">Loading user...</div>
+  </div>
+} @else if (!user()) {
+  <div class="text-center py-12">
+    <h2 class="text-lg font-medium text-gray-900">User not found</h2>
+    <ui-button variant="secondary" (clicked)="onBack()" class="mt-4">
+      Back to Users
+    </ui-button>
+  </div>
+} @else {
+  <div class="space-y-6">
+    <!-- Plugin slot: before header -->
+    <ui-page-slot-host
+      pageId="user-detail"
+      slotId="before-header"
+      [data]="{ user: user(), roles: roles() }"
+    />
+
+    <!-- Header -->
+    <div class="flex items-start justify-between">
+      <div class="flex items-center gap-4">
+        <ui-button variant="ghost" (clicked)="onBack()">
+          <ui-icon name="arrow-left" class="h-4 w-4 mr-2" />
+          Back
+        </ui-button>
+        <div class="flex items-center gap-4">
+          <div class="h-16 w-16 rounded-full bg-primary-600 flex items-center justify-center">
+            @if (user()?.profilePictureUrl || user()?.picture) {
+              <img
+                [src]="user()?.profilePictureUrl || user()?.picture"
+                alt=""
+                class="h-16 w-16 rounded-full object-cover"
+              />
+            } @else {
+              <span class="text-2xl font-medium text-white">{{ initials() }}</span>
+            }
+          </div>
+          <div>
+            <h1 class="text-2xl font-bold text-gray-900">{{ displayName() }}</h1>
+            <p class="text-sm text-gray-500">{{ user()?.email }}</p>
+            <div class="flex items-center gap-2 mt-1">
+              <ui-badge [variant]="user()?.isActive ? 'success' : 'danger'">
+                {{ user()?.isActive ? 'Active' : 'Inactive' }}
+              </ui-badge>
+              @if (isLocked()) {
+                <ui-badge variant="warning">Locked</ui-badge>
+              }
+              @if (user()?.emailVerified) {
+                <span class="inline-flex items-center gap-1 text-xs text-green-600">
+                  <ui-icon name="check-circle" class="h-3 w-3" />
+                  Email verified
+                </span>
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <ui-button variant="secondary" (clicked)="openEditModal()">
+          <ui-icon name="pencil" class="h-4 w-4 mr-2" />
+          Edit
+        </ui-button>
+        <ui-button *uiHasPermission="'users.delete'" variant="danger" (clicked)="openDeleteModal()">
+          <ui-icon name="trash" class="h-4 w-4 mr-2" />
+          Delete
+        </ui-button>
+      </div>
+    </div>
+
+    <!-- Plugin slot: after header actions -->
+    <ui-page-slot-host
+      pageId="user-detail"
+      slotId="after-header"
+      [data]="{ user: user(), roles: roles() }"
+    />
+
+    <!-- Tabs -->
+    <div class="border-b border-gray-200">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+        @for (tab of tabs(); track tab.id) {
+          <button
+            type="button"
+            (click)="setActiveTab(tab.id)"
+            [class]="'flex items-center gap-2 whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium ' +
+              (activeTab() === tab.id
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700')"
+          >
+            @if (tab.icon) {
+              <ui-icon [name]="tab.icon" class="h-5 w-5" />
+            }
+            {{ tab.label }}
+          </button>
+        }
+      </nav>
+    </div>
+
+    <!-- Tab Content -->
+    <div>
+      @switch (activeTab()) {
+        @case ('profile') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Profile Information</h3>
+              <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Username</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ user()?.userName || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Email</dt>
+                  <dd class="mt-1 text-sm text-gray-900 flex items-center gap-2">
+                    {{ user()?.email }}
+                    @if (user()?.emailVerified) {
+                      <ui-icon name="check-circle" class="h-4 w-4 text-green-500" />
+                    } @else {
+                      <ui-icon name="x-circle" class="h-4 w-4 text-gray-400" />
+                    }
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">First Name</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ user()?.firstName || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Last Name</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ user()?.lastName || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Display Name</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ user()?.displayName || user()?.name || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Phone Number</dt>
+                  <dd class="mt-1 text-sm text-gray-900 flex items-center gap-2">
+                    {{ user()?.phoneNumber || '-' }}
+                    @if (user()?.phoneNumber) {
+                      @if (user()?.phoneNumberVerified) {
+                        <ui-icon name="check-circle" class="h-4 w-4 text-green-500" />
+                      } @else {
+                        <ui-icon name="x-circle" class="h-4 w-4 text-gray-400" />
+                      }
+                    }
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Created</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ formatDate(user()?.createdAt) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Last Updated</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ formatDate(user()?.updatedAt) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Last Login</dt>
+                  <dd class="mt-1 text-sm text-gray-900">{{ formatDate(user()?.lastLoginAt) }}</dd>
+                </div>
+              </dl>
+            </div>
+          </ui-card>
+        }
+
+        @case ('security') {
+          <div class="space-y-6">
+            <ui-card>
+              <div class="px-4 py-5 sm:p-6">
+                <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Account Security</h3>
+                <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                  <div>
+                    <dt class="text-sm font-medium text-gray-500">Account Status</dt>
+                    <dd class="mt-1">
+                      <ui-badge [variant]="user()?.isActive ? 'success' : 'danger'">
+                        {{ user()?.isActive ? 'Active' : 'Inactive' }}
+                      </ui-badge>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt class="text-sm font-medium text-gray-500">Lockout Status</dt>
+                    <dd class="mt-1 flex items-center gap-2">
+                      @if (isLocked()) {
+                        <ui-badge variant="warning">
+                          Locked until {{ formatDate(user()?.lockoutEnd) }}
+                        </ui-badge>
+                        <ui-button *uiHasPermission="'users.write'" size="sm" variant="secondary" (clicked)="unlockUser()">
+                          <ui-icon name="lock" class="h-4 w-4 mr-1" />
+                          Unlock
+                        </ui-button>
+                      } @else {
+                        <span class="text-sm text-gray-900">Not locked</span>
+                        <ui-button *uiHasPermission="'users.write'" size="sm" variant="secondary" (clicked)="showLockConfirm.set(true)">
+                          <ui-icon name="lock" class="h-4 w-4 mr-1" />
+                          Lock
+                        </ui-button>
+                      }
+                    </dd>
+                  </div>
+                  <div>
+                    <dt class="text-sm font-medium text-gray-500">Failed Login Attempts</dt>
+                    <dd class="mt-1 text-sm text-gray-900">{{ user()?.accessFailedCount || 0 }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-sm font-medium text-gray-500">Lockout Enabled</dt>
+                    <dd class="mt-1 text-sm text-gray-900">{{ user()?.lockoutEnabled ? 'Yes' : 'No' }}</dd>
+                  </div>
+                </dl>
+              </div>
+            </ui-card>
+
+            <ui-card>
+              <div class="px-4 py-5 sm:p-6">
+                <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Password</h3>
+                <p class="text-sm text-gray-500 mb-4">
+                  Reset the user's password. They will need to use the new password on their next login.
+                </p>
+                <ui-button variant="secondary" (clicked)="openPasswordModal()">
+                  <ui-icon name="key" class="h-4 w-4 mr-2" />
+                  Reset Password
+                </ui-button>
+              </div>
+            </ui-card>
+          </div>
+        }
+
+        @case ('roles') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium leading-6 text-gray-900">Assigned Roles</h3>
+                <ui-button size="sm" variant="secondary" (clicked)="openRolesModal()">
+                  <ui-icon name="shield-check" class="h-4 w-4 mr-2" />
+                  Manage Roles
+                </ui-button>
+              </div>
+              @if (user()?.roles && user()!.roles.length > 0) {
+                <div class="flex flex-wrap gap-2">
+                  @for (role of user()!.roles; track role) {
+                    <span class="inline-flex items-center rounded-full bg-primary-100 px-3 py-1 text-sm font-medium text-primary-800">
+                      {{ role }}
+                    </span>
+                  }
+                </div>
+              } @else {
+                <p class="text-sm text-gray-500">No roles assigned</p>
+              }
+            </div>
+          </ui-card>
+        }
+
+        @case ('sessions') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium leading-6 text-gray-900">Active Sessions</h3>
+                @if (sessions().length > 0) {
+                  <ui-button variant="secondary" size="sm" (clicked)="revokeAllSessions()">
+                    Revoke All
+                  </ui-button>
+                }
+              </div>
+              @if (loadingSessions()) {
+                <p class="text-sm text-gray-500">Loading sessions...</p>
+              } @else if (sessions().length > 0) {
+                <div class="space-y-3">
+                  @for (session of sessions(); track session.sessionId) {
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div class="flex items-center gap-3">
+                        <div class="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
+                          <ui-icon name="clock" class="h-5 w-5 text-gray-500" />
+                        </div>
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <p class="text-sm font-medium text-gray-900">
+                              {{ session.clientName || session.clientId || 'Direct Session' }}
+                            </p>
+                            @if (session.isCurrent) {
+                              <ui-badge variant="success">Current</ui-badge>
+                            }
+                          </div>
+                          <p class="text-xs text-gray-500">
+                            {{ session.ipAddress || 'Unknown IP' }} &bull; {{ formatUserAgent(session.userAgent) }}
+                          </p>
+                          <p class="text-xs text-gray-400">
+                            Created: {{ formatDate(session.created) }}
+                            @if (session.expires) {
+                              &bull; Expires: {{ formatDate(session.expires) }}
+                            }
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        class="text-red-500 hover:text-red-700"
+                        (click)="revokeSession(session)"
+                      >
+                        <ui-icon name="trash" class="h-5 w-5" />
+                      </button>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <p class="text-sm text-gray-500">No active sessions</p>
+              }
+            </div>
+          </ui-card>
+        }
+
+        @case ('mfa') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Multi-Factor Authentication</h3>
+              <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">MFA Status</dt>
+                  <dd class="mt-1">
+                    <ui-badge [variant]="user()?.twoFactorEnabled ? 'success' : 'default'">
+                      {{ user()?.twoFactorEnabled ? 'Enabled' : 'Disabled' }}
+                    </ui-badge>
+                  </dd>
+                </div>
+              </dl>
+              @if (user()?.twoFactorEnabled) {
+                <div class="mt-4">
+                  <ui-button variant="secondary" size="sm" (clicked)="resetMfa()">
+                    Reset MFA
+                  </ui-button>
+                </div>
+              }
+            </div>
+          </ui-card>
+        }
+
+        @case ('claims') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">User Claims</h3>
+
+              @if (user()?.claims && user()!.claims!.length > 0) {
+                <div class="mb-6">
+                  <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                      <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
+                        <th class="px-3 py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                      @for (claim of user()!.claims; track claim.type + claim.value) {
+                        <tr>
+                          <td class="px-3 py-2 text-sm text-gray-900 font-mono">{{ claim.type }}</td>
+                          <td class="px-3 py-2 text-sm text-gray-900">{{ claim.value }}</td>
+                          <td class="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              class="text-red-600 hover:text-red-800 text-sm"
+                              (click)="deleteClaim(claim)"
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              } @else {
+                <p class="text-sm text-gray-500 mb-6">No custom claims</p>
+              }
+
+              <div class="border-t pt-4">
+                <ui-button variant="secondary" size="sm" (clicked)="openClaimModal()">
+                  Add Claim
+                </ui-button>
+              </div>
+            </div>
+          </ui-card>
+        }
+
+        @case ('custom-properties') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <h3 class="text-lg font-medium leading-6 text-gray-900 mb-1">Custom Properties</h3>
+              <p class="text-sm text-gray-500 mb-4">
+                Arbitrary key-value metadata captured during sign-up or written by journey steps.
+                Distinct from <strong>Claims</strong> (identity assertions) — these are user-record metadata.
+              </p>
+
+              @if (customPropertyError()) {
+                <div class="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">{{ customPropertyError() }}</div>
+              }
+
+              @if (userCustomProperties().length > 0) {
+                <table class="min-w-full divide-y divide-gray-200 mb-6">
+                  <thead>
+                    <tr>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
+                      <th class="px-3 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-200">
+                    @for (row of userCustomProperties(); track row.key) {
+                      <tr>
+                        <td class="px-3 py-2 text-sm text-gray-900 font-mono">{{ row.key }}</td>
+                        <td class="px-3 py-2 text-sm text-gray-900">
+                          <input
+                            type="text"
+                            [ngModel]="row.value"
+                            (blur)="updateCustomProperty(row.key, $any($event.target).value)"
+                            class="w-full px-2 py-1 text-sm border border-gray-300 rounded-md"
+                            [disabled]="customPropertySaving()"
+                          />
+                        </td>
+                        <td class="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            class="text-red-600 hover:text-red-800 text-sm"
+                            (click)="removeCustomProperty(row.key)"
+                            [disabled]="customPropertySaving()"
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              } @else {
+                <p class="text-sm text-gray-500 mb-6">No custom properties</p>
+              }
+
+              <div class="border-t pt-4">
+                <h4 class="text-sm font-medium text-gray-700 mb-2">Add Property</h4>
+                <div class="flex gap-2 items-start">
+                  <input
+                    type="text"
+                    placeholder="key"
+                    [ngModel]="newPropertyKey()"
+                    (ngModelChange)="newPropertyKey.set($event)"
+                    class="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md font-mono"
+                    [disabled]="customPropertySaving()"
+                  />
+                  <input
+                    type="text"
+                    placeholder="value"
+                    [ngModel]="newPropertyValue()"
+                    (ngModelChange)="newPropertyValue.set($event)"
+                    class="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                    [disabled]="customPropertySaving()"
+                  />
+                  <ui-button
+                    variant="secondary"
+                    size="sm"
+                    (clicked)="addCustomProperty()"
+                    [disabled]="customPropertySaving() || !newPropertyKey().trim()"
+                  >
+                    Add
+                  </ui-button>
+                </div>
+              </div>
+
+              @if (systemCustomProperties().length > 0) {
+                <div class="mt-6 pt-4 border-t">
+                  <h4 class="text-sm font-medium text-gray-700 mb-1">System Properties</h4>
+                  <p class="text-xs text-gray-500 mb-3">
+                    Read-only. Written by built-in step handlers (terms / privacy acceptance, etc.) — editing them would corrupt consent records.
+                  </p>
+                  <table class="min-w-full divide-y divide-gray-200">
+                    <thead>
+                      <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                      @for (row of systemCustomProperties(); track row.key) {
+                        <tr>
+                          <td class="px-3 py-2 text-sm text-gray-700 font-mono">{{ row.key }}</td>
+                          <td class="px-3 py-2 text-sm text-gray-700 font-mono">{{ row.value }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            </div>
+          </ui-card>
+        }
+
+        @case ('external-logins') {
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">External Logins</h3>
+              @if (loadingExternalLogins()) {
+                <p class="text-sm text-gray-500">Loading external logins...</p>
+              } @else if (externalLogins().length > 0) {
+                <div class="space-y-3">
+                  @for (login of externalLogins(); track login.loginProvider + login.providerKey) {
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div class="flex items-center gap-3">
+                        <div class="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
+                          <ui-icon name="link" class="h-5 w-5 text-gray-500" />
+                        </div>
+                        <div>
+                          <p class="text-sm font-medium text-gray-900">{{ login.providerDisplayName }}</p>
+                          <p class="text-xs text-gray-500 font-mono">{{ truncateKey(login.providerKey) }}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        class="text-red-500 hover:text-red-700"
+                        (click)="removeExternalLogin(login)"
+                      >
+                        <ui-icon name="trash" class="h-5 w-5" />
+                      </button>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <p class="text-sm text-gray-500">No external logins linked</p>
+              }
+            </div>
+          </ui-card>
+        }
+      }
+
+      <!-- Plugin Tab Content -->
+      @if (activePluginComponent()) {
+        <div class="plugin-tab-content">
+          <ng-container
+            *ngComponentOutlet="activePluginComponent(); injector: pluginInjector()"
+          ></ng-container>
+        </div>
+      }
+    </div>
+
+    <!-- Plugin detail sections -->
+    <ui-detail-section-host
+      entityType="user"
+      [entityId]="user()!.id"
+      [data]="{ user: user(), roles: roles(), sessions: sessions(), externalLogins: externalLogins() }"
+    />
+
+    <!-- Plugin slot: after content -->
+    <ui-page-slot-host
+      pageId="user-detail"
+      slotId="after-content"
+      [data]="{ user: user(), roles: roles() }"
+    />
+  </div>
+
+  <!-- Edit User Modal -->
+  <ui-modal
+    [open]="showEditModal()"
+    title="Edit User"
+    (closed)="closeEditModal()"
+  >
+    <form (ngSubmit)="saveUser()">
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <ui-input
+            label="First Name"
+            [(ngModel)]="editFormData.firstName"
+            name="firstName"
+          />
+          <ui-input
+            label="Last Name"
+            [(ngModel)]="editFormData.lastName"
+            name="lastName"
+          />
+        </div>
+
+        <ui-input
+          label="Phone Number"
+          type="tel"
+          [(ngModel)]="editFormData.phoneNumber"
+          name="phoneNumber"
+        />
+
+        <div class="flex gap-6">
+          <label class="flex items-center space-x-2 cursor-pointer">
+            <input
+              type="checkbox"
+              [(ngModel)]="editFormData.isActive"
+              name="isActive"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="text-sm text-gray-700">Active</span>
+          </label>
+          <label class="flex items-center space-x-2 cursor-pointer">
+            <input
+              type="checkbox"
+              [(ngModel)]="editFormData.emailVerified"
+              name="emailVerified"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="text-sm text-gray-700">Email Verified</span>
+          </label>
+          <p class="text-xs text-gray-500">
+            Can be turned on only for addresses at an email domain your organization has verified.
+          </p>
+        </div>
+      </div>
+
+      <div class="mt-6 flex justify-end gap-3">
+        <ui-button type="button" variant="secondary" (clicked)="closeEditModal()">
+          Cancel
+        </ui-button>
+        <ui-button type="submit" [disabled]="saving()">
+          {{ saving() ? 'Saving...' : 'Save Changes' }}
+        </ui-button>
+      </div>
+    </form>
+  </ui-modal>
+
+  <!-- Delete User Modal -->
+  <ui-modal
+    [open]="showDeleteModal()"
+    title="Delete User"
+    (closed)="closeDeleteModal()"
+  >
+    <p class="text-gray-600">
+      Are you sure you want to delete <strong>{{ displayName() }}</strong>?
+      This action cannot be undone.
+    </p>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeDeleteModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmDelete()">
+        Delete
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Reset Password Modal -->
+  <ui-modal
+    [open]="showPasswordModal()"
+    title="Reset Password"
+    (closed)="closePasswordModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-600">
+        Set a new password for <strong>{{ displayName() }}</strong>
+      </p>
+      <ui-input
+        label="New Password"
+        type="password"
+        [required]="true"
+        [(ngModel)]="newPassword"
+      />
+    </div>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closePasswordModal()">
+        Cancel
+      </ui-button>
+      <ui-button [disabled]="saving() || !newPassword" (clicked)="resetPassword()">
+        {{ saving() ? 'Resetting...' : 'Reset Password' }}
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Manage Roles Modal -->
+  <ui-modal
+    [open]="showRolesModal()"
+    title="Manage Roles"
+    (closed)="closeRolesModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-600">Select roles to assign to this user.</p>
+      <div class="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto border rounded-md p-3">
+        @for (role of roles(); track role.id) {
+          <label class="flex items-start space-x-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              [checked]="selectedRoleIds().includes(role.id)"
+              [disabled]="loadingRoleSelection()"
+              (change)="toggleRole(role.id)"
+              class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <div>
+              <span class="font-medium">{{ role.displayName || role.name }}</span>
+              @if (role.description) {
+                <p class="text-xs text-gray-500">{{ role.description }}</p>
+              }
+            </div>
+          </label>
+        }
+        @if (roles().length === 0) {
+          <p class="col-span-2 text-sm text-gray-500 text-center py-4">No roles available</p>
+        }
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeRolesModal()">
+        Cancel
+      </ui-button>
+      <ui-button [disabled]="saving()" (clicked)="saveRoles()">
+        {{ saving() ? 'Saving...' : 'Save Roles' }}
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Add Claim Modal -->
+  <ui-modal
+    [open]="showClaimModal()"
+    title="Add Claim"
+    (closed)="closeClaimModal()"
+  >
+    <div class="space-y-4">
+      <ui-input
+        label="Claim Type"
+        placeholder="e.g., department"
+        [required]="true"
+        [(ngModel)]="newClaim.type"
+      />
+      <ui-input
+        label="Claim Value"
+        placeholder="e.g., engineering"
+        [required]="true"
+        [(ngModel)]="newClaim.value"
+      />
+    </div>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeClaimModal()">
+        Cancel
+      </ui-button>
+      <ui-button
+        [disabled]="saving() || !newClaim.type || !newClaim.value"
+        (clicked)="addClaim()"
+      >
+        {{ saving() ? 'Adding...' : 'Add Claim' }}
+      </ui-button>
+    </div>
+  </ui-modal>
+}
+
+<ui-confirm-dialog
+  [open]="showLockConfirm()"
+  title="Lock account"
+  message="The user is signed out everywhere and can't sign in until an admin unlocks the account."
+  confirmText="Lock account"
+  variant="danger"
+  [loading]="locking()"
+  (confirmed)="lockUser()"
+  (cancelled)="showLockConfirm.set(false)"
+/>

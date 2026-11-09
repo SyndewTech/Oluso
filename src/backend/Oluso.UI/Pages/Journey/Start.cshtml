@@ -1,16 +1,25 @@
-@page "/journey/start/{policyId}"
+@page "/journey/start/{slug}"
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnv
 @model Oluso.UI.Pages.Journey.StartModel
 @{
     Layout = null;
     ViewData["Title"] = "Starting Journey";
+    var brand = Configuration["Oluso:Branding:CompanyName"] ?? "Oluso";
 }
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - Oluso</title>
-    <link rel="stylesheet" href="/css/journey.css" />
+    <title>@ViewData["Title"] - @brand</title>
+    <partial name="_TenantFavicon" />
+    <link rel="stylesheet" href="~/_content/Oluso.UI/css/journey.css" asp-append-version="true" />
+    @* Host-app stylesheet: overrides the library default when the deployed app ships its own wwwroot/css/journey.css. Only emitted when the file exists so there's no 404. *@
+    @if (HostEnv.WebRootFileProvider.GetFileInfo("css/journey.css").Exists)
+    {
+        <link rel="stylesheet" href="~/css/journey.css" asp-append-version="true" />
+    }
 </head>
 <body class="journey-page">
     <div class="journey-wrapper">
@@ -21,7 +30,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
                     </svg>
                 </div>
-                <span class="journey-brand-text">Oluso</span>
+                <span class="journey-brand-text">@brand</span>
             </div>
             <div class="journey-card">
                 <div class="loading-card">
@@ -30,7 +39,7 @@
                             <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
                         </svg>
                     </div>
-                    <p class="loading-text">Starting journey...</p>
+                    <p class="loading-text">@Localizer["journey_start_loading"]</p>
                 </div>
             </div>
         </div>

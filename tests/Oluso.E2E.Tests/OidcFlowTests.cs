@@ -8,6 +8,7 @@ using NUnit.Framework;
 using Oluso.Enterprise.Ldap.Server;
 using Oluso.EntityFramework;
 using Oluso.Enterprise.Scim.EntityFramework;
+using Oluso.Middleware;
 
 namespace Oluso.E2E.Tests;
 
@@ -32,47 +33,53 @@ public class E2EWebApplicationFactory : WebApplicationFactory<Program>
                 services.Remove(ldapHostedService);
             }
 
-            // Remove existing OlusoDbContext registrations
-            RemoveDbContextRegistrations<OlusoDbContext>(services);
-            RemoveDbContextRegistrations<ScimDbContext>(services);
+            // Swap every EF context to an isolated in-memory database, preserving
+            // the application service provider so tenant-aware query filters can
+            // resolve the live ITenantContext — a null SP makes tenant-scoped
+            // contexts throw on requests like discovery. Matches the integration
+            // test factory. The app's startup pipeline (MigrateOlusoDatabaseAsync
+            // + SeedData) then creates and seeds these databases.
+            ReplaceAllDbContextOptionsWithInMemory(services);
 
-            // Add in-memory database
-            services.AddDbContext<OlusoDbContext>(options =>
+            // HostValidationMiddleware only accepts localhost in Development; tests run
+            // under "Testing" so the WebApplicationFactory's default localhost host is
+            // otherwise rejected with HTTP 421, failing every endpoint.
+            services.PostConfigure<HostValidationOptions>(options =>
             {
-                options.UseInMemoryDatabase(_databaseName);
+                options.AdditionalAllowedHosts.Add("localhost");
+                options.AdditionalAllowedHosts.Add("127.0.0.1");
             });
-
-            services.AddDbContext<ScimDbContext>(options =>
-            {
-                options.UseInMemoryDatabase($"{_databaseName}_Scim");
-            });
-
-            // Build service provider and ensure database is created
-            var sp = services.BuildServiceProvider();
-            using var scope = sp.CreateScope();
-
-            var db = scope.ServiceProvider.GetRequiredService<OlusoDbContext>();
-            db.Database.EnsureCreated();
-
-            var scimDb = scope.ServiceProvider.GetService<ScimDbContext>();
-            scimDb?.Database.EnsureCreated();
         });
     }
 
-    private static void RemoveDbContextRegistrations<TContext>(IServiceCollection services) where TContext : DbContext
+    private void ReplaceAllDbContextOptionsWithInMemory(IServiceCollection services)
     {
-        var optionsDescriptor = services.SingleOrDefault(
-            d => d.ServiceType == typeof(DbContextOptions<TContext>));
-        if (optionsDescriptor != null)
+        var optionsDescriptors = services
+            .Where(d => d.ServiceType.IsGenericType &&
+                        d.ServiceType.GetGenericTypeDefinition() == typeof(DbContextOptions<>))
+            .ToList();
+
+        foreach (var descriptor in optionsDescriptors)
         {
-            services.Remove(optionsDescriptor);
+            services.Remove(descriptor);
+
+            var contextType = descriptor.ServiceType.GetGenericArguments()[0];
+            var dbName = $"{_databaseName}_{contextType.Name}";
+            var optionsBuilderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(contextType);
+
+            services.AddSingleton(descriptor.ServiceType, sp =>
+            {
+                var builder = (DbContextOptionsBuilder)Activator.CreateInstance(optionsBuilderType)!;
+                builder.UseInMemoryDatabase(dbName);
+                builder.UseApplicationServiceProvider(sp);
+                return builder.Options;
+            });
         }
 
-        var contextDescriptor = services.SingleOrDefault(
-            d => d.ServiceType == typeof(TContext));
-        if (contextDescriptor != null)
+        var nonGenericOptions = services.Where(d => d.ServiceType == typeof(DbContextOptions)).ToList();
+        foreach (var descriptor in nonGenericOptions)
         {
-            services.Remove(contextDescriptor);
+            services.Remove(descriptor);
         }
     }
 
@@ -133,6 +140,17 @@ public class OidcFlowTests
     [Test]
     public async Task JWKS_Endpoint_ReturnsValidKeys()
     {
+        // Signing keys are provisioned lazily on first use; issue a token to
+        // trigger key generation before asserting the JWKS is populated.
+        await _httpClient.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = "cc-client",
+                ["client_secret"] = "test-secret",
+                ["scope"] = "openid"
+            }));
+
         var response = await _httpClient.GetAsync("/.well-known/jwks");
 
         Assert.That(response.IsSuccessStatusCode, Is.True, "JWKS endpoint should return 200 OK");
@@ -325,17 +343,16 @@ public class OidcFlowTests
     }
 
     [Test]
-    public async Task LoginPage_IsAccessible()
+    public async Task LoginPage_DirectAccess_WithoutProtocolFlow_ReturnsNotFound()
     {
-        // Test that the login page is accessible
+        // /account/login is the standalone UI for an active protocol flow
+        // (OAuth/OIDC authorize, SAML, etc.), not a directly navigable page.
+        // Without a live flow behind it, the page intentionally returns 404 so
+        // it's invisible to drive-by traffic (see Login.OnGetAsync).
         var response = await _httpClient.GetAsync("/account/login");
 
-        Assert.That(response.IsSuccessStatusCode, Is.True, "Login page should be accessible");
-
-        var content = await response.Content.ReadAsStringAsync();
-        Assert.That(content, Does.Contain("Sign In").IgnoreCase, "Login page should have Sign In text");
-        Assert.That(content, Does.Contain("username").IgnoreCase, "Login page should have username field");
-        Assert.That(content, Does.Contain("password").IgnoreCase, "Login page should have password field");
+        Assert.That(response.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.NotFound),
+            "Login page should be hidden (404) when there is no active protocol flow in progress");
     }
 
     #region PKCE Helpers

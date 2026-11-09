@@ -64,14 +64,63 @@ public class ClaimsProviderContext
 }
 
 /// <summary>
-/// Registry for collecting claims from all enabled plugins.
-/// Automatically discovers claims providers from plugins registered in IManagedPluginRegistry.
+/// Interface for module-level claims providers registered via DI.
+/// Modules implement this to inject custom claims into tokens.
+/// </summary>
+public interface IClaimsProvider
+{
+    /// <summary>
+    /// Unique identifier for this provider (the module's key)
+    /// </summary>
+    string ProviderId { get; }
+
+    /// <summary>
+    /// Priority for claim resolution. Higher priority providers are processed first.
+    /// </summary>
+    int Priority { get; }
+
+    /// <summary>
+    /// The scopes that trigger this claims provider.
+    /// If null or empty, provider is always invoked.
+    /// </summary>
+    IEnumerable<string>? TriggerScopes { get; }
+
+    /// <summary>
+    /// Whether this provider should run for the given context.
+    /// </summary>
+    bool ShouldProvide(ClaimsProviderContext context);
+
+    /// <summary>
+    /// Get claims to add to the token.
+    /// </summary>
+    Task<ClaimsProviderResult> GetClaimsAsync(
+        ClaimsProviderContext context,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Result of a claims provider invocation
+/// </summary>
+public class ClaimsProviderResult
+{
+    public bool Success { get; init; }
+    public IDictionary<string, object> Claims { get; init; } = new Dictionary<string, object>();
+    public string? Error { get; init; }
+
+    public static ClaimsProviderResult Succeeded(IDictionary<string, object> claims) =>
+        new() { Success = true, Claims = claims };
+
+    public static ClaimsProviderResult Failed(string error) =>
+        new() { Success = false, Error = error };
+}
+
+/// <summary>
+/// Registry for collecting claims from all sources: plugins and DI-registered IClaimsProvider instances.
 /// </summary>
 public interface IClaimsProviderRegistry
 {
     /// <summary>
-    /// Get claims from all enabled plugins that have claims providers.
-    /// Only collects from plugins that are enabled and whose trigger scopes match.
+    /// Get claims from all enabled providers (plugins + DI-registered module providers).
     /// </summary>
     Task<IDictionary<string, object>> GetAllClaimsAsync(
         ClaimsProviderContext context,

@@ -35,6 +35,13 @@ public interface IExternalAuthService
     Task<ExternalChallengeResult> ChallengeAsync(string provider, string returnUrl, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Initiates external authentication challenge with extra parameters
+    /// (e.g. <c>ui_locales</c>) forwarded to the external provider's authorize URL.
+    /// </summary>
+    Task<ExternalChallengeResult> ChallengeAsync(string provider, string returnUrl, IDictionary<string, string>? parameters, CancellationToken cancellationToken = default)
+        => ChallengeAsync(provider, returnUrl, cancellationToken);
+
+    /// <summary>
     /// Gets the result of external authentication (from callback)
     /// </summary>
     Task<ExternalLoginResult?> GetExternalLoginResultAsync(CancellationToken cancellationToken = default);
@@ -164,6 +171,22 @@ public class ExternalProviderConfig
     /// Whether to auto-provision users on first login
     /// </summary>
     public bool AutoProvisionUsers { get; init; } = true;
+
+    #endregion
+
+    #region Access Control & Role Assignment
+
+    /// <summary>
+    /// Oluso role names assigned to users provisioned via this IdP. Applied
+    /// on first provision only.
+    /// </summary>
+    public IReadOnlyList<string> DefaultRoles { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Access-control gate evaluated against the external principal before
+    /// provisioning or sign-in completes.
+    /// </summary>
+    public ExternalAccessControl? AccessControl { get; init; }
 
     #endregion
 }

@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Oluso.Admin.Controllers.Service;
+using Oluso.Core;
 using Oluso.Core.Domain.Entities;
+using Oluso.Core.Licensing;
 using Oluso.EntityFramework;
 
 namespace Oluso.Sample;
@@ -13,18 +16,257 @@ public static class SeedData
         var dbContext = scope.ServiceProvider.GetRequiredService<OlusoDbContext>();
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
 
+        // Sample:SeedTestData=false seeds only what a working installation needs: no test accounts or
+        // test clients, and a platform administrator from Sample:SuperAdminEmail/SuperAdminPassword.
+        var seedTestData = configuration.GetValue("Sample:SeedTestData", true);
+
+        await SeedPlatformOrganizationAsync(dbContext);
+        await SeedPlatformTenantAsync(dbContext);
         await SeedOrganizationsAsync(dbContext);
         await SeedTenantsAsync(dbContext);
-        await SeedClientsAsync(dbContext, configuration);
+        await SeedServiceApiScopesAsync(dbContext);
+        if (seedTestData)
+            await SeedTestClientsAsync(dbContext, configuration);
+        await SeedAccountUiClientAsync(dbContext, configuration);
+        await SeedPlatformClientsAsync(dbContext, configuration);
         await SeedIdentityResourcesAsync(dbContext);
         await SeedRolesAsync(dbContext);
-        await SeedUsersAsync(dbContext);
+        if (seedTestData)
+            await SeedUsersAsync(dbContext);
+        else
+            await SeedPlatformAdministratorAsync(scope.ServiceProvider, dbContext, configuration);
         await SeedJourneyPoliciesAsync(dbContext, "default");
+        await SeedEmailTemplatesAsync(scope.ServiceProvider, "default");
+    }
+
+    private static async Task SeedEmailTemplatesAsync(IServiceProvider services, string tenantId)
+    {
+        var persister = services.GetService<ITenantSeedPersister>();
+        if (persister == null)
+            return;
+
+        var modules = ModuleRegistry.Instance.GetRegisteredModules();
+        var allTemplates = new List<EmailTemplateSeed>();
+
+        foreach (var module in modules)
+        {
+            try
+            {
+                allTemplates.AddRange(module.GetEmailTemplateSeeds());
+            }
+            catch
+            {
+                // Skip modules that fail to provide seeds
+            }
+        }
+
+        if (allTemplates.Count > 0)
+        {
+            await persister.SeedEmailTemplatesAsync(tenantId, allTemplates);
+            await persister.SeedWorkflowsForTemplatesAsync(tenantId, allTemplates);
+        }
+    }
+
+    private static async Task SeedPlatformOrganizationAsync(OlusoDbContext dbContext)
+    {
+        var existing = await dbContext.Organizations
+            .FirstOrDefaultAsync(o => o.Id == PlatformConstants.OrganizationId);
+
+        if (existing != null) return;
+
+        dbContext.Organizations.Add(new Organization
+        {
+            Id = PlatformConstants.OrganizationId,
+            Name = PlatformConstants.OrganizationName,
+            Slug = "_platform",
+            Enabled = true,
+            Description = "Platform-level organization for system-owned entities",
+            Created = DateTime.UtcNow,
+            Updated = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+        Console.WriteLine("Seeded platform organization (_platform-org)");
+    }
+
+    private static async Task SeedPlatformTenantAsync(OlusoDbContext dbContext)
+    {
+        var existing = await dbContext.Tenants!
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(t => t.Id == PlatformConstants.TenantId);
+
+        if (existing != null) return;
+
+        var platformTenant = new Tenant
+        {
+            Id = PlatformConstants.TenantId,
+            Name = PlatformConstants.TenantName,
+            DisplayName = "Platform",
+            Identifier = "_platform",
+            Enabled = true,
+            OrganizationId = PlatformConstants.OrganizationId,
+            Environment = TenantEnvironment.Production,
+            AllowSelfRegistration = false
+            // No custom domain, no branding - purely for entity storage
+        };
+
+        dbContext.Tenants!.Add(platformTenant);
+        await dbContext.SaveChangesAsync();
+        Console.WriteLine("Seeded platform tenant (_platform)");
+    }
+
+    private static async Task SeedPlatformClientsAsync(OlusoDbContext dbContext, IConfiguration configuration)
+    {
+        // Use IgnoreQueryFilters to check if already seeded
+        var existingClients = await dbContext.Clients
+            .IgnoreQueryFilters()
+            .Where(c => c.TenantId == PlatformConstants.TenantId)
+            .Select(c => c.ClientId)
+            .ToListAsync();
+
+        var adminPortalUrl = configuration.GetValue<string>("Oluso:Urls:AdminPortalUrl")
+            ?? configuration.GetValue<string>("Oluso:Urls:AdminUiUrl") ?? "http://localhost:4200";
+        var workspacePortalUrl = configuration.GetValue<string>("Oluso:Urls:WorkspacePortalUrl")
+            ?? configuration.GetValue<string>("Oluso:Urls:WorkspaceUiUrl") ?? "http://localhost:4203";
+
+        if (!existingClients.Contains("admin-portal"))
+        {
+            var adminPortal = new Client
+            {
+                TenantId = PlatformConstants.TenantId,
+                ClientId = "admin-portal",
+                ClientName = "Admin Portal",
+                Description = "Platform-level admin portal client (multi-tenant)",
+                Enabled = true,
+                RequireClientSecret = false, // Public client
+                RequirePkce = true,
+                AllowOfflineAccess = true,
+                NonEditable = true,
+                AllowedGrantTypes = new List<ClientGrantType>
+                {
+                    new() { GrantType = "authorization_code", TenantId = PlatformConstants.TenantId },
+                    new() { GrantType = "refresh_token", TenantId = PlatformConstants.TenantId }
+                },
+                AllowedScopes = new List<ClientScope>
+                {
+                    new() { Scope = "openid", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "profile", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "email", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "admin", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "permissions", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "offline_access", TenantId = PlatformConstants.TenantId }
+                },
+                RedirectUris = new List<ClientRedirectUri>
+                {
+                    new() { RedirectUri = $"{adminPortalUrl}/callback", TenantId = PlatformConstants.TenantId },
+                    new() { RedirectUri = $"{adminPortalUrl}/silent-renew.html", TenantId = PlatformConstants.TenantId }
+                },
+                PostLogoutRedirectUris = new List<ClientPostLogoutRedirectUri>
+                {
+                    new() { PostLogoutRedirectUri = adminPortalUrl, TenantId = PlatformConstants.TenantId },
+                    new() { PostLogoutRedirectUri = $"{adminPortalUrl}/logout", TenantId = PlatformConstants.TenantId }
+                },
+                AllowedCorsOrigins = new List<ClientCorsOrigin>
+                {
+                    new() { Origin = adminPortalUrl, TenantId = PlatformConstants.TenantId }
+                },
+                // Restrict access via permission - tenant admins can create custom roles with this permission
+                RequiredPermission = "admin.access"
+            };
+            dbContext.Clients.Add(adminPortal);
+            Console.WriteLine("Seeding platform client: admin-portal");
+        }
+
+        if (!existingClients.Contains("workspace-portal"))
+        {
+            var workspacePortal = new Client
+            {
+                TenantId = PlatformConstants.TenantId,
+                ClientId = "workspace-portal",
+                ClientName = "Workspace Portal",
+                Description = "Platform-level workspace portal client (multi-tenant)",
+                Enabled = true,
+                RequireClientSecret = false,
+                RequirePkce = true,
+                AllowOfflineAccess = true,
+                NonEditable = true,
+                AllowedGrantTypes = new List<ClientGrantType>
+                {
+                    new() { GrantType = "authorization_code", TenantId = PlatformConstants.TenantId },
+                    new() { GrantType = "refresh_token", TenantId = PlatformConstants.TenantId }
+                },
+                AllowedScopes = new List<ClientScope>
+                {
+                    new() { Scope = "openid", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "profile", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "email", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "workspace", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "offline_access", TenantId = PlatformConstants.TenantId }
+                },
+                RedirectUris = new List<ClientRedirectUri>
+                {
+                    new() { RedirectUri = $"{workspacePortalUrl}/callback", TenantId = PlatformConstants.TenantId },
+                    new() { RedirectUri = $"{workspacePortalUrl}/silent-renew.html", TenantId = PlatformConstants.TenantId }
+                },
+                PostLogoutRedirectUris = new List<ClientPostLogoutRedirectUri>
+                {
+                    new() { PostLogoutRedirectUri = workspacePortalUrl, TenantId = PlatformConstants.TenantId },
+                    new() { PostLogoutRedirectUri = $"{workspacePortalUrl}/logout", TenantId = PlatformConstants.TenantId }
+                },
+                AllowedCorsOrigins = new List<ClientCorsOrigin>
+                {
+                    new() { Origin = workspacePortalUrl, TenantId = PlatformConstants.TenantId }
+                }
+            };
+            dbContext.Clients.Add(workspacePortal);
+            Console.WriteLine("Seeding platform client: workspace-portal");
+        }
+
+        if (!existingClients.Contains("oluso-mobile"))
+        {
+            var mobileClient = new Client
+            {
+                TenantId = PlatformConstants.TenantId,
+                ClientId = "oluso-mobile",
+                ClientName = "Oluso Mobile",
+                Description = "Native mobile companion app (MAUI). Public PKCE client; matches the value baked into /.well-known/oluso-instance.",
+                Enabled = true,
+                RequireClientSecret = false,
+                RequirePkce = true,
+                AllowOfflineAccess = true,
+                NonEditable = true,
+                AllowedGrantTypes = new List<ClientGrantType>
+                {
+                    new() { GrantType = "authorization_code", TenantId = PlatformConstants.TenantId },
+                    new() { GrantType = "refresh_token", TenantId = PlatformConstants.TenantId }
+                },
+                AllowedScopes = new List<ClientScope>
+                {
+                    new() { Scope = "openid", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "profile", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "email", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "workspace", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "permissions", TenantId = PlatformConstants.TenantId },
+                    new() { Scope = "offline_access", TenantId = PlatformConstants.TenantId }
+                },
+                RedirectUris = new List<ClientRedirectUri>
+                {
+                    new() { RedirectUri = "oluso://callback", TenantId = PlatformConstants.TenantId }
+                },
+                PostLogoutRedirectUris = new List<ClientPostLogoutRedirectUri>
+                {
+                    new() { PostLogoutRedirectUri = "oluso://callback", TenantId = PlatformConstants.TenantId }
+                }
+            };
+            dbContext.Clients.Add(mobileClient);
+            Console.WriteLine("Seeding platform client: oluso-mobile");
+        }
+
+        await dbContext.SaveChangesAsync();
     }
 
     private static async Task SeedOrganizationsAsync(OlusoDbContext dbContext)
     {
-        if (await dbContext.Organizations.AnyAsync())
+        if (await dbContext.Organizations.AnyAsync(o => o.Id == "default-org"))
             return;
 
         dbContext.Organizations.Add(new Organization
@@ -42,10 +284,10 @@ public static class SeedData
 
     private static async Task SeedTenantsAsync(OlusoDbContext dbContext)
     {
-        if (await dbContext.Tenants.AnyAsync())
+        if (await dbContext.Tenants!.AnyAsync(t => t.Id == "default"))
             return;
 
-        dbContext.Tenants.Add(new Tenant
+        dbContext.Tenants!.Add(new Tenant
         {
             Id = "default",
             Name = "Default",
@@ -53,7 +295,7 @@ public static class SeedData
             Identifier = "default",
             Enabled = true,
             Description = "Default tenant for development",
-            UseJourneyFlow = false,
+            UseJourneyFlow = true,
             Created = DateTime.UtcNow,
             Updated = DateTime.UtcNow,
             AllowSelfRegistration = false,
@@ -63,19 +305,16 @@ public static class SeedData
         await dbContext.SaveChangesAsync();
     }
 
-    private static async Task SeedClientsAsync(OlusoDbContext dbContext, IConfiguration configuration)
+    private static async Task SeedTestClientsAsync(OlusoDbContext dbContext, IConfiguration configuration)
     {
-        if (await dbContext.Clients.AnyAsync())
+        if (await dbContext.Clients.IgnoreQueryFilters().AnyAsync(c => c.ClientId == "test-client"))
             return;
 
         var baseUrl = configuration.GetValue<string>("Oluso:Urls:BaseUrl", "http://localhost:5050")!;
         var testClientUrl = configuration.GetValue<string>("Oluso:Urls:TestClientUrl", "http://localhost:5100")!;
-        var accountUiUrl = configuration.GetValue<string>("Oluso:Urls:AccountUiUrl", "http://localhost:5173")!;
-        var accountSaasUrl = configuration.GetValue<string>("Oluso:Urls:AccountSaasUrl", "http://localhost:3101")!;
         var frontendUrl = configuration.GetValue<string>("Oluso:Urls:FrontendUrl", "http://localhost:3000")!;
         var workspacePortalUrl = configuration.GetValue<string>("Oluso:Urls:WorkspacePortalUrl", "http://localhost:5175")!;
 
-        // Test client (Authorization Code flow)
         var testClient = CreateClient("test-client", "Test Client", requireSecret: true, requirePkce: false, allowOffline: true);
         testClient.ClientSecrets.Add(new ClientSecret { Value = HashSecret("test-secret"), Type = "SharedSecret" });
         testClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "authorization_code" });
@@ -91,12 +330,16 @@ public static class SeedData
         testClient.AllowedScopes.Add(new ClientScope { Scope = "email" });
         dbContext.Clients.Add(testClient);
 
-        // Client Credentials client
+        // Client Credentials client — granted the Service API (api/service/*),
+        // matching what the admin UI's Service API toggle configures.
         var ccClient = CreateClient("cc-client", "Client Credentials Client", requireSecret: true, requirePkce: false, allowOffline: false);
         ccClient.ClientSecrets.Add(new ClientSecret { Value = HashSecret("test-secret"), Type = "SharedSecret" });
         ccClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "client_credentials" });
         ccClient.AllowedScopes.Add(new ClientScope { Scope = "openid" });
-        ccClient.AllowedScopes.Add(new ClientScope { Scope = "api" });
+        foreach (var scope in ServiceScopes.AllNames)
+        {
+            ccClient.AllowedScopes.Add(new ClientScope { Scope = scope });
+        }
         dbContext.Clients.Add(ccClient);
 
         // Resource Owner Password client
@@ -119,16 +362,57 @@ public static class SeedData
         deviceClient.AllowedScopes.Add(new ClientScope { Scope = "offline_access" });
         dbContext.Clients.Add(deviceClient);
 
-        // Account UI client (SPA with PKCE)
+        // Interactive auth-code client used by integration tests to drive the full
+        // browser login flow (authorize -> /account/login -> callback -> token).
+        // In the 'default' tenant (where testuser lives) with UseJourneyFlow=false to
+        // force the standalone login path, and offline_access allowed so the flow can
+        // assert a refresh token is issued.
+        var interactiveClient = CreateClient("interactive-test-client", "Interactive Test Client", requireSecret: true, requirePkce: false, allowOffline: true);
+        interactiveClient.TenantId = "default";
+        interactiveClient.UseJourneyFlow = false;
+        interactiveClient.ClientSecrets.Add(new ClientSecret { Value = HashSecret("test-secret"), Type = "SharedSecret" });
+        interactiveClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "authorization_code" });
+        interactiveClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "refresh_token" });
+        interactiveClient.RedirectUris.Add(new ClientRedirectUri { RedirectUri = "http://localhost:9876/callback" });
+        interactiveClient.AllowedScopes.Add(new ClientScope { Scope = "openid" });
+        interactiveClient.AllowedScopes.Add(new ClientScope { Scope = "profile" });
+        interactiveClient.AllowedScopes.Add(new ClientScope { Scope = "email" });
+        interactiveClient.AllowedScopes.Add(new ClientScope { Scope = "offline_access" });
+        dbContext.Clients.Add(interactiveClient);
+
+        // Note: admin-portal and workspace-portal are platform-level clients
+        // seeded by SeedPlatformClientsAsync (TenantId = _platform)
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedAccountUiClientAsync(OlusoDbContext dbContext, IConfiguration configuration)
+    {
+        if (await dbContext.Clients.IgnoreQueryFilters().AnyAsync(c => c.ClientId == "account-ui"))
+            return;
+
+        var accountUiUrl = configuration.GetValue<string>("Oluso:Urls:AccountUiUrl", "http://localhost:5173")!;
+        var accountSaasUrl = configuration.GetValue<string>("Oluso:Urls:AccountSaasUrl", "http://localhost:3101")!;
+
+        // Account UI client (SPA with PKCE) — lives in default tenant
+        // Supports both React (5173) and Angular (4201) account UIs
+        var accountUiAngularUrl = "http://localhost:4201";
         var accountUiClient = CreateClient("account-ui", "Account Management UI", requireSecret: false, requirePkce: true, allowOffline: true);
+        accountUiClient.TenantId = "default";
         accountUiClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "authorization_code" });
         accountUiClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "refresh_token" });
         accountUiClient.RedirectUris.Add(new ClientRedirectUri { RedirectUri = $"{accountUiUrl}/callback" });
         accountUiClient.RedirectUris.Add(new ClientRedirectUri { RedirectUri = $"{accountSaasUrl}/callback" });
+        accountUiClient.RedirectUris.Add(new ClientRedirectUri { RedirectUri = $"{accountUiAngularUrl}/callback" });
         accountUiClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = accountUiUrl });
+        accountUiClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = $"{accountUiUrl}/logout" });
         accountUiClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = accountSaasUrl });
+        accountUiClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = $"{accountSaasUrl}/logout" });
+        accountUiClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = accountUiAngularUrl });
+        accountUiClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = $"{accountUiAngularUrl}/logout" });
         accountUiClient.AllowedCorsOrigins.Add(new ClientCorsOrigin { Origin = accountUiUrl });
         accountUiClient.AllowedCorsOrigins.Add(new ClientCorsOrigin { Origin = accountSaasUrl });
+        accountUiClient.AllowedCorsOrigins.Add(new ClientCorsOrigin { Origin = accountUiAngularUrl });
         accountUiClient.AllowedScopes.Add(new ClientScope { Scope = "openid" });
         accountUiClient.AllowedScopes.Add(new ClientScope { Scope = "profile" });
         accountUiClient.AllowedScopes.Add(new ClientScope { Scope = "email" });
@@ -136,19 +420,40 @@ public static class SeedData
         accountUiClient.AllowedScopes.Add(new ClientScope { Scope = "offline_access" });
         dbContext.Clients.Add(accountUiClient);
 
-        // Workspace Portal client (SPA with PKCE)
-        var workspaceClient = CreateClient("workspace-portal", "Workspace Portal", requireSecret: false, requirePkce: true, allowOffline: true);
-        workspaceClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "authorization_code" });
-        workspaceClient.AllowedGrantTypes.Add(new ClientGrantType { GrantType = "refresh_token" });
-        workspaceClient.RedirectUris.Add(new ClientRedirectUri { RedirectUri = $"{workspacePortalUrl}/callback" });
-        workspaceClient.PostLogoutRedirectUris.Add(new ClientPostLogoutRedirectUri { PostLogoutRedirectUri = workspacePortalUrl });
-        workspaceClient.AllowedCorsOrigins.Add(new ClientCorsOrigin { Origin = workspacePortalUrl });
-        workspaceClient.AllowedScopes.Add(new ClientScope { Scope = "openid" });
-        workspaceClient.AllowedScopes.Add(new ClientScope { Scope = "profile" });
-        workspaceClient.AllowedScopes.Add(new ClientScope { Scope = "email" });
-        workspaceClient.AllowedScopes.Add(new ClientScope { Scope = "workspace" });
-        workspaceClient.AllowedScopes.Add(new ClientScope { Scope = "offline_access" });
-        dbContext.Clients.Add(workspaceClient);
+        await dbContext.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The ApiScope rows the Service API resolves against. Token issuance
+    /// rejects a scope with no row, so these have to exist before a client can
+    /// be granted service access — in the admin UI, ServiceApiScopeProvisioner
+    /// creates them when the Service API toggle is switched on.
+    /// </summary>
+    private static async Task SeedServiceApiScopesAsync(OlusoDbContext dbContext)
+    {
+        // Same tenant as the sample's clients (see CreateClient) — an ApiScope in
+        // another tenant is invisible to the query filter at token time.
+        var existing = await dbContext.ApiScopes
+            .Where(s => s.TenantId == PlatformConstants.TenantId && ServiceScopes.AllNames.Contains(s.Name))
+            .Select(s => s.Name)
+            .ToListAsync();
+
+        foreach (var name in ServiceScopes.AllNames.Where(n => !existing.Contains(n)))
+        {
+            var definition = ServiceScopes.Find(name);
+
+            dbContext.ApiScopes.Add(new ApiScope
+            {
+                Name = name,
+                DisplayName = definition?.DisplayName ?? "Service API access",
+                Description = definition?.Description
+                    ?? "Grants access to the machine-to-machine Service API.",
+                TenantId = PlatformConstants.TenantId,
+                Enabled = true,
+                ShowInDiscoveryDocument = false,
+                NonEditable = true
+            });
+        }
 
         await dbContext.SaveChangesAsync();
     }
@@ -159,7 +464,7 @@ public static class SeedData
         {
             ClientId = clientId,
             ClientName = clientName,
-            TenantId = "default",
+            TenantId = PlatformConstants.TenantId,
             Enabled = true,
             RequireClientSecret = requireSecret,
             RequirePkce = requirePkce,
@@ -177,13 +482,38 @@ public static class SeedData
 
     private static async Task SeedIdentityResourcesAsync(OlusoDbContext dbContext)
     {
-        if (await dbContext.IdentityResources.AnyAsync())
+        if (await dbContext.IdentityResources.AnyAsync(r => r.TenantId == "default"))
             return;
 
+        // UserClaims matter: a seeded row REPLACES the built-in defaults for that
+        // scope name, so an empty one silently releases nothing.
         dbContext.IdentityResources.AddRange(
             new IdentityResource { Name = "openid", DisplayName = "Your user identifier", Required = true, TenantId = "default" },
-            new IdentityResource { Name = "profile", DisplayName = "User profile", Description = "Your user profile information (first name, last name, etc.)", TenantId = "default" },
-            new IdentityResource { Name = "email", DisplayName = "Your email address", TenantId = "default" },
+            new IdentityResource
+            {
+                Name = "profile",
+                DisplayName = "User profile",
+                Description = "Your user profile information (first name, last name, etc.)",
+                TenantId = "default",
+                UserClaims = new List<IdentityResourceClaim>
+                {
+                    new() { Type = "name" },
+                    new() { Type = "given_name" },
+                    new() { Type = "family_name" },
+                    new() { Type = "picture" }
+                }
+            },
+            new IdentityResource
+            {
+                Name = "email",
+                DisplayName = "Your email address",
+                TenantId = "default",
+                UserClaims = new List<IdentityResourceClaim>
+                {
+                    new() { Type = "email" },
+                    new() { Type = "email_verified" }
+                }
+            },
             new IdentityResource { Name = "account", DisplayName = "Account Management", Description = "Access to manage your account settings, sessions, and connected applications", TenantId = "default" },
             new IdentityResource { Name = "workspace", DisplayName = "Workspace Portal", Description = "Access to workplace self-service features", TenantId = "default" }
         );
@@ -192,8 +522,11 @@ public static class SeedData
 
     private static async Task SeedRolesAsync(OlusoDbContext dbContext)
     {
-        if (await dbContext.Roles.AnyAsync())
+        // Check for the specific core roles (not just any role, since module roles may already exist)
+        if (await dbContext.Roles.IgnoreQueryFilters().AnyAsync(r => r.Name == "SuperAdmin"))
             return;
+
+        using var _ = dbContext.BeginSeedMode();
 
         var now = DateTime.UtcNow;
 
@@ -259,77 +592,81 @@ public static class SeedData
         };
         dbContext.Roles.Add(userRole);
 
-        // HR Admin role - managed by SuperAdmin, manages other HR roles
-        // This is the "bridge" role that SuperAdmin can assign
-        var hrAdminRole = new OlusoRole
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "HRAdmin",
-            NormalizedName = "HRADMIN",
-            DisplayName = "HR Administrator",
-            Description = "Manage HR functions, employees, departments - delegates payroll to PayrollAdmin",
-            TenantId = "default",
-            IsSystemRole = false,
-            Category = "hr",
-            ManagedByRole = "SuperAdmin", // SuperAdmin can assign HRAdmin
-            CreatedAt = now
-        };
-        dbContext.Roles.Add(hrAdminRole);
-
-        // Payroll Admin role - managed by HRAdmin
-        var payrollAdminRole = new OlusoRole
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "PayrollAdmin",
-            NormalizedName = "PAYROLLADMIN",
-            DisplayName = "Payroll Administrator",
-            Description = "Full payroll access including employee salaries",
-            TenantId = "default",
-            IsSystemRole = false,
-            Category = "hr",
-            ManagedByRole = "HRAdmin", // Only HRAdmin can assign PayrollAdmin
-            CreatedAt = now
-        };
-        dbContext.Roles.Add(payrollAdminRole);
-
-        // HR Manager role - managed by HRAdmin (can approve leave, manage team)
-        var hrManagerRole = new OlusoRole
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "HRManager",
-            NormalizedName = "HRMANAGER",
-            DisplayName = "HR Manager",
-            Description = "Approve leave requests, manage team members",
-            TenantId = "default",
-            IsSystemRole = false,
-            Category = "hr",
-            ManagedByRole = "HRAdmin",
-            CreatedAt = now
-        };
-        dbContext.Roles.Add(hrManagerRole);
-
-        // HR Viewer role - managed by HRAdmin (read-only HR access)
-        var hrViewerRole = new OlusoRole
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "HRViewer",
-            NormalizedName = "HRVIEWER",
-            DisplayName = "HR Viewer",
-            Description = "Read-only access to HR data (no salary visibility)",
-            TenantId = "default",
-            IsSystemRole = false,
-            Category = "hr",
-            ManagedByRole = "HRAdmin",
-            CreatedAt = now
-        };
-        dbContext.Roles.Add(hrViewerRole);
-
         await dbContext.SaveChangesAsync();
 
         // Add permissions to roles
-        await SeedRolePermissionsAsync(dbContext, superAdminRole, orgAdminRole, adminRole, userRole, hrAdminRole, payrollAdminRole, hrManagerRole, hrViewerRole);
+        await SeedRolePermissionsAsync(dbContext, superAdminRole, orgAdminRole, adminRole, userRole);
 
         Console.WriteLine("Seeded default roles with permissions");
+    }
+
+    /// <summary>
+    /// Re-seeds permissions for SuperAdmin, OrgAdmin, and Admin (TenantAdmin) roles
+    /// without deleting the database. Wipes their existing permission claims and re-applies.
+    /// Uncomment the call in Program.cs when you need to refresh these after code changes.
+    /// </summary>
+    public static async Task ReseedAdminRolePermissionsAsync(WebApplication app)
+    {
+        using var scope = app.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<OlusoDbContext>();
+
+        var roleNames = new[] { "SuperAdmin", "OrgAdmin", "Admin" };
+        var roles = await dbContext.Roles.IgnoreQueryFilters()
+            .Where(r => roleNames.Contains(r.Name))
+            .ToListAsync();
+
+        if (roles.Count == 0)
+        {
+            Console.WriteLine("[Reseed] No admin roles found — skipping.");
+            return;
+        }
+
+        var roleIds = roles.Select(r => r.Id).ToList();
+
+        // Remove existing permission claims for these roles
+        var existingClaims = await dbContext.RoleClaims.IgnoreQueryFilters()
+            .Where(c => roleIds.Contains(c.RoleId) && c.ClaimType == "permission")
+            .ToListAsync();
+
+        dbContext.RoleClaims.RemoveRange(existingClaims);
+        Console.WriteLine($"[Reseed] Removed {existingClaims.Count} existing permission claims.");
+
+        var now = DateTime.UtcNow;
+        void AddPermission(OlusoRole role, string permission)
+        {
+            dbContext.RoleClaims.Add(new OlusoRoleClaim
+            {
+                RoleId = role.Id,
+                ClaimType = "permission",
+                ClaimValue = permission,
+                CreatedAt = now
+            });
+        }
+
+        var superAdmin = roles.FirstOrDefault(r => r.Name == "SuperAdmin");
+        var orgAdmin = roles.FirstOrDefault(r => r.Name == "OrgAdmin");
+        var admin = roles.FirstOrDefault(r => r.Name == "Admin");
+
+        if (superAdmin != null)
+        {
+            foreach (var p in new[] { "*", "admin.access", "tenants.read", "tenants.write", "tenants.delete", "tenants.manage_settings" })
+                AddPermission(superAdmin, p);
+        }
+
+        if (orgAdmin != null)
+        {
+            foreach (var p in new[] { "admin.access", "*" })
+                AddPermission(orgAdmin, p);
+        }
+
+        if (admin != null)
+        {
+            foreach (var p in new[] { "admin.access", "*" })
+                AddPermission(admin, p);
+        }
+
+        await dbContext.SaveChangesAsync();
+        Console.WriteLine("[Reseed] Admin role permissions re-seeded successfully.");
     }
 
     private static async Task SeedRolePermissionsAsync(
@@ -337,11 +674,7 @@ public static class SeedData
         OlusoRole superAdminRole,
         OlusoRole orgAdminRole,
         OlusoRole adminRole,
-        OlusoRole userRole,
-        OlusoRole hrAdminRole,
-        OlusoRole payrollAdminRole,
-        OlusoRole hrManagerRole,
-        OlusoRole hrViewerRole)
+        OlusoRole userRole)
     {
         var now = DateTime.UtcNow;
 
@@ -357,58 +690,17 @@ public static class SeedData
             });
         }
 
-        // SuperAdmin gets ALL permissions
+        // SuperAdmin gets wildcard — same as TenantAdmin but with superAdminOnly nav visibility.
+        // No role-based bypass: RequiresExplicitGrant permissions (salary, payroll, fiscal close, etc.)
+        // must still be explicitly assigned even for SuperAdmin.
+        // Module administration permissions (hr.administration, etc.) also require explicit grant.
         var allPermissions = new[]
         {
-            // Users
-            "users.read", "users.write", "users.delete", "users.manage_roles", "users.manage_claims", "users.impersonate",
-            // Roles
-            "roles.read", "roles.write", "roles.delete",
-            // Clients
-            "clients.read", "clients.write", "clients.delete", "clients.manage_secrets",
-            // Resources
-            "resources.read", "resources.write", "resources.delete",
-            // Scopes
-            "scopes.read", "scopes.write", "scopes.delete",
-            // Identity Resources
-            "identity_resources.read", "identity_resources.write", "identity_resources.delete",
-            // Identity Providers
-            "identity_providers.read", "identity_providers.write", "identity_providers.delete",
-            // Grants
-            "grants.read", "grants.revoke",
-            // Sessions
-            "sessions.read", "sessions.revoke",
-            // Signing Keys
-            "signing_keys.read", "signing_keys.write", "signing_keys.rotate",
-            // Journeys
-            "journeys.read", "journeys.write", "journeys.delete", "journeys.publish",
-            // Webhooks
-            "webhooks.read", "webhooks.write", "webhooks.delete",
-            // Audit Logs
-            "audit_logs.read", "audit_logs.export",
-            // Settings
-            "settings.read", "settings.write",
-            // Tenants (SuperAdmin only)
-            "tenants.read", "tenants.write", "tenants.delete", "tenants.manage_settings",
-            // Organizations
-            "organizations.read", "organizations.write", "organizations.delete",
-            "organizations.manage_members", "organizations.manage_invitations", "organizations.manage_tenants",
-            // Dashboard
-            "dashboard.view",
-            // Plugins
-            "plugins.read", "plugins.write", "plugins.manage",
-            // Submissions
-            "submissions.read", "submissions.write", "submissions.delete",
-            // Telemetry
-            "telemetry.read",
-            // FIDO2 / Passkeys
-            "fido2.read", "fido2.write", "fido2.delete",
-            // LDAP
-            "ldap.read", "ldap.write",
-            // SAML
-            "saml.read", "saml.write",
-            // SCIM
-            "scim.read", "scim.write"
+            "*",
+            // Admin dashboard access
+            "admin.access",
+            // Tenants permissions (SuperAdmin needs these for tenant management)
+            "tenants.read", "tenants.write", "tenants.delete", "tenants.manage_settings"
         };
 
         foreach (var permission in allPermissions)
@@ -416,25 +708,15 @@ public static class SeedData
             AddPermission(superAdminRole, permission);
         }
 
-        // OrgAdmin gets organization and tenant management permissions
+        // OrgAdmin gets * wildcard — full access to all standard admin operations
+        // within their organization's tenants. The backend enforces org-scoping
+        // (tenant must belong to caller's org). RequiresSuperAdmin permissions
+        // (e.g., tenants.delete, platform.*) are excluded from wildcard expansion,
+        // so org admins can't perform system-level operations.
         var orgAdminPermissions = new[]
         {
-            // Organizations
-            "organizations.read", "organizations.write",
-            "organizations.manage_members", "organizations.manage_invitations", "organizations.manage_tenants",
-            // Tenants (within their organization)
-            "tenants.read", "tenants.write", "tenants.manage_settings",
-            // Dashboard
-            "dashboard.view",
-            // Users (read only at org level)
-            "users.read",
-            // Telemetry (read only)
-            "telemetry.read",
-            // Enterprise plugins (read only for org-level visibility)
-            "fido2.read",
-            "ldap.read",
-            "saml.read",
-            "scim.read"
+            "admin.access",
+            "*"
         };
 
         foreach (var permission in orgAdminPermissions)
@@ -442,62 +724,15 @@ public static class SeedData
             AddPermission(orgAdminRole, permission);
         }
 
-        // Tenant Admin gets full tenant-level permissions (no tenant/org management)
-        // NOTE: Admin does NOT get hr.payroll.salaries.* or hr.employees.view_salary
+        // Tenant Admin gets wildcard — full access to all standard admin operations.
+        // Sensitive permissions (RequiresExplicitGrant) like salary/payroll and module administration
+        // permissions are excluded from wildcard matching.
+        // Frontend nav visibility is controlled by superAdminOnly flags (e.g., "Tenants" page hidden).
         var tenantAdminPermissions = new[]
         {
-            // Users
-            "users.read", "users.write", "users.delete", "users.manage_roles", "users.manage_claims",
-            // Roles
-            "roles.read", "roles.write", "roles.delete",
-            // Clients
-            "clients.read", "clients.write", "clients.delete", "clients.manage_secrets",
-            // Resources
-            "resources.read", "resources.write", "resources.delete",
-            // Scopes
-            "scopes.read", "scopes.write", "scopes.delete",
-            // Identity Resources
-            "identity_resources.read", "identity_resources.write", "identity_resources.delete",
-            // Identity Providers
-            "identity_providers.read", "identity_providers.write", "identity_providers.delete",
-            // Grants
-            "grants.read", "grants.revoke",
-            // Sessions
-            "sessions.read", "sessions.revoke",
-            // Signing Keys
-            "signing_keys.read", "signing_keys.write", "signing_keys.rotate",
-            // Journeys
-            "journeys.read", "journeys.write", "journeys.delete", "journeys.publish",
-            // Webhooks
-            "webhooks.read", "webhooks.write", "webhooks.delete",
-            // Audit Logs
-            "audit_logs.read", "audit_logs.export",
-            // Settings
-            "settings.read", "settings.write",
-            // Dashboard
-            "dashboard.view",
-            // Submissions
-            "submissions.read", "submissions.write", "submissions.delete",
-            // Telemetry
-            "telemetry.read",
-            // FIDO2 / Passkeys
-            "fido2.read", "fido2.write", "fido2.delete",
-            // LDAP
-            "ldap.read", "ldap.write",
-            // SAML
-            "saml.read", "saml.write",
-            // SCIM
-            "scim.read", "scim.write",
-            // HR - Basic (no salary access)
-            "hr.employees.read", "hr.employees.write",
-            "hr.departments.read", "hr.departments.write",
-            "hr.positions.read", "hr.positions.write",
-            "hr.leave_policies.read",
-            "hr.approval_workflows.read",
-            "hr.org_chart.view",
-            "hr.reports.view",
-            // Payroll (view only, NO salaries)
-            "hr.payroll.view", "hr.payroll.structures.view"
+            // Admin dashboard access
+            "admin.access",
+            "*"
         };
 
         foreach (var permission in tenantAdminPermissions)
@@ -516,151 +751,58 @@ public static class SeedData
             AddPermission(userRole, permission);
         }
 
-        // HR Admin gets HR permissions EXCEPT salary/payroll sensitive data
-        // Plus HR role management permissions
-        var hrAdminPermissions = new[]
-        {
-            // Employees (no salary view)
-            "hr.employees.read", "hr.employees.write", "hr.employees.delete",
-            "hr.employees.manage_sensitive", "hr.employees.export",
-            // Departments
-            "hr.departments.read", "hr.departments.write", "hr.departments.delete",
-            // Positions
-            "hr.positions.read", "hr.positions.write", "hr.positions.delete",
-            // Leave Management
-            "hr.leave_policies.read", "hr.leave_policies.write", "hr.leave_policies.delete",
-            "hr.leave_requests.read", "hr.leave_requests.manage", "hr.leave_balances.manage",
-            // Approval Workflows
-            "hr.approval_workflows.read", "hr.approval_workflows.write", "hr.approval_workflows.delete",
-            // Expenses
-            "hr.expenses.read", "hr.expenses.write", "hr.expenses.delete", "hr.expenses.manage",
-            // Organization
-            "hr.org_chart.view", "hr.org_chart.manage",
-            // Reports (non-salary)
-            "hr.reports.view", "hr.reports.generate",
-            // Payroll (view schedules, structures - but NOT salaries)
-            "hr.payroll.view", "hr.payroll.structures.view",
-            "hr.payroll.tax.view", "hr.payroll.payslips.view",
-            // HR Role Management - HRAdmin can manage HR roles and assign them
-            "hr.roles.read", "hr.roles.write", "hr.roles.assign"
-        };
-
-        foreach (var permission in hrAdminPermissions)
-        {
-            AddPermission(hrAdminRole, permission);
-        }
-
-        // Payroll Admin gets FULL payroll access including salaries
-        var payrollAdminPermissions = new[]
-        {
-            // Full Payroll Access
-            "hr.payroll.view", "hr.payroll.process", "hr.payroll.approve",
-            "hr.payroll.structures.view", "hr.payroll.structures.manage",
-            "hr.payroll.salaries.view", "hr.payroll.salaries.manage",  // SENSITIVE!
-            "hr.payroll.tax.view", "hr.payroll.tax.manage",
-            "hr.payroll.adjustments.manage",
-            "hr.payroll.payslips.view",
-            // Basic HR read access
-            "hr.employees.read", "hr.employees.view_salary",  // Can view salaries
-            "hr.departments.read",
-            "hr.positions.read",
-            "hr.reports.view"
-        };
-
-        foreach (var permission in payrollAdminPermissions)
-        {
-            AddPermission(payrollAdminRole, permission);
-        }
-
-        // HR Manager permissions (team management, leave approvals)
-        var hrManagerPermissions = new[]
-        {
-            "hr.employees.read",
-            "hr.departments.read",
-            "hr.positions.read",
-            "hr.leave_requests.read", "hr.leave_requests.manage",
-            "hr.approval_workflows.read",
-            "hr.expenses.read", "hr.expenses.manage",
-            "hr.org_chart.view",
-            "hr.reports.view"
-        };
-
-        foreach (var permission in hrManagerPermissions)
-        {
-            AddPermission(hrManagerRole, permission);
-        }
-
-        // HR Viewer permissions (read-only, no salary)
-        var hrViewerPermissions = new[]
-        {
-            "hr.employees.read",
-            "hr.departments.read",
-            "hr.positions.read",
-            "hr.leave_policies.read",
-            "hr.leave_requests.read",
-            "hr.org_chart.view",
-            "hr.reports.view"
-        };
-
-        foreach (var permission in hrViewerPermissions)
-        {
-            AddPermission(hrViewerRole, permission);
-        }
+        // Module-specific role permissions (HRAdmin, PayrollAdmin, etc.) are now
+        // seeded by SeedModuleRolesAsync() via PermissionRegistry module role definitions.
 
         await dbContext.SaveChangesAsync();
     }
 
     private static async Task SeedUsersAsync(OlusoDbContext dbContext)
     {
-        if (await dbContext.Users.AnyAsync())
+        if (await dbContext.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == "superadmin@oluso.local"))
             return;
 
         var passwordHasher = new PasswordHasher<OlusoUser>();
-        var superAdminRole = await dbContext.Roles.FirstAsync(r => r.Name == "SuperAdmin");
-        var orgAdminRole = await dbContext.Roles.FirstAsync(r => r.Name == "OrgAdmin");
-        var adminRole = await dbContext.Roles.FirstAsync(r => r.Name == "Admin");
-        var userRole = await dbContext.Roles.FirstAsync(r => r.Name == "User");
+        var superAdminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "SuperAdmin");
+        var orgAdminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "OrgAdmin");
+        var adminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "Admin");
+        var userRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "User");
 
-        // 1. Super Admin (system-level)
-        var superAdmin = CreateUser("superadmin@oluso.local", "Super", "Admin", "Super Administrator", tenantId: null);
+        const string orgAdminOrgId = "default-org";
+        var orgAdminHomeTenantId = await dbContext.Tenants!
+            .IgnoreQueryFilters()
+            .Where(t => t.OrganizationId == orgAdminOrgId)
+            .OrderBy(t => t.Created)
+            .Select(t => t.Id)
+            .FirstAsync();
+
+        var superAdmin = CreateUser("superadmin@oluso.local", "Super", "Admin", "Super Administrator", tenantId: PlatformConstants.TenantId);
         superAdmin.PasswordHash = passwordHasher.HashPassword(superAdmin, "SuperAdmin123!");
         dbContext.Users.Add(superAdmin);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = superAdmin.Id, RoleId = superAdminRole.Id, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = superAdmin.Id, RoleId = superAdminRole.Id, TenantId = superAdmin.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
 
-        // 2. Org Admin (organization-level)
-        var orgAdmin = CreateUser("orgadmin@oluso.local", "Org", "Admin", "Organization Administrator", tenantId: null);
+        // OrgAdmin's home tenant is the first tenant of the org they own.
+        var orgAdmin = CreateUser("orgadmin@oluso.local", "Org", "Admin", "Organization Administrator", tenantId: orgAdminHomeTenantId);
         orgAdmin.PasswordHash = passwordHasher.HashPassword(orgAdmin, "OrgAdmin123!");
         dbContext.Users.Add(orgAdmin);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = orgAdmin.Id, RoleId = orgAdminRole.Id, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = orgAdmin.Id, RoleId = orgAdminRole.Id, TenantId = orgAdmin.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
 
-        // 3. Tenant Admin (tenant-level)
         var tenantAdmin = CreateUser("admin@default.local", "Tenant", "Admin", "Default Tenant Administrator", tenantId: "default");
         tenantAdmin.PasswordHash = passwordHasher.HashPassword(tenantAdmin, "TenantAdmin123!");
         dbContext.Users.Add(tenantAdmin);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = tenantAdmin.Id, RoleId = adminRole.Id, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = tenantAdmin.Id, RoleId = adminRole.Id, TenantId = adminRole.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
 
-        // 4. Test user
         var testUser = CreateUser("testuser@example.com", "Test", "User", "Test User", tenantId: "default");
         testUser.PasswordHash = passwordHasher.HashPassword(testUser, "Password123!");
         dbContext.Users.Add(testUser);
-        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = testUser.Id, RoleId = userRole.Id, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
-
-        // Organization memberships
-        dbContext.OrganizationMemberships.Add(new OrganizationMembership
-        {
-            Id = Guid.NewGuid().ToString(),
-            OrganizationId = "default-org",
-            UserId = superAdmin.Id,
-            Role = OrganizationRole.Owner,
-            JoinedAt = DateTime.UtcNow
-        });
+        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = testUser.Id, RoleId = userRole.Id, TenantId = userRole.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
 
         dbContext.OrganizationMemberships.Add(new OrganizationMembership
         {
             Id = Guid.NewGuid().ToString(),
-            OrganizationId = "default-org",
+            OrganizationId = orgAdminOrgId,
             UserId = orgAdmin.Id,
-            Role = OrganizationRole.Admin,
+            Role = OrganizationRole.Owner,
             JoinedAt = DateTime.UtcNow
         });
 
@@ -673,7 +815,44 @@ public static class SeedData
         Console.WriteLine("  Test User:    testuser@example.com / Password123!");
     }
 
-    private static OlusoUser CreateUser(string email, string firstName, string lastName, string displayName, string? tenantId)
+    /// <summary>
+    /// With test data off, the only account seeded is the platform administrator, from
+    /// configuration. Once any user holds SuperAdmin this does nothing, so the password can be
+    /// removed from configuration after the first start.
+    /// </summary>
+    private static async Task SeedPlatformAdministratorAsync(IServiceProvider services, OlusoDbContext dbContext, IConfiguration configuration)
+    {
+        var superAdminRole = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == "SuperAdmin");
+        if (await dbContext.Set<OlusoUserRole>().IgnoreQueryFilters().AnyAsync(ur => ur.RoleId == superAdminRole.Id))
+            return;
+
+        var email = configuration["Sample:SuperAdminEmail"];
+        var password = configuration["Sample:SuperAdminPassword"];
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(password))
+            throw new InvalidOperationException(
+                "Sample:SeedTestData is false and there is no platform administrator yet: set Sample:SuperAdminEmail and Sample:SuperAdminPassword for the first start.");
+
+        var admin = CreateUser(email, "Platform", "Administrator", "Platform Administrator", tenantId: PlatformConstants.TenantId);
+
+        var userManager = services.GetRequiredService<UserManager<OlusoUser>>();
+        var errors = new List<string>();
+        foreach (var validator in userManager.PasswordValidators)
+        {
+            var result = await validator.ValidateAsync(userManager, admin, password);
+            errors.AddRange(result.Errors.Select(e => e.Description));
+        }
+        if (errors.Count > 0)
+            throw new InvalidOperationException("Sample:SuperAdminPassword doesn't meet the password policy: " + string.Join(" ", errors));
+
+        admin.PasswordHash = userManager.PasswordHasher.HashPassword(admin, password);
+        dbContext.Users.Add(admin);
+        dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole { UserId = admin.Id, RoleId = superAdminRole.Id, TenantId = admin.TenantId!, AssignedAt = DateTime.UtcNow, AssignedBy = "system" });
+        await dbContext.SaveChangesAsync();
+
+        Console.WriteLine($"Seeded platform administrator: {email}");
+    }
+
+    private static OlusoUser CreateUser(string email, string firstName, string lastName, string displayName, string tenantId)
     {
         return new OlusoUser
         {

@@ -7,80 +7,56 @@ namespace Oluso.Core.Services;
 
 /// <summary>
 /// Default implementation of ITenantSettingsProvider.
-/// Reads settings from tenant configuration JSON or falls back to IConfiguration.
+/// Reads settings from TenantConfigurationSections via ITenantConfigurationService,
+/// or falls back to IConfiguration.
 /// </summary>
 public class DefaultTenantSettingsProvider : ITenantSettingsProvider
 {
     private readonly ITenantContext _tenantContext;
     private readonly IConfiguration _configuration;
+    private readonly ITenantConfigurationService _configService;
+    private readonly ITenantStore _tenantStore;
     private readonly ILogger<DefaultTenantSettingsProvider>? _logger;
 
     public DefaultTenantSettingsProvider(
         ITenantContext tenantContext,
         IConfiguration configuration,
+        ITenantConfigurationService configService,
+        ITenantStore tenantStore,
         ILogger<DefaultTenantSettingsProvider>? logger = null)
     {
+        _tenantStore = tenantStore;
         _tenantContext = tenantContext;
         _configuration = configuration;
+        _configService = configService;
         _logger = logger;
     }
 
-    public Task<T?> GetSettingsAsync<T>(CancellationToken cancellationToken = default) where T : class
+    public async Task<T?> GetSettingsAsync<T>(CancellationToken cancellationToken = default) where T : class
     {
-        // Try tenant configuration first
-        if (_tenantContext.HasTenant && !string.IsNullOrEmpty(_tenantContext.Tenant?.Configuration))
-        {
-            try
-            {
-                var tenantConfig = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                    _tenantContext.Tenant.Configuration);
+        return await GetSettingsAsync<T>(typeof(T).Name.Replace("Settings", ""), cancellationToken);
+    }
 
-                var sectionName = typeof(T).Name.Replace("Settings", "");
-                if (tenantConfig != null && tenantConfig.TryGetValue(sectionName, out var section))
-                {
-                    var result = JsonSerializer.Deserialize<T>(section.GetRawText());
-                    return Task.FromResult(result);
-                }
-            }
-            catch
-            {
-                // Fall through to configuration
-            }
+    private async Task<T?> GetSettingsAsync<T>(string sectionKey, CancellationToken cancellationToken) where T : class
+    {
+        if (_tenantContext.HasTenant && _tenantContext.TenantId != null)
+        {
+            var result = await _configService.GetSectionAsync<T>(_tenantContext.TenantId, sectionKey, cancellationToken);
+            if (result != null) return result;
         }
 
         // Fall back to IConfiguration
-        var configSection = _configuration.GetSection($"Oluso:{typeof(T).Name.Replace("Settings", "")}");
+        var configSection = _configuration.GetSection($"Oluso:{sectionKey}");
         if (configSection.Exists())
         {
-            var result = configSection.Get<T>();
-            return Task.FromResult(result);
+            return configSection.Get<T>();
         }
 
-        return Task.FromResult<T?>(null);
+        return null;
     }
 
     public Task<T?> GetValueAsync<T>(string key, T? defaultValue = default, CancellationToken cancellationToken = default)
     {
-        // Try tenant configuration first
-        if (_tenantContext.HasTenant && !string.IsNullOrEmpty(_tenantContext.Tenant?.Configuration))
-        {
-            try
-            {
-                var tenantConfig = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                    _tenantContext.Tenant.Configuration);
-
-                if (tenantConfig != null && TryGetNestedValue(tenantConfig, key, out var value))
-                {
-                    var result = JsonSerializer.Deserialize<T>(value.GetRawText());
-                    return Task.FromResult(result);
-                }
-            }
-            catch
-            {
-                // Fall through to configuration
-            }
-        }
-
         // Fall back to IConfiguration
         var configValue = _configuration.GetValue<T>($"Oluso:{key}");
         if (configValue != null)
@@ -100,73 +76,126 @@ public class DefaultTenantSettingsProvider : ITenantSettingsProvider
 
     public async Task<TenantTokenSettings> GetTokenSettingsAsync(CancellationToken cancellationToken = default)
     {
-        var settings = await GetSettingsAsync<TenantTokenSettings>(cancellationToken);
+        var settings = await GetSettingsAsync<TenantTokenSettings>("TokenSettings", cancellationToken);
         if (settings != null)
         {
             return settings;
         }
 
-        // Build from individual configuration values
+        // Build from individual configuration values.
+        //
+        // IssuerUri is intentionally read ONLY from per-tenant TenantConfigurationSections
+        // (via _configService), never from server-level Oluso:IssuerUri. This field
+        // represents a tenant-specific OVERRIDE — when populated, IssuerResolver tier 1
+        // returns it directly and skips the auto-subdomain (tier 3) and CustomDomain
+        // (tier 2) branches. Falling back to the server config here would cause every
+        // tenant to look like it has an override set to the platform host, breaking the
+        // auto-subdomain ({tenant}.{issuerHost}) feature for everyone.
+        var perTenantIssuerOverride = _tenantContext.HasTenant && _tenantContext.TenantId != null
+            ? await _configService.GetSectionAsync<TenantIssuerOverride>(_tenantContext.TenantId, "TokenSettings", cancellationToken)
+            : null;
+
         return new TenantTokenSettings
         {
             DefaultAccessTokenLifetime = await GetValueAsync("AccessTokenLifetime", 3600, cancellationToken),
             DefaultIdentityTokenLifetime = await GetValueAsync("IdTokenLifetime", 300, cancellationToken),
             DefaultRefreshTokenLifetime = await GetValueAsync("RefreshTokenLifetime", 2592000, cancellationToken),
-            IssuerUri = await GetValueAsync<string?>("IssuerUri", null, cancellationToken)
+            IssuerUri = perTenantIssuerOverride?.IssuerUri,
         };
+    }
+
+    /// <summary>
+    /// Minimal DTO used to extract just the IssuerUri override from a tenant's
+    /// TokenSettings configuration row. We don't reuse TenantTokenSettings here
+    /// because that type also carries lifetimes, which we want to populate from
+    /// IConfiguration fallbacks above — only IssuerUri must be per-tenant only.
+    /// </summary>
+    private sealed class TenantIssuerOverride
+    {
+        public string? IssuerUri { get; set; }
     }
 
     public async Task<TenantPasswordSettings> GetPasswordSettingsAsync(CancellationToken cancellationToken = default)
     {
-        // Try tenant-specific password policy first
         if (_tenantContext.HasTenant && _tenantContext.Tenant?.PasswordPolicy != null)
         {
-            var policy = _tenantContext.Tenant.PasswordPolicy;
-            return new TenantPasswordSettings
-            {
-                MinimumLength = policy.MinimumLength,
-                MaximumLength = policy.MaximumLength,
-                RequireDigit = policy.RequireDigit,
-                RequireLowercase = policy.RequireLowercase,
-                RequireUppercase = policy.RequireUppercase,
-                RequireNonAlphanumeric = policy.RequireNonAlphanumeric,
-                RequiredUniqueChars = policy.RequiredUniqueChars,
-                PasswordHistoryCount = policy.PasswordHistoryCount,
-                PasswordExpirationDays = policy.PasswordExpirationDays,
-                MaxFailedAttempts = policy.MaxFailedAttempts,
-                LockoutDurationMinutes = policy.LockoutDurationMinutes,
-                BlockCommonPasswords = policy.BlockCommonPasswords,
-                CheckBreachedPasswords = policy.CheckBreachedPasswords,
-                CustomRegexPattern = policy.CustomRegexPattern,
-                CustomRegexErrorMessage = policy.CustomRegexErrorMessage
-            };
+            return TenantPasswordSettings.FromPolicy(_tenantContext.Tenant.PasswordPolicy);
         }
 
-        // Try configuration
         var settings = await GetSettingsAsync<TenantPasswordSettings>(cancellationToken);
         return settings ?? TenantPasswordSettings.Default;
     }
 
-    public async Task<TenantBrandingSettings> GetBrandingSettingsAsync(CancellationToken cancellationToken = default)
+    public async Task<TenantPasswordSettings> GetPasswordSettingsAsync(string tenantId, CancellationToken cancellationToken = default)
     {
-        // Try tenant-specific branding first
-        if (_tenantContext.HasTenant && _tenantContext.Tenant?.Branding != null)
+        if (_tenantContext.HasTenant && string.Equals(_tenantContext.TenantId, tenantId, StringComparison.Ordinal))
         {
-            var branding = _tenantContext.Tenant.Branding;
-            return new TenantBrandingSettings
-            {
-                LogoUrl = branding.LogoUrl,
-                FaviconUrl = branding.FaviconUrl,
-                PrimaryColor = branding.PrimaryColor,
-                SecondaryColor = branding.SecondaryColor,
-                BackgroundColor = branding.BackgroundColor,
-                CustomCss = branding.CustomCss
-            };
+            return await GetPasswordSettingsAsync(cancellationToken);
         }
 
-        // Try configuration
-        var settings = await GetSettingsAsync<TenantBrandingSettings>(cancellationToken);
-        return settings ?? TenantBrandingSettings.Default;
+        var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
+        if (tenant?.PasswordPolicy != null)
+        {
+            return TenantPasswordSettings.FromPolicy(tenant.PasswordPolicy);
+        }
+
+        var sectionKey = nameof(TenantPasswordSettings).Replace("Settings", "");
+        return await _configService.GetSectionAsync<TenantPasswordSettings>(tenantId, sectionKey, cancellationToken)
+            ?? _configuration.GetSection($"Oluso:{sectionKey}").Get<TenantPasswordSettings>()
+            ?? TenantPasswordSettings.Default;
+    }
+
+    public async Task<TenantAccountEmailSettings> GetAccountEmailSettingsAsync(CancellationToken cancellationToken = default) =>
+        await GetSettingsAsync<TenantAccountEmailSettings>(TenantAccountEmailSettings.SectionKey, cancellationToken)
+        ?? new TenantAccountEmailSettings();
+
+    public async Task<TenantAccountEmailSettings> GetAccountEmailSettingsAsync(string tenantId, CancellationToken cancellationToken = default) =>
+        await _configService.GetSectionAsync<TenantAccountEmailSettings>(tenantId, TenantAccountEmailSettings.SectionKey, cancellationToken)
+        ?? _configuration.GetSection($"Oluso:{TenantAccountEmailSettings.SectionKey}").Get<TenantAccountEmailSettings>()
+        ?? new TenantAccountEmailSettings();
+
+    public async Task<TenantBrandingSettings> GetBrandingSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_tenantContext.HasTenant || _tenantContext.TenantId == null)
+        {
+            return new TenantBrandingSettings();
+        }
+
+        return await GetBrandingSettingsAsync(_tenantContext.TenantId, cancellationToken);
+    }
+
+    public async Task<TenantBrandingSettings> GetBrandingSettingsAsync(string tenantId, CancellationToken cancellationToken = default)
+    {
+        // Visual branding lives entirely in the BrandingSettings tenant-config
+        // section (admin UI writes through /api/admin/settings/branding).
+        // HideEmbedBranding still lives on the entity because it's a
+        // SuperAdmin-only platform-licensing toggle with its own write path.
+        var section = await _configService.GetSectionAsync<TenantBrandingSettings>(tenantId, "BrandingSettings", cancellationToken)
+            ?? new TenantBrandingSettings();
+
+        // HideEmbedBranding only lands on the result when reading for the
+        // currently-resolved tenant — that's the only path with the entity
+        // in scope. For cross-tenant reads (tenant-switcher list, etc.) it
+        // defaults to false, which is the correct value for end-user views.
+        if (_tenantContext.HasTenant
+            && string.Equals(_tenantContext.TenantId, tenantId, StringComparison.Ordinal))
+        {
+            section.HideEmbedBranding = _tenantContext.Tenant?.Branding?.HideEmbedBranding ?? false;
+        }
+
+        return section;
+    }
+
+    public async Task<LocaleSettings> GetLocaleSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync<LocaleSettings>(cancellationToken);
+        return settings ?? LocaleSettings.Default;
+    }
+
+    public async Task<WorkspaceAppsSettings> GetWorkspaceAppsSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync<WorkspaceAppsSettings>(cancellationToken);
+        return settings ?? WorkspaceAppsSettings.Default;
     }
 
     public async Task<TenantProtocolSettings> GetProtocolSettingsAsync(CancellationToken cancellationToken = default)
@@ -187,12 +216,15 @@ public class DefaultTenantSettingsProvider : ITenantSettingsProvider
                 RequirePushedAuthorizationRequests = protocol.RequirePushedAuthorizationRequests,
                 RequirePkce = protocol.RequirePkce,
                 AllowPlainPkce = protocol.AllowPlainPkce,
+                EnforceOAuth21 = protocol.EnforceOAuth21,
                 RequireDPoP = protocol.RequireDPoP,
                 ClaimsParameterSupported = protocol.ClaimsParameterSupported,
                 RequestParameterSupported = protocol.RequestParameterSupported,
                 RequestUriParameterSupported = protocol.RequestUriParameterSupported,
                 FrontchannelLogoutSupported = protocol.FrontchannelLogoutSupported,
                 BackchannelLogoutSupported = protocol.BackchannelLogoutSupported,
+                PrefixScopeSuffixMaxLength = protocol.PrefixScopeSuffixMaxLength,
+                RefreshImplyingScopes = ParseJsonArray(protocol.RefreshImplyingScopesJson),
                 // Dynamic Client Registration (RFC 7591)
                 EnableDynamicClientRegistration = protocol.EnableDynamicClientRegistration,
                 AllowOpenDynamicRegistration = protocol.AllowOpenDynamicRegistration,
@@ -223,27 +255,5 @@ public class DefaultTenantSettingsProvider : ITenantSettingsProvider
         {
             return null;
         }
-    }
-
-    private static bool TryGetNestedValue(
-        Dictionary<string, JsonElement> config,
-        string key,
-        out JsonElement value)
-    {
-        var parts = key.Split(':');
-        var current = config;
-
-        for (var i = 0; i < parts.Length - 1; i++)
-        {
-            if (!current.TryGetValue(parts[i], out var element) ||
-                element.ValueKind != JsonValueKind.Object)
-            {
-                value = default;
-                return false;
-            }
-            current = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(element.GetRawText())!;
-        }
-
-        return current.TryGetValue(parts[^1], out value);
     }
 }

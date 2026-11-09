@@ -60,14 +60,22 @@ builder.Services.AddAuthentication(options =>
     options.CallbackPath = "/signin-oidc";
     options.SignedOutCallbackPath = "/signout-callback-oidc";
 
+    // PAR (RFC 9126): ASP.NET Core 10 uses it automatically when discovery
+    // advertises pushed_authorization_request_endpoint. No manual code needed.
+    // To require PAR (reject non-PAR flows):
+    //   options.PushedAuthorizationBehavior = PushedAuthorizationBehavior.Require;
+
     // Events for debugging
     options.Events = new OpenIdConnectEvents
     {
+        OnPushAuthorization = context =>
+        {
+            Console.WriteLine($"[PAR] Native handler pushing to {context.Options.Authority}/connect/par");
+            return Task.CompletedTask;
+        },
         OnAuthenticationFailed = context =>
         {
             Console.WriteLine($"Authentication failed: {context.Exception.Message}");
-            Console.WriteLine($"Exception type: {context.Exception.GetType().FullName}");
-            Console.WriteLine($"Stack trace:\n{context.Exception.StackTrace}");
             if (context.Exception.InnerException != null)
             {
                 Console.WriteLine($"Inner exception: {context.Exception.InnerException.Message}");
@@ -75,37 +83,8 @@ builder.Services.AddAuthentication(options =>
             }
             return Task.CompletedTask;
         },
-        OnTokenValidated = context =>
-        {
-            Console.WriteLine($"Token validated for: {context.Principal?.Identity?.Name}");
-            return Task.CompletedTask;
-        },
-        OnRedirectToIdentityProvider = context =>
-        {
-            Console.WriteLine($"Redirecting to: {context.ProtocolMessage.CreateAuthenticationRequestUrl()}");
-            return Task.CompletedTask;
-        },
         OnTokenResponseReceived = context =>
         {
-            Console.WriteLine($"Token response received:");
-            Console.WriteLine($"  AccessToken length: {context.TokenEndpointResponse?.AccessToken?.Length ?? 0}");
-            Console.WriteLine($"  IdToken length: {context.TokenEndpointResponse?.IdToken?.Length ?? 0}");
-            var idToken = context.TokenEndpointResponse?.IdToken;
-            var dotCount = idToken?.Count(c => c == '.') ?? 0;
-            Console.WriteLine($"  IdToken dots: {dotCount}");
-            Console.WriteLine($"  IdToken first 200 chars: {(idToken != null ? idToken.Substring(0, Math.Min(200, idToken.Length)) : "null")}");
-            if (idToken != null && idToken.Length > 200)
-            {
-                Console.WriteLine($"  IdToken last 100 chars: ...{idToken.Substring(idToken.Length - 100)}");
-            }
-            Console.WriteLine($"  Error: {context.TokenEndpointResponse?.Error ?? "none"}");
-
-            // Also check ProtocolMessage.IdToken - this is what the handler uses for validation
-            var pmIdToken = context.ProtocolMessage?.IdToken;
-            Console.WriteLine($"  ProtocolMessage.IdToken: {(pmIdToken != null ? $"length={pmIdToken.Length}, dots={pmIdToken.Count(c => c == '.')}" : "null")}");
-
-            // The OpenIdConnect handler expects the id_token to be in ProtocolMessage for validation
-            // In authorization code flow, we need to copy it from the token response
             if (context.TokenEndpointResponse?.IdToken != null && context.ProtocolMessage != null)
             {
                 if (string.IsNullOrEmpty(context.ProtocolMessage.IdToken))
@@ -115,36 +94,6 @@ builder.Services.AddAuthentication(options =>
                 }
             }
 
-            return Task.CompletedTask;
-        },
-        OnMessageReceived = context =>
-        {
-            if (context.ProtocolMessage != null)
-            {
-                var msg = context.ProtocolMessage;
-                Console.WriteLine($"Message received:");
-                Console.WriteLine($"  Code: {(msg.Code != null ? msg.Code.Substring(0, Math.Min(10, msg.Code.Length)) : "null")}...");
-                Console.WriteLine($"  IdToken in message: {(msg.IdToken != null ? $"length={msg.IdToken.Length}, first50={msg.IdToken.Substring(0, Math.Min(50, msg.IdToken.Length))}" : "null")}");
-                Console.WriteLine($"  AccessToken in message: {(msg.AccessToken != null ? $"length={msg.AccessToken.Length}" : "null")}");
-                Console.WriteLine($"  Error: {msg.Error ?? "none"}");
-            }
-            return Task.CompletedTask;
-        },
-        OnAuthorizationCodeReceived = context =>
-        {
-            Console.WriteLine($"Authorization code received: {context.TokenEndpointRequest?.Code?[..Math.Min(10, context.TokenEndpointRequest?.Code?.Length ?? 0)] ?? "null"}...");
-            return Task.CompletedTask;
-        },
-        OnUserInformationReceived = context =>
-        {
-            Console.WriteLine($"User info received: {context.User?.RootElement.ToString()?[..Math.Min(200, context.User?.RootElement.ToString()?.Length ?? 0)] ?? "null"}");
-            return Task.CompletedTask;
-        },
-        OnRemoteFailure = context =>
-        {
-            Console.WriteLine($"Remote failure: {context.Failure?.Message}");
-            Console.WriteLine($"Remote failure type: {context.Failure?.GetType().FullName}");
-            Console.WriteLine($"Remote failure stack:\n{context.Failure?.StackTrace}");
             return Task.CompletedTask;
         }
     };

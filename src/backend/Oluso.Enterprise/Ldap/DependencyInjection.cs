@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Oluso.Core.Authorization;
+using Oluso.Core.Events;
 using Oluso.Core.Licensing;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
@@ -17,6 +19,7 @@ public static class DependencyInjection
 {
     /// <summary>
     /// Adds LDAP services to the service collection.
+    /// Authentication uses per-tenant IdentityProvider configuration.
     /// This is a licensed add-on feature.
     /// </summary>
     public static IServiceCollection AddLdap(
@@ -28,6 +31,7 @@ public static class DependencyInjection
 
     /// <summary>
     /// Adds LDAP services with custom configuration.
+    /// Authentication uses per-tenant IdentityProvider configuration.
     /// This is a licensed add-on feature.
     /// </summary>
     public static IServiceCollection AddLdap(
@@ -38,22 +42,32 @@ public static class DependencyInjection
         // Validate license
         ValidateLdapLicense(services);
 
-        // Bind configuration
+        services.AddSingleton<IWebhookEventProvider, LdapWebhookEventProvider>();
+
+        PermissionRegistry.Instance.RegisterPermissions(new[]
+        {
+            new PermissionDefinition("ldap.read", "View LDAP settings", "LDAP", "View LDAP server configuration"),
+            new PermissionDefinition("ldap.write", "Manage LDAP settings", "LDAP", "Configure LDAP server settings"),
+        });
+
+        // Bind configuration (still used for user sync, group mapping, etc.)
         services.Configure<LdapOptions>(configuration.GetSection(LdapOptions.SectionName));
         services.PostConfigure(configure);
 
-        // Register core services
+        // Register core services for user sync and group mapping
         services.AddSingleton<ILdapConnectionPool, LdapConnectionPool>();
         services.AddScoped<ILdapAuthenticator, LdapAuthenticator>();
         services.AddScoped<ILdapGroupMapper, LdapGroupMapper>();
         services.AddScoped<ILdapUserSync, LdapUserSync>();
 
         // Register direct identity provider for unified login page
+        // This uses per-tenant IdentityProvider configuration for authentication
         services.AddScoped<IDirectIdentityProvider, LdapExternalIdentityProvider>();
 
         // Register journey step handler and its type configuration
         services.AddScoped<LdapStepHandler>();
         services.AddSingleton<IConfigureStepHandlers, LdapStepHandlerConfiguration>();
+        services.AddJourneyStepFormDescribers(typeof(LdapStepHandler).Assembly);
 
         return services;
     }
@@ -92,15 +106,19 @@ public static class DependencyInjection
             optionsBuilder.Apply(options);
         });
 
-        // Register core services
+        // Register core services for user sync and group mapping
         services.AddSingleton<ILdapConnectionPool, LdapConnectionPool>();
         services.AddScoped<ILdapAuthenticator, LdapAuthenticator>();
         services.AddScoped<ILdapGroupMapper, LdapGroupMapper>();
         services.AddScoped<ILdapUserSync, LdapUserSync>();
+
+        // Register direct identity provider for unified login page
+        // This uses per-tenant IdentityProvider configuration for authentication
         services.AddScoped<IDirectIdentityProvider, LdapExternalIdentityProvider>();
 
         // Register journey step handler
         services.AddScoped<LdapStepHandler>();
+        services.AddJourneyStepFormDescribers(typeof(LdapStepHandler).Assembly);
 
         return services;
     }
@@ -366,79 +384,13 @@ public class LdapStepHandlerConfiguration : IConfigureStepHandlers
         registry.Register<LdapStepHandler>("ldap", builder =>
         {
             builder
+                .WithDisplayName("LDAP / Active Directory")
                 .WithDescription("Authenticate users against an LDAP/Active Directory server")
                 .InCategory("Authentication")
+                .WithIcon("building-office")
                 .FromModule("Oluso.Enterprise.Ldap")
                 .RequiresFeature("LdapServer:enabled");
         });
     }
 }
 
-/// <summary>
-/// Configuration schema for LDAP step (for AdminUI)
-/// Uses x-enumSource for dynamic LDAP provider selection
-/// </summary>
-public static class LdapStepConfigSchema
-{
-    public const string JsonSchema = """
-    {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "x-optionsEndpoint": "/api/IdentityProviders/options",
-      "properties": {
-        "ldapProvider": {
-          "type": "string",
-          "title": "LDAP Provider",
-          "description": "Select a configured LDAP provider to use for authentication",
-          "x-control": "select",
-          "x-enumSource": {
-            "endpoint": "/api/IdentityProviders/options",
-            "path": "ldapProviders",
-            "valueField": "value",
-            "labelField": "label"
-          }
-        },
-        "server": {
-          "type": "string",
-          "title": "LDAP Server Override",
-          "description": "Override LDAP server hostname (leave empty to use provider settings)"
-        },
-        "baseDn": {
-          "type": "string",
-          "title": "Base DN Override",
-          "description": "Override base distinguished name (leave empty to use provider settings)"
-        },
-        "userSearchFilter": {
-          "type": "string",
-          "title": "User Search Filter",
-          "description": "LDAP filter for finding users (e.g., (sAMAccountName={0}))",
-          "default": "(sAMAccountName={0})"
-        },
-        "bindDn": {
-          "type": "string",
-          "title": "Bind DN",
-          "description": "Service account DN for LDAP binding",
-          "x-control": "secret-input"
-        },
-        "useSsl": {
-          "type": "boolean",
-          "title": "Use SSL/TLS",
-          "description": "Connect using SSL/TLS (LDAPS)",
-          "default": false
-        },
-        "allowPasswordChange": {
-          "type": "boolean",
-          "title": "Allow Password Change",
-          "description": "Allow users to change their LDAP password",
-          "default": false
-        },
-        "syncGroups": {
-          "type": "boolean",
-          "title": "Sync Groups",
-          "description": "Synchronize LDAP groups as claims",
-          "default": true
-        }
-      }
-    }
-    """;
-}

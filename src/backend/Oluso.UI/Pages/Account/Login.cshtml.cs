@@ -2,26 +2,34 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Oluso.Authentication.OrganizationSignIn;
 using Oluso.Core.Authentication;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Oluso.UI.ViewModels;
+using Microsoft.AspNetCore.RateLimiting;
+using Oluso.Core.Security;
 
 namespace Oluso.UI.Pages.Account;
 
 /// <summary>
 /// Standalone login page for non-journey authentication flows
 /// </summary>
+[EnableRateLimiting(SignInRateLimitPolicies.SignIn)]
 public class LoginModel : PageModel
 {
     private readonly IOlusoUserService _userService;
     private readonly IProtocolStateStore _protocolStateStore;
     private readonly ITenantContext? _tenantContext;
     private readonly IAuthenticationMethodRegistry? _authMethodRegistry;
+    private readonly IClientStore? _clientStore;
+    private readonly ISignInAuditor? _signInAuditor;
+    private readonly IOrganizationSignInService? _organizationSignIn;
     private readonly ILogger<LoginModel> _logger;
 
     public LoginModel(
@@ -29,13 +37,19 @@ public class LoginModel : PageModel
         IProtocolStateStore protocolStateStore,
         ILogger<LoginModel> logger,
         ITenantContext? tenantContext = null,
-        IAuthenticationMethodRegistry? authMethodRegistry = null)
+        IAuthenticationMethodRegistry? authMethodRegistry = null,
+        IClientStore? clientStore = null,
+        ISignInAuditor? signInAuditor = null,
+        IOrganizationSignInService? organizationSignIn = null)
     {
         _userService = userService;
         _protocolStateStore = protocolStateStore;
         _tenantContext = tenantContext;
         _authMethodRegistry = authMethodRegistry;
+        _clientStore = clientStore;
         _logger = logger;
+        _signInAuditor = signInAuditor;
+        _organizationSignIn = organizationSignIn;
     }
 
     [BindProperty]
@@ -47,23 +61,81 @@ public class LoginModel : PageModel
     [BindProperty(SupportsGet = true)]
     public string? LoginHint { get; set; }
 
+    /// <summary>
+    /// Error string passed in via <c>?error=...</c> on the URL. Bound on GET
+    /// only, so post-back error messages set inside <c>OnPostAsync</c>
+    /// (invalid credentials, locked account, etc.) still take precedence
+    /// after they overwrite the property. The view reads this directly,
+    /// which is why it has to be bound here rather than just stashed in
+    /// <c>TempData</c> — flow-control redirects from <c>ExternalCallback</c>,
+    /// <c>Register</c>, etc. land on this page with the error in the query
+    /// string, and were silently dropping it before this binding.
+    /// </summary>
+    [BindProperty(SupportsGet = true, Name = "error")]
     public string? ErrorMessage { get; set; }
     public Dictionary<string, string> ValidationErrors { get; set; } = new();
+
+    /// <summary>Set when the credentials matched accounts in more than one organization.</summary>
+    public List<OrganizationOption>? AvailableOrganizations { get; set; }
+
+    private const string PendingPasswordKey = "login_pending_password";
+    public bool EnableLocalLogin { get; set; } = true;
     public bool EnableLocalRegistration { get; set; } = true;
     public IList<ExternalProviderViewModel>? ExternalProviders { get; set; }
     public IList<DirectLoginProviderViewModel>? DirectLoginProviders { get; set; }
-    public JourneyUiConfiguration? UiConfig { get; set; }
 
     /// <summary>
-    /// Available passwordless authentication methods (passkey, etc.) discovered via registry.
-    /// Each provider specifies its own LoginUrl for handling the authentication flow.
+    /// "Sign in with your organisation" entry point; set only on the platform host
+    /// when the option is enabled.
     /// </summary>
-    public IEnumerable<IAuthenticationMethodProvider> PasswordlessProviders =>
-        _authMethodRegistry?.GetAvailableLoginProviders()
-            .Where(p => p.Category == AuthenticationMethodCategories.Passwordless) ?? [];
+    public string? OrgSignInUrl { get; set; }
+    public JourneyUiConfiguration? UiConfig { get; set; }
+
+    // Tenant-level legal links. The standalone login footer renders these only
+    // when the tenant has set them — no platform fallback, since on a
+    // multi-org service the Terms/Privacy belong to the org, not us.
+    public string? TermsUrl { get; set; }
+    public string? PrivacyUrl { get; set; }
+
+    /// <summary>
+    /// Available passwordless authentication methods (passkey, etc.) discovered via registry,
+    /// filtered by tenant policy. The platform's Fido2 provider can be configured globally
+    /// but each tenant can opt out via <c>Tenant.EnablePasskey</c> — when false, passkey
+    /// (provider id "passkey") is hidden from the login page even if the runtime supports it.
+    /// </summary>
+    public IEnumerable<IAuthenticationMethodProvider> PasswordlessProviders
+    {
+        get
+        {
+            var providers = _authMethodRegistry?.GetAvailableLoginProviders()
+                .Where(p => p.Category == AuthenticationMethodCategories.Passwordless)
+                ?? [];
+
+            if (_tenantContext?.Tenant?.EnablePasskey == false)
+            {
+                providers = providers.Where(p => !string.Equals(p.Id, "passkey", StringComparison.OrdinalIgnoreCase));
+            }
+
+            return providers;
+        }
+    }
 
     public async Task<IActionResult> OnGetAsync()
     {
+        // /Account/Login is the standalone-mode UI for an *active protocol
+        // flow* (OAuth/OIDC authorize, SAML, etc.) — never a directly
+        // navigable page. If there's no live protocol state behind the
+        // ReturnUrl, return 404 so the page is invisible to drive-by
+        // traffic. Authenticated users still get the redirect-out path
+        // below in case they followed a stale link.
+        if (User.Identity?.IsAuthenticated != true && !await HasActiveProtocolFlowAsync())
+        {
+            _logger.LogWarning(
+                "Direct access to /Account/Login rejected (no protocol flow in flight). ReturnUrl={ReturnUrl}",
+                ReturnUrl);
+            return NotFound();
+        }
+
         // Check if user is already authenticated - redirect immediately
         if (User.Identity?.IsAuthenticated == true)
         {
@@ -83,15 +155,76 @@ public class LoginModel : PageModel
             Input.Username = LoginHint;
         }
 
+        // Resolve EnableLocalLogin from tenant + client settings
+        await ResolveEnableLocalLoginAsync();
+
+        // Set registration availability from tenant settings
+        EnableLocalRegistration = _tenantContext?.Tenant?.AllowSelfRegistration ?? true;
+
+        // Tenant legal links for the footer (no-op when unset)
+        BindTenantLegalLinks();
+
         // Load external authentication schemes
         await LoadExternalProvidersAsync();
+        await ResolveOrgSignInUrlAsync();
+
+        // domain_hint auto-redirect: SSO-driven sign-ins land here in
+        // ui_mode=standalone with the tenant's IdP scheme as domain_hint.
+        // If it matches an enabled provider, skip the picker and go straight
+        // to the challenge — mirrors what ExternalLoginStepHandler does in
+        // the journey path.
+        var domainHint = Request.Query["domain_hint"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(domainHint) && ExternalProviders is not null)
+        {
+            var matched = ExternalProviders.FirstOrDefault(p =>
+                string.Equals(p.AuthenticationScheme, domainHint, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p.DisplayName, domainHint, StringComparison.OrdinalIgnoreCase));
+            if (matched is not null)
+            {
+                _logger.LogInformation(
+                    "domain_hint '{Hint}' matched provider '{Scheme}', auto-redirecting",
+                    domainHint, matched.AuthenticationScheme);
+                return OnPostExternalLogin(matched.AuthenticationScheme, ReturnUrl, matched.ProviderType);
+            }
+            _logger.LogDebug(
+                "domain_hint '{Hint}' did not match any configured provider, rendering picker",
+                domainHint);
+        }
 
         return Page();
     }
 
     public async Task<IActionResult> OnPostAsync()
     {
+        // Resolve EnableLocalLogin from tenant + client settings
+        await ResolveEnableLocalLoginAsync();
+
+        // Set registration availability from tenant settings (needed for re-render)
+        EnableLocalRegistration = _tenantContext?.Tenant?.AllowSelfRegistration ?? true;
+
+        // Tenant legal links for the footer (needed for error re-render)
+        BindTenantLegalLinks();
+
         await LoadExternalProvidersAsync();
+        await ResolveOrgSignInUrlAsync();
+
+        // Block local login if disabled at tenant or client level
+        if (!EnableLocalLogin)
+        {
+            _logger.LogWarning("Local login attempt blocked — local login is disabled");
+            ErrorMessage = "Local login is not available. Please use an external identity provider.";
+            return Page();
+        }
+
+        // Held server-side across the organization prompt so it never renders
+        // into the page as a hidden field.
+        if (string.IsNullOrEmpty(Input.Password)
+            && !string.IsNullOrWhiteSpace(Input.OrganizationSlug)
+            && TempData.TryGetValue(PendingPasswordKey, out var carried)
+            && carried is string carriedPassword)
+        {
+            Input.Password = carriedPassword;
+        }
 
         // Validate input
         if (string.IsNullOrWhiteSpace(Input.Username))
@@ -119,19 +252,30 @@ public class LoginModel : PageModel
             _logger.LogDebug("Using tenant context for login: {TenantId}", tenantId);
         }
 
+        // A chosen organization becomes the same email@slug qualifier a user can
+        // type, so both routes share one code path.
+        var loginIdentifier = string.IsNullOrWhiteSpace(Input.OrganizationSlug)
+            ? Input.Username!
+            : $"{Input.Username}@{Input.OrganizationSlug.Trim()}";
+
         // Authenticate user
-        var result = await _userService.ValidateCredentialsAsync(Input.Username!, Input.Password!, tenantId);
+        var result = await _userService.ValidateCredentialsAsync(loginIdentifier, Input.Password!, tenantId);
 
         if (!result.Succeeded)
         {
             _logger.LogWarning("Login failed for user {Username}: {Error}", Input.Username, result.Error);
 
-            if (result.RequiresTenantQualifier)
+            if (result.PasswordExpired && await BeginExpiredPasswordChangeAsync(result.User!) is { } changePassword)
             {
-                // User has accounts in multiple tenants - guide them to use tenant-specific URL
-                _logger.LogWarning("Multiple accounts found for {Username} across tenants", Input.Username);
-                ErrorMessage = "Multiple accounts found with this email. Please access via your organization's login URL.";
-                // Could also show available tenants: result.AvailableTenants
+                return changePassword;
+            }
+
+            if (result.RequiresOrganizationChoice)
+            {
+                _logger.LogInformation("Multiple accounts matched; prompting for organization");
+                AvailableOrganizations = result.AvailableOrganizations;
+                TempData[PendingPasswordKey] = Input.Password;
+                return Page();
             }
             else if (result.IsLockedOut)
             {
@@ -139,7 +283,18 @@ public class LoginModel : PageModel
             }
             else
             {
-                ErrorMessage = result.Error ?? "Invalid username or password";
+                ErrorMessage = result.ErrorDescription ?? "Invalid username or password";
+            }
+
+            if (_signInAuditor != null)
+            {
+                await _signInAuditor.RecordFailureAsync(new SignInFailureAudit
+                {
+                    Username = loginIdentifier,
+                    FailureReason = result.IsLockedOut ? "locked_out" : (result.Error ?? "invalid_credentials"),
+                    TenantId = tenantId,
+                    ReturnUrl = ReturnUrl
+                });
             }
 
             return Page();
@@ -150,6 +305,19 @@ public class LoginModel : PageModel
 
         // Sign in the user
         await SignInUserAsync(userId, Input.RememberMe);
+        await _userService.RecordLoginAsync(userId);
+
+        if (_signInAuditor != null)
+        {
+            await _signInAuditor.RecordSuccessAsync(new SignInAudit
+            {
+                SubjectId = userId,
+                Username = result.User.UserName ?? result.User.Email ?? loginIdentifier,
+                TenantId = result.User.TenantId ?? tenantId,
+                AuthenticationMethod = "pwd",
+                ReturnUrl = ReturnUrl
+            });
+        }
 
         // Handle return URL - redirect back to callback (cookie is now set)
         if (!string.IsNullOrEmpty(ReturnUrl) && IsAllowedReturnUrl(ReturnUrl))
@@ -159,6 +327,25 @@ public class LoginModel : PageModel
 
         // Default: redirect to root
         return Redirect("/");
+    }
+
+    /// <summary>
+    /// The password was right but has expired: no session is issued. Hands the verified account
+    /// to the reset-password page (server-side, via TempData) with a fresh reset token, so the
+    /// user sets a new password and then signs in with it to resume <see cref="ReturnUrl"/>.
+    /// Null when no reset token can be issued, leaving the expired-password error on this page.
+    /// </summary>
+    private async Task<IActionResult?> BeginExpiredPasswordChangeAsync(ValidatedUser user)
+    {
+        var token = await _userService.GeneratePasswordResetTokenAsync(user.Id);
+        if (string.IsNullOrEmpty(token))
+        {
+            return null;
+        }
+
+        _logger.LogInformation("Password expired for user {UserId}; redirecting to change it before sign-in", user.Id);
+        ExpiredPasswordTicket.Store(TempData, new ExpiredPasswordTicket(user.Id, token, Input.Username?.Trim()));
+        return RedirectToPage("/Account/ResetPassword", new { expired = true, returnUrl = ReturnUrl });
     }
 
     public IActionResult OnPostExternalLogin(string provider, string? returnUrl, string? providerType)
@@ -185,12 +372,16 @@ public class LoginModel : PageModel
 
         var claims = (await _userService.GetClaimsAsync(userId)).ToList();
 
-        // Add tenant_id claim if in a tenant context (required for tenant-scoped cookie validation)
-        if (_tenantContext?.HasTenant == true && !string.IsNullOrEmpty(_tenantContext.TenantId))
+        // Set tenant_id ONLY from the user's home tenant. System-level users
+        // (SuperAdmin/OrgAdmin with user.TenantId=null) get no tenant_id claim
+        // — they must use X-Tenant-Id header to operate on a specific tenant.
+        // Falling back to the URL-resolved tenant here leaks the platform host
+        // into their JWT and causes the middleware's allowed_tenants gate to
+        // wrongly evaluate against the platform tenant.
+        if (!string.IsNullOrEmpty(user.TenantId))
         {
-            // Remove any existing tenant_id claim to avoid duplicates
             claims.RemoveAll(c => c.Type == "tenant_id");
-            claims.Add(new System.Security.Claims.Claim("tenant_id", _tenantContext.TenantId));
+            claims.Add(new System.Security.Claims.Claim("tenant_id", user.TenantId));
         }
 
         var identity = new System.Security.Claims.ClaimsIdentity(claims, "Oluso");
@@ -259,6 +450,66 @@ public class LoginModel : PageModel
         DirectLoginProviders = new List<DirectLoginProviderViewModel>();
     }
 
+    private async Task ResolveOrgSignInUrlAsync()
+    {
+        if (_organizationSignIn == null) return;
+        OrgSignInUrl = await _organizationSignIn.GetEntryUrlAsync(HttpContext, ReturnUrl, HttpContext.RequestAborted);
+    }
+
+    private async Task ResolveEnableLocalLoginAsync()
+    {
+        // Start with tenant-level setting
+        var enableLocalLogin = _tenantContext?.Tenant?.EnableLocalLogin ?? true;
+
+        // Try to also apply client-level setting from the protocol state in ReturnUrl
+        if (enableLocalLogin && !string.IsNullOrEmpty(ReturnUrl) && _clientStore != null)
+        {
+            try
+            {
+                var correlationId = ExtractCorrelationId(ReturnUrl);
+                if (!string.IsNullOrEmpty(correlationId))
+                {
+                    var state = await _protocolStateStore.GetAsync(correlationId);
+                    if (state != null && !string.IsNullOrEmpty(state.ClientId))
+                    {
+                        var client = await _clientStore.FindClientByIdAsync(state.ClientId);
+                        if (client != null)
+                        {
+                            enableLocalLogin = client.EnableLocalLogin;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not resolve client EnableLocalLogin from ReturnUrl");
+            }
+        }
+
+        EnableLocalLogin = enableLocalLogin;
+    }
+
+    private static string? ExtractCorrelationId(string returnUrl)
+    {
+        // ReturnUrl is a callback URL like /oauth/authorize/callback?correlation_id=<value>
+        var queryStart = returnUrl.IndexOf('?');
+        if (queryStart < 0) return null;
+
+        var query = QueryHelpers.ParseQuery(returnUrl[queryStart..]);
+        return query.TryGetValue("correlation_id", out var value) ? value.ToString() : null;
+    }
+
+    private void BindTenantLegalLinks()
+    {
+        var tenant = _tenantContext?.Tenant;
+        if (tenant == null) return;
+        TermsUrl = tenant.TermsOfServiceUrl;
+        PrivacyUrl = tenant.PrivacyPolicyUrl;
+    }
+
+    private Task<bool> HasActiveProtocolFlowAsync() =>
+        AuthFlowGate.HasActiveFlowAsync(_protocolStateStore, ReturnUrl);
+
     private bool IsAllowedReturnUrl(string url)
     {
         // Allow relative URLs
@@ -283,5 +534,7 @@ public class LoginInputModel
 {
     public string? Username { get; set; }
     public string? Password { get; set; }
+
+    public string? OrganizationSlug { get; set; }
     public bool RememberMe { get; set; }
 }

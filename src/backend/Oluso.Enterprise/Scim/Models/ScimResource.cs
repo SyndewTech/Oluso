@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Oluso.Enterprise.Scim.Models;
@@ -18,6 +19,14 @@ public abstract class ScimResource
 
     [JsonPropertyName("meta")]
     public ScimMeta? Meta { get; set; }
+
+    /// <summary>
+    /// Attributes not modelled above, chiefly schema extensions such as the
+    /// enterprise user extension keyed by its URN. Kept so inbound attribute
+    /// mappings can read them and responses can echo them.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
 }
 
 /// <summary>
@@ -81,8 +90,11 @@ public class ScimUser : ScimResource
     [JsonPropertyName("timezone")]
     public string? Timezone { get; set; }
 
+    // Nullable so we can distinguish "omitted" from "false": on create an
+    // omitted value defaults to active=true (RFC 7643), but on PUT an omitted
+    // value must leave the current state unchanged rather than reactivating.
     [JsonPropertyName("active")]
-    public bool Active { get; set; } = true;
+    public bool? Active { get; set; }
 
     [JsonPropertyName("password")]
     public string? Password { get; set; }

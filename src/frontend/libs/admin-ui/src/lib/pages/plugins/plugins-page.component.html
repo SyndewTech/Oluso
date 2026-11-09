@@ -1,0 +1,534 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">WASM Plugins</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Manage custom WASM plugins for user journey steps
+      </p>
+    </div>
+    <ui-button (clicked)="openUploadModal()">
+      <ui-icon name="cloud-upload" class="h-5 w-5 mr-2" />
+      Upload Plugin
+    </ui-button>
+  </div>
+
+  <!-- Error Alert -->
+  @if (error()) {
+    <div class="rounded-md bg-red-50 p-4">
+      <div class="flex">
+        <ui-icon name="x-circle" class="h-5 w-5 text-red-400" />
+        <div class="ml-3">
+          <p class="text-sm text-red-700">{{ error() }}</p>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Plugins Table -->
+  <ui-card [padding]="false">
+    @if (loading()) {
+      <div class="flex items-center justify-center h-64">
+        <div class="text-gray-500">Loading...</div>
+      </div>
+    } @else if (plugins().length === 0) {
+      <div class="text-center py-12">
+        <ui-icon name="puzzle" class="mx-auto h-12 w-12 text-gray-400" />
+        <h3 class="mt-2 text-sm font-medium text-gray-900">No plugins</h3>
+        <p class="mt-1 text-sm text-gray-500">Get started by uploading a WASM plugin.</p>
+        <div class="mt-6">
+          <ui-button (clicked)="openUploadModal()">
+            <ui-icon name="cloud-upload" class="h-5 w-5 mr-2" />
+            Upload Plugin
+          </ui-button>
+        </div>
+      </div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plugin</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Scope</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Version</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            @for (plugin of plugins(); track plugin.name) {
+              <tr class="hover:bg-gray-50">
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="flex items-center">
+                    <ui-icon name="puzzle" class="h-5 w-5 text-primary-500 flex-shrink-0" />
+                    <div class="ml-3">
+                      <div class="text-sm font-medium text-gray-900">{{ plugin.displayName }}</div>
+                      <div class="text-sm text-gray-500">{{ plugin.name }}</div>
+                    </div>
+                  </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <span [class]="'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ' + (plugin.isGlobal ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800')">
+                    {{ plugin.isGlobal ? 'Global' : 'Tenant' }}
+                  </span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ plugin.version || '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatBytes(plugin.sizeBytes) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  @if (plugin.isLoaded) {
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Loaded
+                    </span>
+                  } @else {
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      Not Loaded
+                    </span>
+                  }
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(plugin.updatedAt || plugin.createdAt) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right">
+                  <div class="flex justify-end space-x-2">
+                    <button (click)="viewDetails(plugin.name)" class="text-primary-600 hover:text-primary-900" title="View Details">
+                      <ui-icon name="information-circle" class="h-5 w-5" />
+                    </button>
+                    <button (click)="reloadPlugin(plugin.name)" [disabled]="reloadingPlugin() === plugin.name" class="text-blue-600 hover:text-blue-900 disabled:opacity-50" title="Reload Plugin">
+                      <ui-icon name="refresh" [class]="'h-5 w-5 ' + (reloadingPlugin() === plugin.name ? 'animate-spin' : '')" />
+                    </button>
+                    @if (!plugin.isGlobal) {
+                      <button (click)="openDeleteModal(plugin.name)" class="text-red-600 hover:text-red-900" title="Delete Plugin">
+                        <ui-icon name="trash" class="h-5 w-5" />
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </ui-card>
+
+  <!-- Upload Modal -->
+  <ui-modal [open]="showUploadModal()" title="Upload WASM Plugin" (closed)="closeUploadModal()">
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">WASM File *</label>
+        <input #fileInput type="file" accept=".wasm" (change)="onFileSelected($event)" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
+        <p class="mt-1 text-xs text-gray-500">Max file size: 10MB</p>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Plugin Name</label>
+        <input type="text" [(ngModel)]="uploadName" placeholder="my-custom-plugin" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        <p class="mt-1 text-xs text-gray-500">Leave empty to use filename</p>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+        <input type="text" [(ngModel)]="uploadDisplayName" placeholder="My Custom Plugin" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+        <textarea [(ngModel)]="uploadDescription" rows="3" placeholder="Describe what this plugin does..." class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"></textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Version</label>
+          <input type="text" [(ngModel)]="uploadVersion" placeholder="1.0.0" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Author</label>
+          <input type="text" [(ngModel)]="uploadAuthor" placeholder="Your name" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        </div>
+      </div>
+      <div class="flex justify-end space-x-3 pt-4">
+        <ui-button variant="secondary" (clicked)="closeUploadModal()">Cancel</ui-button>
+        <ui-button [disabled]="!uploadFile || uploading()" (clicked)="uploadPlugin()">
+          @if (uploading()) { Uploading... } @else { Upload }
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+
+  <!-- Details Modal with Tabs -->
+  <ui-modal [open]="showDetailsModal()" [title]="selectedPlugin()?.displayName || 'Plugin Details'" (closed)="closeDetailsModal()" size="xl">
+    @if (selectedPlugin()) {
+      <div class="space-y-4">
+        <!-- Tabs -->
+        <div class="border-b border-gray-200">
+          <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+            <button (click)="onTabChange('info')" [class]="'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ' + (activeTab() === 'info' ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')">
+              Info
+            </button>
+            <button (click)="onTabChange('hooks')" [class]="'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ' + (activeTab() === 'hooks' ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')">
+              Hook Bindings
+            </button>
+            <button (click)="onTabChange('network')" [class]="'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ' + (activeTab() === 'network' ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')">
+              Network
+            </button>
+            <button (click)="onTabChange('executions')" [class]="'whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ' + (activeTab() === 'executions' ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')">
+              Execution Logs
+            </button>
+          </nav>
+        </div>
+
+        <!-- Info Tab -->
+        @if (activeTab() === 'info') {
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Name</label>
+                <p class="text-sm text-gray-900">{{ selectedPlugin()!.name }}</p>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Display Name</label>
+                <p class="text-sm text-gray-900">{{ selectedPlugin()!.displayName }}</p>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Version</label>
+                <p class="text-sm text-gray-900">{{ selectedPlugin()!.version || '-' }}</p>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Author</label>
+                <p class="text-sm text-gray-900">{{ selectedPlugin()!.author || '-' }}</p>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Scope</label>
+                <p class="text-sm text-gray-900">{{ selectedPlugin()!.scope }}</p>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Size</label>
+                <p class="text-sm text-gray-900">{{ formatBytes(selectedPlugin()!.sizeBytes) }}</p>
+              </div>
+            </div>
+            @if (selectedPlugin()!.description) {
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Description</label>
+                <p class="text-sm text-gray-900">{{ selectedPlugin()!.description }}</p>
+              </div>
+            }
+            @if (selectedPlugin()!.requiredClaims && selectedPlugin()!.requiredClaims!.length > 0) {
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Required Claims</label>
+                <div class="flex flex-wrap gap-1 mt-1">
+                  @for (claim of selectedPlugin()!.requiredClaims; track claim) {
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">{{ claim }}</span>
+                  }
+                </div>
+              </div>
+            }
+            @if (selectedPlugin()!.outputClaims && selectedPlugin()!.outputClaims!.length > 0) {
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Output Claims</label>
+                <div class="flex flex-wrap gap-1 mt-1">
+                  @for (claim of selectedPlugin()!.outputClaims; track claim) {
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">{{ claim }}</span>
+                  }
+                </div>
+              </div>
+            }
+            @if (selectedPlugin()!.configSchema) {
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Config Schema</label>
+                <pre class="mt-1 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-40">{{ selectedPlugin()!.configSchema | json }}</pre>
+              </div>
+            }
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="text-xs font-medium text-gray-500 uppercase">Created</label>
+                <p class="text-sm text-gray-900">{{ formatDate(selectedPlugin()!.createdAt) }}</p>
+              </div>
+              @if (selectedPlugin()!.updatedAt) {
+                <div>
+                  <label class="text-xs font-medium text-gray-500 uppercase">Updated</label>
+                  <p class="text-sm text-gray-900">{{ formatDate(selectedPlugin()!.updatedAt!) }}</p>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- Hooks Tab -->
+        @if (activeTab() === 'hooks') {
+          <div class="space-y-4">
+            <div class="flex justify-between items-center">
+              <p class="text-sm text-gray-500">Configure when this plugin should be triggered</p>
+              <ui-button size="sm" (clicked)="openCreateHookModal()">Add Hook</ui-button>
+            </div>
+            @if (loadingHooks()) {
+              <div class="text-center py-8 text-gray-500">Loading hooks...</div>
+            } @else if (hooks().length === 0) {
+              <div class="text-center py-8">
+                <p class="text-gray-500">No hook bindings configured</p>
+                <p class="text-sm text-gray-400 mt-1">Add a hook to trigger this plugin on domain events</p>
+              </div>
+            } @else {
+              <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Event</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Function</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Order</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Failure</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                      <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-200">
+                    @for (hook of hooks(); track hook.id) {
+                      <tr>
+                        <td class="px-4 py-2 text-sm">
+                          <span class="font-medium">{{ hook.domain }}</span>
+                          <span class="text-gray-500">/{{ hook.entityType }}/{{ hook.eventType }}</span>
+                        </td>
+                        <td class="px-4 py-2 text-sm font-mono text-gray-600">{{ hook.functionName }}</td>
+                        <td class="px-4 py-2 text-sm text-gray-500">{{ hook.order }}</td>
+                        <td class="px-4 py-2">
+                          <span [class]="'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ' + (hook.failureMode === 'Reject' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800')">
+                            {{ hook.failureMode }}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2">
+                          <button (click)="toggleHookActive(hook)" [class]="'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium cursor-pointer ' + (hook.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800')">
+                            {{ hook.isActive ? 'Active' : 'Inactive' }}
+                          </button>
+                        </td>
+                        <td class="px-4 py-2 text-right">
+                          <button (click)="openEditHookModal(hook)" class="text-primary-600 hover:text-primary-900 mr-2" title="Edit">
+                            <ui-icon name="pencil" class="h-4 w-4" />
+                          </button>
+                          <button (click)="deleteHook(hook)" class="text-red-600 hover:text-red-900" title="Delete">
+                            <ui-icon name="trash" class="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Network Tab -->
+        @if (activeTab() === 'network') {
+          <div class="space-y-4">
+            @if (loadingNetwork()) {
+              <div class="text-center py-8 text-gray-500">Loading network configuration...</div>
+            } @else {
+              <div class="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+                <div class="flex">
+                  <ui-icon name="warning" class="h-5 w-5 text-yellow-400" />
+                  <div class="ml-3">
+                    <h3 class="text-sm font-medium text-yellow-800">Network Access Security</h3>
+                    <p class="text-sm text-yellow-700 mt-1">Allowing plugins to make network requests can be a security risk. Only enable for trusted plugins.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Access Mode</label>
+                <select [(ngModel)]="networkForm.accessMode" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500">
+                  @for (mode of accessModeOptions; track mode) {
+                    <option [value]="mode">{{ mode }}</option>
+                  }
+                </select>
+                <p class="mt-1 text-xs text-gray-500">
+                  @switch (networkForm.accessMode) {
+                    @case ('None') { Plugin cannot make any network requests }
+                    @case ('Self') { Plugin can only call your own API endpoints }
+                    @case ('Whitelist') { Plugin can call specific allowed hosts }
+                    @case ('All') { Plugin can call any host (requires approval) }
+                  }
+                </p>
+              </div>
+
+              @if (networkForm.accessMode === 'Whitelist') {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Allowed Hosts</label>
+                  <textarea [(ngModel)]="allowedHostsText" rows="4" placeholder="api.example.com&#10;webhook.site" class="w-full border border-gray-300 rounded-md px-3 py-2 font-mono text-sm focus:ring-primary-500 focus:border-primary-500"></textarea>
+                  <p class="mt-1 text-xs text-gray-500">Enter one host per line</p>
+                </div>
+              }
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">HTTP Timeout (ms)</label>
+                  <input type="number" [(ngModel)]="networkForm.httpTimeoutMs" min="1000" max="30000" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Max Requests Per Execution</label>
+                  <input type="number" [(ngModel)]="networkForm.maxHttpRequestsPerExecution" min="1" max="100" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+                </div>
+              </div>
+
+              @if (networkConfig()?.requiresApproval) {
+                <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center">
+                      <ui-icon name="shield-check" class="h-5 w-5 text-blue-400" />
+                      <span class="ml-2 text-sm text-blue-800">
+                        @if (networkConfig()?.isApproved) {
+                          Approved by {{ networkConfig()?.approvedBy }} on {{ formatDate(networkConfig()?.approvedAt!) }}
+                        } @else {
+                          Requires admin approval for unrestricted network access
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              }
+
+              <div class="flex justify-end pt-4">
+                <ui-button [disabled]="savingNetwork()" (clicked)="saveNetworkConfig()">
+                  @if (savingNetwork()) { Saving... } @else { Save Network Config }
+                </ui-button>
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Executions Tab -->
+        @if (activeTab() === 'executions') {
+          <div class="space-y-4">
+            <div class="flex justify-between items-center">
+              <p class="text-sm text-gray-500">Recent plugin executions</p>
+              <ui-button size="sm" variant="secondary" (clicked)="refreshExecutions()">
+                <ui-icon name="refresh" class="h-4 w-4 mr-1" />
+                Refresh
+              </ui-button>
+            </div>
+            @if (loadingExecutions()) {
+              <div class="text-center py-8 text-gray-500">Loading execution logs...</div>
+            } @else if (executions().length === 0) {
+              <div class="text-center py-8">
+                <p class="text-gray-500">No executions recorded</p>
+                <p class="text-sm text-gray-400 mt-1">Executions will appear here when the plugin is triggered</p>
+              </div>
+            } @else {
+              <div class="overflow-x-auto max-h-96">
+                <table class="min-w-full divide-y divide-gray-200">
+                  <thead class="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Event</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Result</th>
+                      <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-200">
+                    @for (exec of executions(); track exec.id) {
+                      <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{{ formatDate(exec.executedAt) }}</td>
+                        <td class="px-4 py-2 text-sm">
+                          <span class="font-medium">{{ exec.domain }}</span>
+                          <span class="text-gray-500">/{{ exec.entityType || '*' }}/{{ exec.eventType }}</span>
+                        </td>
+                        <td class="px-4 py-2 text-sm font-mono text-gray-600">{{ formatDuration(exec.durationMs) }}</td>
+                        <td class="px-4 py-2">
+                          <span [class]="'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ' + getResultBadgeClass(exec.result)">
+                            {{ exec.result }}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2 text-sm text-gray-500">{{ exec.resultAction || '-' }}</td>
+                      </tr>
+                      @if (exec.errorMessage) {
+                        <tr class="bg-red-50">
+                          <td colspan="5" class="px-4 py-2 text-sm text-red-600">
+                            <strong>Error:</strong> {{ exec.errorMessage }}
+                          </td>
+                        </tr>
+                      }
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </div>
+        }
+
+        <!-- Modal Footer -->
+        <div class="flex justify-end pt-4 border-t">
+          <ui-button variant="secondary" (clicked)="closeDetailsModal()">Close</ui-button>
+        </div>
+      </div>
+    }
+  </ui-modal>
+
+  <!-- Hook Edit Modal -->
+  <ui-modal [open]="showHookModal()" [title]="editingHook() ? 'Edit Hook Binding' : 'Create Hook Binding'" (closed)="closeHookModal()">
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Domain *</label>
+        <input type="text" [(ngModel)]="hookForm.domain" placeholder="the module / area this hook targets" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Entity Type</label>
+          <input type="text" [(ngModel)]="hookForm.entityType" placeholder="* (all)" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
+          <input type="text" [(ngModel)]="hookForm.eventType" placeholder="* (all)" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Function Name *</label>
+        <input type="text" [(ngModel)]="hookForm.functionName" placeholder="handle" class="w-full border border-gray-300 rounded-md px-3 py-2 font-mono focus:ring-primary-500 focus:border-primary-500" />
+        <p class="mt-1 text-xs text-gray-500">The WASM function to call</p>
+      </div>
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Order</label>
+          <input type="number" [(ngModel)]="hookForm.order" min="0" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Timeout (ms)</label>
+          <input type="number" [(ngModel)]="hookForm.timeoutMs" min="100" max="60000" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">On Failure</label>
+          <select [(ngModel)]="hookForm.failureMode" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500">
+            @for (mode of failureModeOptions; track mode) {
+              <option [value]="mode">{{ mode }}</option>
+            }
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="flex items-center">
+          <input type="checkbox" [(ngModel)]="hookForm.isActive" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+          <span class="ml-2 text-sm text-gray-700">Active</span>
+        </label>
+      </div>
+      <div class="flex justify-end space-x-3 pt-4">
+        <ui-button variant="secondary" (clicked)="closeHookModal()">Cancel</ui-button>
+        <ui-button [disabled]="savingHook()" (clicked)="saveHook()">
+          @if (savingHook()) { Saving... } @else if (editingHook()) { Update } @else { Create }
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+
+  <!-- Delete Confirmation Modal -->
+  <ui-modal [open]="showDeleteModal()" title="Delete Plugin" (closed)="closeDeleteModal()">
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500">
+        Are you sure you want to delete the plugin <strong>{{ pluginToDelete() }}</strong>? This action cannot be undone.
+      </p>
+      <div class="flex justify-end space-x-3">
+        <ui-button variant="secondary" (clicked)="closeDeleteModal()">Cancel</ui-button>
+        <ui-button variant="danger" (clicked)="confirmDelete()">Delete</ui-button>
+      </div>
+    </div>
+  </ui-modal>
+</div>

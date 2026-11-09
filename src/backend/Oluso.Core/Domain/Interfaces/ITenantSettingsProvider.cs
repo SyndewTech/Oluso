@@ -27,15 +27,49 @@ public interface ITenantSettingsProvider
     Task<TenantPasswordSettings> GetPasswordSettingsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Password policy settings for a specific tenant — the policy a user's account is held to,
+    /// which can differ from the request's tenant (e.g. sign-in on the platform host).
+    /// </summary>
+    Task<TenantPasswordSettings> GetPasswordSettingsAsync(string tenantId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// How long the links and codes in account emails stay valid for the current tenant.
+    /// </summary>
+    Task<TenantAccountEmailSettings> GetAccountEmailSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Account email lifetimes for a specific tenant, for mail sent on behalf of a tenant
+    /// other than the one handling the request (e.g. the welcome email to a new tenant).
+    /// </summary>
+    Task<TenantAccountEmailSettings> GetAccountEmailSettingsAsync(string tenantId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets branding settings for the current tenant
     /// </summary>
     Task<TenantBrandingSettings> GetBrandingSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets branding settings for a specific tenant. Used by endpoints that
+    /// iterate over multiple tenants (e.g. the tenant-switcher listing the
+    /// tenants a user belongs to) where the ambient
+    /// <see cref="ITenantContext"/> doesn't point at the tenant being read.
+    /// </summary>
+    Task<TenantBrandingSettings> GetBrandingSettingsAsync(string tenantId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets protocol settings for the current tenant (OIDC discovery document configuration)
     /// </summary>
     Task<TenantProtocolSettings> GetProtocolSettingsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets locale settings for the current tenant (currency, date format, number format, timezone)
+    /// </summary>
+    Task<LocaleSettings> GetLocaleSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets workspace apps settings for the current tenant (built-in app toggles and custom apps)
+    /// </summary>
+    Task<WorkspaceAppsSettings> GetWorkspaceAppsSettingsAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -63,6 +97,27 @@ public class TenantTokenSettings
     /// Tenant-specific issuer URI override. If null, uses default issuer.
     /// </summary>
     public string? IssuerUri { get; set; }
+}
+
+/// <summary>
+/// How long the links and codes in account emails stay valid. The emails state these
+/// values, so what a recipient reads always matches what the platform enforces.
+/// </summary>
+public class TenantAccountEmailSettings
+{
+    public const string SectionKey = "AccountEmailSettings";
+
+    /// <summary>
+    /// Password-reset and email-confirmation links. A password-reset journey step uses the
+    /// same token, so keep this at least as long as the step's code lifetime. Default: 1 day.
+    /// </summary>
+    public int AccountLinkLifetimeMinutes { get; set; } = 24 * 60;
+
+    /// <summary>MFA codes sent by email or SMS, and the code that confirms a new email address. Default: 10 minutes.</summary>
+    public int MfaCodeLifetimeMinutes { get; set; } = 10;
+
+    /// <summary>Default lifetime of organisation invitations, also used when one is re-sent. Default: 7 days.</summary>
+    public int InvitationLifetimeDays { get; set; } = 7;
 }
 
 /// <summary>
@@ -99,10 +154,58 @@ public class TenantPasswordSettings
     /// </summary>
     public bool CheckBreachedPasswords { get; set; } = false;
 
+    /// <summary>
+    /// When the breach database can't be reached: false accepts the password, true rejects it.
+    /// See <see cref="Entities.TenantPasswordPolicy.RejectWhenBreachCheckUnavailable"/>.
+    /// </summary>
+    public bool RejectWhenBreachCheckUnavailable { get; set; } = false;
+
     public string? CustomRegexPattern { get; set; }
     public string? CustomRegexErrorMessage { get; set; }
 
+    /// <summary>
+    /// When false (default), users that have at least one linked external
+    /// login (federated via SSO) cannot have a local password set, reset,
+    /// or used for sign-in. Local credential operations on those users
+    /// return a <c>federated_user_local_password_disallowed</c> failure.
+    /// Set true only for tenants that explicitly want mixed-mode auth —
+    /// e.g. a break-glass local password alongside the SSO link. Default
+    /// matches the enterprise expectation that identity federation means
+    /// the IdP owns the credential.
+    /// </summary>
+    public bool AllowLocalPasswordForFederatedUsers { get; set; } = false;
+
     public static TenantPasswordSettings Default => new();
+
+    /// <summary>The effective settings for a tenant's stored password policy.</summary>
+    public static TenantPasswordSettings FromPolicy(Entities.TenantPasswordPolicy policy) => new()
+    {
+        MinimumLength = policy.MinimumLength,
+        MaximumLength = policy.MaximumLength,
+        RequireDigit = policy.RequireDigit,
+        RequireLowercase = policy.RequireLowercase,
+        RequireUppercase = policy.RequireUppercase,
+        RequireNonAlphanumeric = policy.RequireNonAlphanumeric,
+        RequiredUniqueChars = policy.RequiredUniqueChars,
+        PasswordHistoryCount = policy.PasswordHistoryCount,
+        PasswordExpirationDays = policy.PasswordExpirationDays,
+        MaxFailedAttempts = policy.MaxFailedAttempts,
+        LockoutDurationMinutes = policy.LockoutDurationMinutes,
+        BlockCommonPasswords = policy.BlockCommonPasswords,
+        CheckBreachedPasswords = policy.CheckBreachedPasswords,
+        RejectWhenBreachCheckUnavailable = policy.RejectWhenBreachCheckUnavailable,
+        CustomRegexPattern = policy.CustomRegexPattern,
+        CustomRegexErrorMessage = policy.CustomRegexErrorMessage
+    };
+
+    /// <summary>
+    /// True when a password last changed at <paramref name="passwordChangedAt"/> is older than
+    /// <see cref="PasswordExpirationDays"/> allows. A password with no recorded change date is
+    /// as old as the account (<paramref name="accountCreatedAt"/>).
+    /// </summary>
+    public bool IsPasswordExpired(DateTime? passwordChangedAt, DateTime accountCreatedAt, DateTime utcNow) =>
+        PasswordExpirationDays > 0
+        && (passwordChangedAt ?? accountCreatedAt).AddDays(PasswordExpirationDays) <= utcNow;
 }
 
 /// <summary>
@@ -116,8 +219,37 @@ public class TenantBrandingSettings
     public string? SecondaryColor { get; set; }
     public string? BackgroundColor { get; set; }
     public string? CustomCss { get; set; }
+    public string? SupportEmail { get; set; }
+    public string? FooterText { get; set; }
+    public bool HideEmbedBranding { get; set; }
 
     public static TenantBrandingSettings Default => new();
+}
+
+/// <summary>
+/// Tenant-wide email settings, stored as their own tenant-config section.
+/// </summary>
+public class TenantEmailSettings
+{
+    public const string SectionKey = "EmailSettings";
+
+    /// <summary>
+    /// Inbox that receives replies to this tenant's mail when the sender profile
+    /// sets no reply-to of its own, including mail sent on the platform's shared
+    /// sender. Only used once <see cref="ReplyToVerifiedAt"/> is set.
+    /// </summary>
+    public string? ReplyToAddress { get; set; }
+
+    /// <summary>When the inbox owner confirmed <see cref="ReplyToAddress"/>.</summary>
+    public DateTime? ReplyToVerifiedAt { get; set; }
+
+    /// <summary>An address awaiting confirmation; the current one stays in use until then.</summary>
+    public string? PendingReplyToAddress { get; set; }
+
+    public DateTime? PendingReplyToSentAt { get; set; }
+
+    /// <summary>The confirmed reply-to, or null when none is confirmed.</summary>
+    public string? VerifiedReplyTo => ReplyToVerifiedAt != null && !string.IsNullOrWhiteSpace(ReplyToAddress) ? ReplyToAddress : null;
 }
 
 //Fixme: Expand protocol settings and check it is not duplicate of other settings
@@ -179,6 +311,13 @@ public class TenantProtocolSettings
     public bool AllowPlainPkce { get; set; }
 
     /// <summary>
+    /// Whether to enforce OAuth 2.1 security profile.
+    /// When true: implicit grant is rejected, PKCE is required, plain PKCE is disallowed,
+    /// and Resource Owner Password Credentials (ROPC) grant is rejected.
+    /// </summary>
+    public bool EnforceOAuth21 { get; set; }
+
+    /// <summary>
     /// Whether DPoP is required for all clients in this tenant.
     /// </summary>
     public bool RequireDPoP { get; set; }
@@ -213,6 +352,31 @@ public class TenantProtocolSettings
     /// Whether backchannel logout is enabled.
     /// </summary>
     public bool BackchannelLogoutSupported { get; set; } = true;
+
+    /// <summary>
+    /// The longest suffix a prefix scope accepts when it doesn't set its own <c>suffix_max_length</c>.
+    /// Null means <see cref="Oluso.Core.Services.ApiScopePrefixes.DefaultSuffixMaxLength"/>.
+    /// </summary>
+    public int? PrefixScopeSuffixMaxLength { get; set; }
+
+    /// <summary>
+    /// Scopes that earn a refresh token without <c>offline_access</c>, for clients allowed the
+    /// <c>refresh_token</c> grant. Matrix clients (Matrix spec "OAuth 2.0 API") never ask for
+    /// <c>offline_access</c> but must be able to refresh. Null means
+    /// <see cref="DefaultRefreshImplyingScopes"/> (the Matrix client API scopes); an empty list turns it off.
+    /// </summary>
+    public List<string>? RefreshImplyingScopes { get; set; }
+
+    /// <summary>The stable and unstable (MSC2967) Matrix client API scopes.</summary>
+    public static readonly IReadOnlyList<string> DefaultRefreshImplyingScopes = new[]
+    {
+        Oluso.Core.Protocols.MatrixScopes.Api,
+        Oluso.Core.Protocols.MatrixScopes.UnstableApi,
+    };
+
+    /// <summary>The refresh-implying scopes in effect: the tenant's list, or the default when unset.</summary>
+    public IReadOnlyList<string> EffectiveRefreshImplyingScopes =>
+        (IReadOnlyList<string>?)RefreshImplyingScopes ?? DefaultRefreshImplyingScopes;
 
     // ========================================
     // Dynamic Client Registration (RFC 7591)
@@ -303,6 +467,22 @@ public class TenantProtocolSettings
 }
 
 /// <summary>
+/// Locale settings for a tenant (currency, date format, number format, timezone)
+/// </summary>
+public class LocaleSettings
+{
+    /// <summary>The organisation's currency. Empty until the tenant sets it; there is no default.</summary>
+    public string CurrencyCode { get; set; } = string.Empty;
+    public string CurrencySymbol { get; set; } = string.Empty;
+    public string DateFormat { get; set; } = "MM/DD/YYYY";
+    public string NumberFormat { get; set; } = "1,234.56";
+    public string Locale { get; set; } = "en-US";
+    public string? Timezone { get; set; }
+
+    public static LocaleSettings Default => new();
+}
+
+/// <summary>
 /// All tenant settings combined (core settings only)
 /// </summary>
 public class TenantSettings
@@ -324,6 +504,63 @@ public interface IIssuerResolver
     /// Priority: Tenant IssuerUri > Tenant CustomDomain > Server config > Request host
     /// </summary>
     Task<string> GetIssuerAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the issuer URI for an explicit tenant — used when the tenant
+    /// hasn't been resolved into <see cref="ITenantContext"/> (e.g. anonymous
+    /// resolve endpoints that look the tenant up by identifier).
+    /// Priority: Tenant CustomDomain > auto-subdomain > server config.
+    /// </summary>
+    Task<string> GetIssuerForTenantAsync(Oluso.Core.Domain.Entities.Tenant tenant, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Whether <paramref name="issuer"/> is one this server mints: the configured base issuer, a
+    /// tenant subdomain of it, or — for <paramref name="tenant"/>, the tenant a token belongs to —
+    /// that tenant's custom domain or issuer override. Used to accept bearer tokens on Oluso's own APIs.
+    /// </summary>
+    Task<bool> IsOwnIssuerAsync(string? issuer, Oluso.Core.Domain.Entities.Tenant? tenant, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves both the effective issuer URI AND the canonical auto-subdomain
+    /// URL for the current tenant. Use this when the caller needs to display
+    /// the auto-subdomain regardless of CustomDomain (e.g. the admin "Automatic
+    /// subdomain" panel) — <see cref="ResolvedIssuer.IssuerUri"/> still
+    /// follows the same priority as <see cref="GetIssuerAsync"/>.
+    /// </summary>
+    Task<ResolvedIssuer> GetResolvedIssuerAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Tenant-explicit variant of <see cref="GetResolvedIssuerAsync"/>.
+    /// </summary>
+    Task<ResolvedIssuer> GetResolvedIssuerForTenantAsync(Oluso.Core.Domain.Entities.Tenant tenant, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Builds the token's <c>iss</c> claim value — path-scoped
+    /// <c>{configuredBase}/{tenantId}</c> (Azure / Microsoft pattern) or the
+    /// bare base when <paramref name="tenantId"/> is null/_platform. Pure
+    /// compute, no DB. Distinct from <see cref="GetIssuerAsync"/> which is
+    /// subdomain-based for hosting and discovery.
+    /// </summary>
+    string BuildTokenIssuer(string? tenantId);
+}
+
+/// <summary>
+/// Bundle of every issuer-derived URL the resolver knows about. Lets a
+/// caller pick the one that fits — <see cref="IssuerUri"/> for IdP / webhook
+/// callbacks (CustomDomain wins), <see cref="AutoSubdomain"/> for canonical
+/// {identifier}.{base-host} display (independent of CustomDomain).
+/// </summary>
+public record ResolvedIssuer
+{
+    /// <summary>Effective issuer URI — same value <see cref="IIssuerResolver.GetIssuerAsync"/> returns.</summary>
+    public required string IssuerUri { get; init; }
+
+    /// <summary>
+    /// Canonical {identifier}.{base-host} URL, ignoring CustomDomain. Null
+    /// for the platform tenant (which lives at the base host), tenants
+    /// without an identifier, or when <c>Oluso:IssuerUri</c> isn't configured.
+    /// </summary>
+    public string? AutoSubdomain { get; init; }
 }
 
 /// <summary>
@@ -351,4 +588,36 @@ public enum ResourceValidationMode
     /// Combines RequireResourceParameter with validation against registered resources.
     /// </summary>
     Strict
+}
+
+/// <summary>
+/// Workspace apps settings for a tenant.
+/// Controls which built-in apps are enabled and defines custom external apps.
+/// </summary>
+public class WorkspaceAppsSettings
+{
+    public Dictionary<string, bool> BuiltInApps { get; set; } = new();
+    public List<CustomWorkspaceApp> CustomApps { get; set; } = new();
+    /// <summary>
+    /// URL overrides for built-in apps. Key matches the app id (e.g. "admin", "account").
+    /// Defaults: admin → /admin, account → /account.
+    /// Set these when apps are served at custom paths or subdomains.
+    /// </summary>
+    public Dictionary<string, string> AppUrls { get; set; } = new();
+
+    public static WorkspaceAppsSettings Default => new();
+}
+
+/// <summary>
+/// A custom external workspace app configured by a tenant admin.
+/// </summary>
+public class CustomWorkspaceApp
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
+    public string Name { get; set; } = default!;
+    public string? Description { get; set; }
+    public string ExternalUrl { get; set; } = default!;
+    public string Icon { get; set; } = "link";
+    public string Color { get; set; } = "slate";
+    public int Order { get; set; } = 100;
 }

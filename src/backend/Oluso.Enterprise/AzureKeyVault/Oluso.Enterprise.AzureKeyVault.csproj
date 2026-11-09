@@ -1,17 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
     <!-- Package metadata -->
     <PackageId>Oluso.Enterprise.AzureKeyVault</PackageId>
-    <Version>1.0.0</Version>
     <Authors>Oluso</Authors>
     <Description>Azure Key Vault integration for Oluso identity platform. Provides HSM-backed signing key management where private keys never leave the vault.</Description>
     <PackageTags>identity;authentication;oauth;oidc;azure;keyvault;hsm;signing</PackageTags>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
 
     <!-- Generate XML documentation -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -20,12 +18,12 @@
 
   <ItemGroup>
     <!-- Azure Key Vault SDK -->
-    <PackageReference Include="Azure.Security.KeyVault.Keys" Version="4.7.0" />
-    <PackageReference Include="Azure.Security.KeyVault.Certificates" Version="4.7.0" />
-    <PackageReference Include="Azure.Identity" Version="1.13.2" />
+    <PackageReference Include="Azure.Security.KeyVault.Keys" />
+    <PackageReference Include="Azure.Security.KeyVault.Certificates" />
+    <PackageReference Include="Azure.Identity" />
 
     <!-- Identity model for token handling -->
-    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.15.0" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" />
   </ItemGroup>
 
   <!-- Include README in package -->

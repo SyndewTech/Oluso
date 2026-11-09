@@ -9,15 +9,27 @@
     });
 }
 
-<div class="fido2-registration">
+<div class="fido2-registration"
+     id="fido2RegContainer"
+     data-msg-not-supported="@Localizer["fido2_reg_not_supported"]"
+     data-msg-preparing="@Localizer["fido2_reg_preparing"]"
+     data-msg-waiting="@Localizer["fido2_reg_waiting"]"
+     data-msg-completing="@Localizer["fido2_reg_completing"]"
+     data-msg-err-default="@Localizer["fido2_reg_err_default"]"
+     data-msg-err-cancelled="@Localizer["fido2_reg_err_cancelled"]"
+     data-msg-err-already-registered="@Localizer["fido2_reg_err_already_registered"]"
+     data-msg-err-security="@Localizer["fido2_reg_err_security"]"
+     data-msg-err-not-supported="@Localizer["fido2_reg_err_not_supported"]"
+     data-msg-display-this-device="@Localizer["fido2_reg_display_this_device"]"
+     data-msg-display-security-key="@Localizer["fido2_reg_display_security_key"]">
     <div class="registration-header">
         <div class="authenticator-icon">
             <svg viewBox="0 0 24 24" width="48" height="48">
                 <path fill="currentColor" d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
             </svg>
         </div>
-        <h2 class="title">Register Your Passkey</h2>
-        <p class="subtitle">Follow the prompts from your browser or device</p>
+        <h2 class="title">@Localizer["fido2_reg_title"]</h2>
+        <p class="subtitle">@Localizer["fido2_reg_subtitle"]</p>
     </div>
 
     @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -31,8 +43,8 @@
         <div class="status-icon">
             <div class="spinner"></div>
         </div>
-        <p id="statusMessage" class="status-message">Waiting for authenticator...</p>
-        <p class="status-hint">You may need to use your fingerprint, face, or security key.</p>
+        <p id="statusMessage" class="status-message">@Localizer["fido2_reg_waiting"]</p>
+        <p class="status-hint">@Localizer["fido2_reg_hint"]</p>
     </div>
 
     <div id="registrationSuccess" class="success-container" style="display: none;">
@@ -41,8 +53,8 @@
                 <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
             </svg>
         </div>
-        <h3>Passkey Registered!</h3>
-        <p>You can now use this passkey to sign in.</p>
+        <h3>@Localizer["fido2_reg_success_title"]</h3>
+        <p>@Localizer["fido2_reg_success_description"]</p>
     </div>
 
     <div id="registrationError" class="error-container" style="display: none;">
@@ -51,9 +63,9 @@
                 <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
             </svg>
         </div>
-        <h3>Registration Failed</h3>
+        <h3>@Localizer["fido2_reg_failed_title"]</h3>
         <p id="errorDetails"></p>
-        <button type="button" id="retryButton" class="btn btn-primary">Try Again</button>
+        <button type="button" id="retryButton" class="btn btn-primary">@Localizer["fido2_reg_retry"]</button>
     </div>
 
     <form id="registrationForm" method="post" style="display: none;">
@@ -66,13 +78,14 @@
     {
         <form method="post" class="skip-form">
             <input type="hidden" name="action" value="skip" />
-            <button type="submit" class="btn btn-link" id="skipButton">Cancel</button>
+            <button type="submit" class="btn btn-link" id="skipButton">@Localizer["fido2_reg_cancel"]</button>
         </form>
     }
 </div>
 
 <script>
 (function() {
+    const container = document.getElementById('fido2RegContainer');
     const options = @Html.Raw(optionsJson);
 
     // Immediate debug - log before any processing
@@ -92,10 +105,10 @@
         try {
             // Check WebAuthn support
             if (!window.PublicKeyCredential) {
-                throw new Error('Passkeys are not supported on this browser.');
+                throw new Error(container.dataset.msgNotSupported);
             }
 
-            statusMsg.textContent = 'Preparing registration...';
+            statusMsg.textContent = container.dataset.msgPreparing;
 
             // Debug: log the options to see the structure
             console.log('FIDO2 registration options:', JSON.stringify(options, null, 2));
@@ -149,14 +162,14 @@
                 });
             }
 
-            statusMsg.textContent = 'Waiting for authenticator...';
+            statusMsg.textContent = container.dataset.msgWaiting;
 
             // Call WebAuthn API
             const credential = await navigator.credentials.create({
                 publicKey: publicKeyOptions
             });
 
-            statusMsg.textContent = 'Completing registration...';
+            statusMsg.textContent = container.dataset.msgCompleting;
 
             // Prepare response for server
             const response = {
@@ -177,9 +190,9 @@
             // Determine display name based on authenticator type
             let displayName = 'Passkey';
             if (credential.authenticatorAttachment === 'platform') {
-                displayName = 'This Device';
+                displayName = container.dataset.msgDisplayThisDevice;
             } else if (credential.authenticatorAttachment === 'cross-platform') {
-                displayName = 'Security Key';
+                displayName = container.dataset.msgDisplaySecurityKey;
             }
 
             // Submit to server
@@ -197,16 +210,16 @@
         statusEl.style.display = 'none';
         errorEl.style.display = 'block';
 
-        let message = 'Registration failed. Please try again.';
+        let message = container.dataset.msgErrDefault;
 
         if (error.name === 'NotAllowedError') {
-            message = 'Registration was cancelled or not allowed. Please try again.';
+            message = container.dataset.msgErrCancelled;
         } else if (error.name === 'InvalidStateError') {
-            message = 'This authenticator is already registered for your account.';
+            message = container.dataset.msgErrAlreadyRegistered;
         } else if (error.name === 'SecurityError') {
-            message = 'Security error. Make sure you are on a secure (HTTPS) connection.';
+            message = container.dataset.msgErrSecurity;
         } else if (error.name === 'NotSupportedError') {
-            message = 'Your device does not support the required authentication method.';
+            message = container.dataset.msgErrNotSupported;
         } else if (error.message) {
             message = error.message;
         }

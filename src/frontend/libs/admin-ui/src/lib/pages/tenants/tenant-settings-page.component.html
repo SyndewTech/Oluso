@@ -1,0 +1,522 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center gap-4">
+    <button
+      (click)="goBack()"
+      class="p-2 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+    >
+      <ui-icon name="arrow-left" class="h-5 w-5" />
+    </button>
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">
+        {{ tenant()?.displayName || tenant()?.name }} Settings
+      </h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Configure tenant settings and policies
+      </p>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <div class="flex items-center justify-center h-64">
+      <div class="text-gray-500">Loading...</div>
+    </div>
+  } @else if (!tenant()) {
+    <div class="text-center py-12">
+      <p class="text-gray-500">Tenant not found</p>
+      <ui-button variant="secondary" (clicked)="goBack()" class="mt-4">
+        Back to Tenants
+      </ui-button>
+    </div>
+  } @else {
+    <!-- Tabs Navigation -->
+    <div class="border-b border-gray-200">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+        @for (tab of tabs(); track tab.id) {
+          <button
+            (click)="setActiveTab(tab.id)"
+            [class]="'flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ' +
+              (activeTab() === tab.id
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')"
+          >
+            <ui-icon [name]="tab.icon || 'menu'" class="h-5 w-5" />
+            {{ tab.label }}
+          </button>
+        }
+      </nav>
+    </div>
+
+    <!-- General Tab Content -->
+    @if (activeTab() === 'general') {
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <!-- Tenant Details -->
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-4">
+              <ui-icon name="building" class="h-5 w-5 text-gray-400" />
+              <h3 class="text-lg font-medium text-gray-900">Tenant Details</h3>
+            </div>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Basic tenant information</p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+              <input
+                type="text"
+                [(ngModel)]="tenantData.name"
+                (ngModelChange)="onTenantChange()"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+              <input
+                type="text"
+                [(ngModel)]="tenantData.displayName"
+                (ngModelChange)="onTenantChange()"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                [(ngModel)]="tenantData.description"
+                (ngModelChange)="onTenantChange()"
+                rows="3"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              ></textarea>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Custom Domain</label>
+              <input
+                type="text"
+                [(ngModel)]="tenantData.customDomain"
+                (ngModelChange)="onTenantChange()"
+                placeholder="auth.example.com"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Enabled</p>
+                <p class="text-sm text-gray-500">Allow users to authenticate with this tenant</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="tenantData.enabled ?? true"
+                (ngModelChange)="tenantData.enabled = $event; onTenantChange()"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Hide Embed Branding</p>
+                <p class="text-sm text-gray-500">Remove "Powered by Oluso" from embedded auth modals</p>
+              </div>
+              <input
+                type="checkbox"
+                [ngModel]="tenantData.hideEmbedBranding ?? false"
+                (ngModelChange)="tenantData.hideEmbedBranding = $event; onTenantChange()"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+          </div>
+        </ui-card>
+
+        <!-- Password Requirements -->
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-4">
+              <ui-icon name="key" class="h-5 w-5 text-gray-400" />
+              <h3 class="text-lg font-medium text-gray-900">Password Requirements</h3>
+            </div>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Configure password length and complexity</p>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Minimum Length</label>
+                <input
+                  type="number"
+                  [(ngModel)]="policyData.minimumLength"
+                  (ngModelChange)="onPolicyChange()"
+                  min="1"
+                  max="128"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Maximum Length</label>
+                <input
+                  type="number"
+                  [(ngModel)]="policyData.maximumLength"
+                  (ngModelChange)="onPolicyChange()"
+                  min="0"
+                  max="256"
+                  class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="mt-1 text-xs text-gray-500">0 = no limit</p>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Required Unique Characters</label>
+              <input
+                type="number"
+                [(ngModel)]="policyData.requiredUniqueChars"
+                (ngModelChange)="onPolicyChange()"
+                min="0"
+                max="50"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Minimum distinct characters in password</p>
+            </div>
+
+            <div class="space-y-3 pt-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Require Digit</p>
+                  <p class="text-xs text-gray-500">At least one number (0-9)</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [(ngModel)]="policyData.requireDigit"
+                  (ngModelChange)="onPolicyChange()"
+                  class="h-4 w-4 text-primary-600 rounded"
+                />
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Require Lowercase</p>
+                  <p class="text-xs text-gray-500">At least one lowercase letter (a-z)</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [(ngModel)]="policyData.requireLowercase"
+                  (ngModelChange)="onPolicyChange()"
+                  class="h-4 w-4 text-primary-600 rounded"
+                />
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Require Uppercase</p>
+                  <p class="text-xs text-gray-500">At least one uppercase letter (A-Z)</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [(ngModel)]="policyData.requireUppercase"
+                  (ngModelChange)="onPolicyChange()"
+                  class="h-4 w-4 text-primary-600 rounded"
+                />
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Require Special Character</p>
+                  <p class="text-xs text-gray-500">At least one non-alphanumeric (!@#$%^&* etc.)</p>
+                </div>
+                <input
+                  type="checkbox"
+                  [(ngModel)]="policyData.requireNonAlphanumeric"
+                  (ngModelChange)="onPolicyChange()"
+                  class="h-4 w-4 text-primary-600 rounded"
+                />
+              </div>
+            </div>
+          </div>
+        </ui-card>
+
+        <!-- Password Lifecycle -->
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-4">
+              <ui-icon name="clock" class="h-5 w-5 text-gray-400" />
+              <h3 class="text-lg font-medium text-gray-900">Password Lifecycle</h3>
+            </div>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Configure password history and expiration</p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Password History Count</label>
+              <input
+                type="number"
+                [(ngModel)]="policyData.passwordHistoryCount"
+                (ngModelChange)="onPolicyChange()"
+                min="0"
+                max="24"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Number of previous passwords to prevent reuse (0 = disabled)</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Password Expiration (days)</label>
+              <input
+                type="number"
+                [(ngModel)]="policyData.passwordExpirationDays"
+                (ngModelChange)="onPolicyChange()"
+                min="0"
+                max="365"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Days until password expires (0 = never expires)</p>
+            </div>
+          </div>
+        </ui-card>
+
+        <!-- Account Lockout -->
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-4">
+              <ui-icon name="shield-check" class="h-5 w-5 text-gray-400" />
+              <h3 class="text-lg font-medium text-gray-900">Account Lockout</h3>
+            </div>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Configure account lockout behavior</p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Max Failed Attempts</label>
+              <input
+                type="number"
+                [(ngModel)]="policyData.maxFailedAttempts"
+                (ngModelChange)="onPolicyChange()"
+                min="1"
+                max="20"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Failed login attempts before lockout</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Lockout Duration (minutes)</label>
+              <input
+                type="number"
+                [(ngModel)]="policyData.lockoutDurationMinutes"
+                (ngModelChange)="onPolicyChange()"
+                min="1"
+                max="1440"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">How long the account stays locked</p>
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Block Common Passwords</p>
+                <p class="text-xs text-gray-500">Reject frequently used weak passwords</p>
+              </div>
+              <input
+                type="checkbox"
+                [(ngModel)]="policyData.blockCommonPasswords"
+                (ngModelChange)="onPolicyChange()"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <div>
+                <p class="text-sm font-medium text-gray-700">Block Breached Passwords</p>
+                <p class="text-xs text-gray-500">
+                  Reject passwords found in known data breaches (Have I Been Pwned). Only a partial hash
+                  leaves the server.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                [(ngModel)]="policyData.checkBreachedPasswords"
+                (ngModelChange)="onPolicyChange()"
+                class="h-4 w-4 text-primary-600 rounded"
+              />
+            </div>
+
+            @if (policyData.checkBreachedPasswords) {
+              <div class="flex items-center justify-between pt-2 pl-4">
+                <div>
+                  <p class="text-sm font-medium text-gray-700">Reject When Breach Check Is Unavailable</p>
+                  <p class="text-xs text-gray-500">
+                    If the breach service can't be reached, reject the password and ask the user to try
+                    again. Off (default): the password is accepted so an outage doesn't block sign-ups
+                    and password changes.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  [(ngModel)]="policyData.rejectWhenBreachCheckUnavailable"
+                  (ngModelChange)="onPolicyChange()"
+                  class="h-4 w-4 text-primary-600 rounded"
+                />
+              </div>
+            }
+          </div>
+        </ui-card>
+
+        <!-- Custom Validation -->
+        <ui-card class="lg:col-span-2">
+          <div class="px-4 py-5 sm:p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-4">
+              <ui-icon name="exclamation-triangle" class="h-5 w-5 text-yellow-500" />
+              <h3 class="text-lg font-medium text-gray-900">Custom Validation</h3>
+            </div>
+            <p class="text-sm text-gray-500 -mt-2 mb-4">Add custom regex pattern for password validation (advanced)</p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Custom Regex Pattern</label>
+              <input
+                type="text"
+                [(ngModel)]="policyData.customRegexPattern"
+                (ngModelChange)="onPolicyChange()"
+                placeholder="^(?=.*[!@#$%^&*])(?=.*\d{2,}).*$"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Regular expression pattern passwords must match (leave empty to disable)</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Custom Error Message</label>
+              <input
+                type="text"
+                [(ngModel)]="policyData.customRegexErrorMessage"
+                (ngModelChange)="onPolicyChange()"
+                placeholder="Password must contain at least 2 numbers and 1 special character"
+                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">Error message shown when password doesn't match the custom pattern</p>
+            </div>
+          </div>
+        </ui-card>
+      </div>
+
+      <!-- Actions -->
+      <div class="flex justify-between items-center">
+        <ui-button variant="secondary" (clicked)="openResetModal()">
+          Reset to Defaults
+        </ui-button>
+        <div class="flex items-center gap-2">
+          @if (hasChanges()) {
+            <span class="text-sm text-gray-500">You have unsaved changes</span>
+          }
+          <ui-button (clicked)="onSave()" [disabled]="!hasChanges() || saving()">
+            {{ saving() ? 'Saving...' : 'Save Settings' }}
+          </ui-button>
+        </div>
+      </div>
+    }
+
+    <!-- Features Tab Content -->
+    @if (activeTab() === 'features') {
+      <div class="space-y-6">
+        <ui-card>
+          <div class="px-4 py-5 sm:p-6">
+            <div class="flex items-center gap-2 mb-2">
+              <ui-icon name="puzzle-piece" class="h-5 w-5 text-gray-400" />
+              <h3 class="text-lg font-medium text-gray-900">Module Features</h3>
+            </div>
+            <p class="text-sm text-gray-500 mb-6">
+              Control which ERP modules are available for this tenant.
+              Features disabled at the organization level cannot be enabled here.
+            </p>
+
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              @for (feature of featuresData; track feature.key) {
+                <div
+                  class="relative rounded-lg border p-4"
+                  [class]="feature.orgEnabled
+                    ? 'border-gray-200 bg-white'
+                    : 'border-gray-200 bg-gray-50 opacity-60'"
+                >
+                  <div class="flex items-start justify-between">
+                    <div class="flex-1 min-w-0">
+                      <h4 class="text-sm font-medium text-gray-900">{{ feature.displayName }}</h4>
+                      <p class="mt-1 text-xs text-gray-500">{{ feature.description }}</p>
+                      @if (!feature.orgEnabled) {
+                        <p class="mt-2 text-xs text-red-600 font-medium">
+                          Not available at organization level
+                        </p>
+                      }
+                    </div>
+                    <div class="ml-4 flex-shrink-0">
+                      <button
+                        type="button"
+                        (click)="feature.orgEnabled && onFeatureToggle(feature)"
+                        [disabled]="!feature.orgEnabled"
+                        [class]="'relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ' +
+                          (feature.enabled && feature.orgEnabled ? 'bg-primary-600' : 'bg-gray-200') +
+                          (!feature.orgEnabled ? ' cursor-not-allowed' : ' cursor-pointer')"
+                      >
+                        <span
+                          [class]="'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ' +
+                            (feature.enabled && feature.orgEnabled ? 'translate-x-5' : 'translate-x-0')"
+                        ></span>
+                      </button>
+                    </div>
+                  </div>
+                  @if (feature.enabled && feature.orgEnabled) {
+                    <div class="mt-3 pt-3 border-t border-gray-100">
+                      <label class="block text-xs font-medium text-gray-600 mb-1">Max Seats</label>
+                      <input
+                        type="number"
+                        [value]="feature.maxSeats ?? ''"
+                        (input)="onFeatureMaxSeatsChange(feature, $any($event.target).value)"
+                        min="0"
+                        [max]="feature.orgMaxSeats ?? undefined"
+                        placeholder="Unlimited"
+                        class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:ring-primary-500 focus:border-primary-500"
+                      />
+                      @if (feature.orgMaxSeats) {
+                        <p class="mt-1 text-xs text-gray-400">
+                          Organization limit: {{ feature.orgMaxSeats }} seats
+                        </p>
+                      } @else {
+                        <p class="mt-1 text-xs text-gray-400">Empty = unlimited seats</p>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          </div>
+        </ui-card>
+
+        <!-- Features Actions -->
+        <div class="flex justify-end gap-2">
+          @if (featuresHasChanges()) {
+            <span class="text-sm text-gray-500 self-center mr-2">You have unsaved changes</span>
+          }
+          <ui-button (clicked)="saveFeatures()" [disabled]="!featuresHasChanges() || featuresSaving()">
+            {{ featuresSaving() ? 'Saving...' : 'Save Features' }}
+          </ui-button>
+        </div>
+      </div>
+    }
+
+    <!-- Plugin Tab Content -->
+    @if (activePluginComponent()) {
+      <div class="plugin-tab-content">
+        <ng-container
+          *ngComponentOutlet="activePluginComponent(); injector: pluginInjector()"
+        ></ng-container>
+      </div>
+    }
+
+    <!-- Reset Confirmation Modal -->
+    <ui-modal
+      [open]="showResetModal()"
+      title="Reset Password Policy"
+      (closed)="closeResetModal()"
+    >
+      <p class="text-sm text-gray-500">
+        Are you sure you want to reset the password policy to system defaults?
+        This will remove all custom password requirements for this tenant.
+      </p>
+      <div class="mt-4 flex justify-end gap-3">
+        <ui-button variant="secondary" (clicked)="closeResetModal()">
+          Cancel
+        </ui-button>
+        <ui-button variant="danger" (clicked)="confirmReset()">
+          Reset to Defaults
+        </ui-button>
+      </div>
+    </ui-modal>
+  }
+</div>

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Oluso.Enterprise.Verification</RootNamespace>
+    <PackageId>Oluso.Enterprise.Verification</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Business (KYB) verification for Oluso: company registry checks through Dojah and Youverify, provider-hosted verification sessions, a journey step, document uploads and reviewer workflow.</Description>
+    <PackageTags>oluso;identity;kyb;verification;business-verification;cac;dojah;youverify</PackageTags>
+    <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+
+    <!-- Oluso Feature Metadata -->
+    <OlusoFeature>verification</OlusoFeature>
+    <OlusoTier>professional</OlusoTier>
+    <OlusoCategory>verification</OlusoCategory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Oluso\Oluso.csproj" />
+    <ProjectReference Include="..\Verification.Dto\Oluso.Enterprise.Verification.Dto.csproj" />
+    <ProjectReference Include="..\..\Oluso.Core.Generators\Oluso.Core.Generators.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Oluso.Enterprise.Verification.Tests" />
+  </ItemGroup>
+
+</Project>

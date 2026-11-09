@@ -1,0 +1,29 @@
+{
+  "$schema": "./blocked-packages.schema.json",
+  "description": "Blocked package versions — known compromised or vulnerable packages that must never be installed or restored. Checked by scripts/audit-dependencies.sh and CI pipelines.",
+  "npm": [
+    {
+      "name": "axios",
+      "versions": ["1.14.1", "0.30.4"],
+      "reason": "Supply chain compromise (March 2026) — malicious postinstall delivers cross-platform RAT via plain-crypto-js dependency. Attributed to UNC1069 (North Korea-nexus).",
+      "advisory": "https://www.elastic.co/security-labs/axios-one-rat-to-rule-them-all",
+      "dateAdded": "2026-04-04"
+    },
+    {
+      "name": "plain-crypto-js",
+      "versions": ["*"],
+      "reason": "Malicious package used as payload delivery mechanism in the axios supply chain attack. No legitimate use.",
+      "advisory": "https://www.elastic.co/security-labs/axios-one-rat-to-rule-them-all",
+      "dateAdded": "2026-04-04"
+    }
+  ],
+  "nuget": [
+    {
+      "name": "Example.Malicious.Package",
+      "versions": ["*"],
+      "reason": "Placeholder — replace with real entries as advisories are published.",
+      "advisory": "",
+      "dateAdded": "2026-04-04"
+    }
+  ]
+}

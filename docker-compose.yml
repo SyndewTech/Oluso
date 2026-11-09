@@ -1,0 +1,82 @@
+# Oluso Identity Server - Quick-start (public sample)
+#
+# Usage:
+#   docker compose up
+#   open https://localhost:8443  (accept the dev cert warning)
+#
+# The default ports are 8080/8443 so we don't clash with nginx/Skype/etc. on
+# 80/443. Set CADDY_HTTP_PORT=80 CADDY_HTTPS_PORT=443 in your env to use the
+# standard ports.
+#
+# Layout:
+#   caddy  - terminates TLS + serves the three Angular SPAs under /admin,
+#            /workspace, /account, reverse-proxies the rest to oluso.
+#   oluso  - .NET backend (Oluso.Sample, public-only, SQLite by default).
+#
+# Full guide: docs/docker.md
+#
+# Data: the SQLite database and the Data Protection key ring (which encrypts the
+# signing keys) live in the oluso_data volume, uploads in oluso_storage, plugins
+# in oluso_plugins, so all of it survives rebuilds (docker compose down -v
+# deletes them). To run on PostgreSQL instead:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+# For SQL Server or your own PostgreSQL, set OLUSO_DB_PROVIDER (SqlServer or
+# PostgreSQL) and OLUSO_DB_CONNECTION.
+#
+# Single origin = no CORS. Swap the deploy/Caddyfile site address for a real
+# domain and Caddy will obtain a public cert automatically (Let's Encrypt).
+
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: deploy/Caddyfile.Dockerfile
+    # 80/443 are contested on most dev machines (local nginx, another Docker
+    # stack, Skype, etc.). Map to 8080/8443 by default; override with
+    # CADDY_HTTP_PORT / CADDY_HTTPS_PORT if you prefer the standard ports.
+    ports:
+      - "${CADDY_HTTP_PORT:-8080}:80"
+      - "${CADDY_HTTPS_PORT:-8443}:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - oluso
+
+  oluso:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    expose:
+      - "5050"
+    environment:
+      - ASPNETCORE_URLS=http://+:5050
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+      # External host the user hits through Caddy. Matches the HTTPS port
+      # mapped above - if you override CADDY_HTTPS_PORT, also set PUBLIC_ORIGIN
+      # (e.g. PUBLIC_ORIGIN=https://localhost) to keep OIDC redirects + seeded
+      # client URLs in sync.
+      - Oluso__IssuerUri=${PUBLIC_ORIGIN:-https://localhost:8443}
+      - Oluso__Urls__BaseUrl=${PUBLIC_ORIGIN:-https://localhost:8443}
+      - Oluso__Urls__AdminPortalUrl=${PUBLIC_ORIGIN:-https://localhost:8443}/admin
+      - Oluso__Urls__WorkspacePortalUrl=${PUBLIC_ORIGIN:-https://localhost:8443}/workspace
+      - Oluso__Urls__AccountUiUrl=${PUBLIC_ORIGIN:-https://localhost:8443}/account
+      - Oluso__Fido2__RelyingPartyId=localhost
+      # Set OLUSO_SEED_TEST_DATA=false (with OLUSO_ADMIN_EMAIL and OLUSO_ADMIN_PASSWORD for the first
+      # start) to seed no test accounts or clients; see docs/docker.md.
+      - Sample__SeedTestData=${OLUSO_SEED_TEST_DATA:-true}
+      - Sample__SuperAdminEmail=${OLUSO_ADMIN_EMAIL:-}
+      - Sample__SuperAdminPassword=${OLUSO_ADMIN_PASSWORD:-}
+      - Oluso__Database__Provider=${OLUSO_DB_PROVIDER:-Sqlite}
+      - ConnectionStrings__OlusoDb=${OLUSO_DB_CONNECTION:-Data Source=/app/data/Oluso.db;Mode=ReadWriteCreate;Cache=Shared}
+    # data: database, Data Protection key ring; storage: uploaded files; plugins: installed plugins.
+    volumes:
+      - oluso_data:/app/data
+      - oluso_storage:/app/storage
+      - oluso_plugins:/app/plugins
+
+volumes:
+  caddy_data:
+  oluso_data:
+  oluso_storage:
+  oluso_plugins:

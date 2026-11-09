@@ -9,6 +9,12 @@ public interface IScimClientStore
 {
     Task<ScimClient?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
     Task<ScimClient?> GetByTokenHashAsync(string tokenHash, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolve the SCIM client linked to an OAuth client within a tenant, used
+    /// by the client-credentials authentication path.
+    /// </summary>
+    Task<ScimClient?> GetByOAuthClientIdAsync(string tenantId, string oauthClientId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ScimClient>> GetByTenantAsync(string tenantId, CancellationToken cancellationToken = default);
     Task<ScimClient> CreateAsync(ScimClient client, CancellationToken cancellationToken = default);
     Task UpdateAsync(ScimClient client, CancellationToken cancellationToken = default);

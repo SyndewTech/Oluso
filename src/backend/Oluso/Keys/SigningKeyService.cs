@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Oluso.Core;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
+using Oluso.Core.Storage;
 
 namespace Oluso.Keys;
 
@@ -85,7 +87,7 @@ public class SigningKeyService : ISigningKeyService
             ActivatedAt = request.ActivateImmediately ? DateTime.UtcNow : request.ActivateAt,
             ExpiresAt = request.ExpiresAt ?? DateTime.UtcNow.AddDays(request.LifetimeDays ?? 90),
             Priority = request.Priority ?? 100,
-            IncludeInJwks = true,
+            IncludeInJwks = !DataProtectionKeys.IsDataProtectionKey(request.ClientId),
             X5t = keyResult.X5t,
             X5c = keyResult.X5c
         };
@@ -100,13 +102,19 @@ public class SigningKeyService : ISigningKeyService
     }
 
     /// <summary>
-    /// Get signing credentials for token generation (private key stays in provider)
+    /// Get signing credentials for token generation (private key stays in provider).
+    /// Falls back to _platform tenant when no tenant context exists (e.g. OIDC token endpoint).
     /// </summary>
-    public async Task<SigningCredentials?> GetSigningCredentialsAsync(
+    public Task<SigningCredentials?> GetSigningCredentialsAsync(
+        string? clientId = null,
+        CancellationToken cancellationToken = default) =>
+        GetSigningCredentialsForTenantAsync(_tenantContext.TenantId ?? PlatformConstants.TenantId, clientId, cancellationToken);
+
+    public async Task<SigningCredentials?> GetSigningCredentialsForTenantAsync(
+        string tenantId,
         string? clientId = null,
         CancellationToken cancellationToken = default)
     {
-        var tenantId = _tenantContext.TenantId;
         var key = await _keyStore.GetActiveSigningKeyAsync(tenantId, clientId, cancellationToken);
 
         if (key == null)
@@ -127,13 +135,14 @@ public class SigningKeyService : ISigningKeyService
     }
 
     /// <summary>
-    /// Get validation keys (public only) for token verification
+    /// Get validation keys (public only) for token verification.
+    /// Falls back to _platform tenant when no tenant context exists.
     /// </summary>
     public async Task<IEnumerable<SecurityKey>> GetValidationKeysAsync(
         string? clientId = null,
         CancellationToken cancellationToken = default)
     {
-        var tenantId = _tenantContext.TenantId;
+        var tenantId = _tenantContext.TenantId ?? PlatformConstants.TenantId;
         var keys = clientId != null
             ? await _keyStore.GetByClientAsync(tenantId, clientId, cancellationToken)
             : await _keyStore.GetByTenantAsync(tenantId, cancellationToken);
@@ -161,7 +170,8 @@ public class SigningKeyService : ISigningKeyService
     public async Task<JsonWebKeySet> GetJwksAsync(CancellationToken cancellationToken = default)
     {
         var tenantId = _tenantContext.TenantId;
-        var keys = await _keyStore.GetJwksKeysAsync(tenantId, cancellationToken);
+        var grace = await GetVerificationGraceAsync(tenantId, cancellationToken);
+        var keys = await _keyStore.GetJwksKeysAsync(tenantId, grace, cancellationToken);
 
         var jwks = new JsonWebKeySet();
 
@@ -183,11 +193,23 @@ public class SigningKeyService : ISigningKeyService
     /// <summary>
     /// Rotate keys using configured provider
     /// </summary>
-    public async Task RotateKeysAsync(
+    public Task RotateKeysAsync(
         string? clientId = null,
         CancellationToken cancellationToken = default)
+        => RotateKeysForTenantAsync(_tenantContext.TenantId, clientId, cancellationToken);
+
+    /// <summary>
+    /// Rotation with an explicit tenant, so the scheduled pass can rotate every
+    /// tenant's keys from a background job that has no ambient tenant context.
+    /// </summary>
+    private async Task RotateKeysForTenantAsync(
+        string? tenantId,
+        string? clientId,
+        CancellationToken cancellationToken)
     {
-        var tenantId = _tenantContext.TenantId;
+        // Rotation would replace the key with a signing key and clean up the old ones, losing what they protected.
+        if (DataProtectionKeys.IsDataProtectionKey(clientId))
+            throw new InvalidOperationException($"Keys of {clientId} protect stored data and are not rotated.");
 
         _logger.LogInformation("Starting key rotation for tenant {TenantId}, client {ClientId}", tenantId, clientId);
 
@@ -233,6 +255,9 @@ public class SigningKeyService : ISigningKeyService
         // Cleanup old keys
         await CleanupOldKeysAsync(tenantId, clientId, config.MaxKeys, config.GracePeriodDays, cancellationToken);
 
+        // Invalidate cached credentials so the new key is picked up
+        SigningCredentialStore.InvalidateCache(tenantId);
+
         _logger.LogInformation("Key rotation completed. New key: {KeyId}", newKey.KeyId);
     }
 
@@ -259,6 +284,9 @@ public class SigningKeyService : ISigningKeyService
 
         await _keyStore.UpdateAsync(key, cancellationToken);
 
+        // Invalidate cached credentials so the revoked key is no longer used
+        SigningCredentialStore.InvalidateCache(key.TenantId);
+
         _logger.LogWarning("Key {KeyId} revoked: {Reason}", keyId, reason);
         return true;
     }
@@ -266,30 +294,83 @@ public class SigningKeyService : ISigningKeyService
     /// <summary>
     /// Process automatic key rotation for expiring keys
     /// </summary>
+    public async Task EnsurePlatformSigningKeyAsync(CancellationToken cancellationToken = default)
+    {
+        if (await _keyStore.GetActiveSigningKeyAsync(PlatformConstants.TenantId, clientId: null, cancellationToken) is { TenantId: PlatformConstants.TenantId })
+            return;
+
+        var key = await GenerateKeyAsync(new GenerateKeyRequest
+        {
+            TenantId = PlatformConstants.TenantId,
+            Name = "Platform signing key",
+            KeyType = SigningKeyType.RSA,
+            Algorithm = "RS256",
+            KeySize = 2048,
+            LifetimeDays = 90,
+            ActivateImmediately = true,
+            StorageProvider = _providerRegistry.GetDefaultProvider().ProviderType
+        }, cancellationToken);
+        _logger.LogInformation("Provisioned platform signing key {KeyId}", key.KeyId);
+    }
+
     public async Task ProcessScheduledRotationsAsync(CancellationToken cancellationToken = default)
     {
-        var expiringKeys = await _keyStore.GetExpiringKeysAsync(14, cancellationToken);
+        // 1. Keys past their expiry stop being "Active": they can no longer sign
+        //    (the store already refuses them) and the status now says so. They
+        //    stay verifiable for the grace window through the Expired status.
+        var now = DateTime.UtcNow;
+        // Data-protection keys never sign and must keep reading what they protected, so they are left out.
+        var expiredKeys = (await _keyStore.GetExpiringKeysAsync(0, cancellationToken))
+            .Where(k => k.ExpiresAt.HasValue && k.ExpiresAt.Value <= now && !DataProtectionKeys.IsDataProtectionKey(k.ClientId))
+            .ToList();
+        foreach (var key in expiredKeys)
+        {
+            key.Status = SigningKeyStatus.Expired;
+            await _keyStore.UpdateAsync(key, cancellationToken);
+            SigningCredentialStore.InvalidateCache(key.TenantId ?? PlatformConstants.TenantId);
+            _logger.LogInformation("Signing key {KeyId} for tenant {TenantId} expired at {ExpiresAt}",
+                key.KeyId, key.TenantId, key.ExpiresAt);
+        }
 
-        foreach (var keyGroup in expiringKeys.GroupBy(k => new { k.TenantId, k.ClientId }))
+        // 2. Rotate ahead of expiry, per tenant/client, using that pair's lead time.
+        //    Groups whose key just expired are included so they get a fresh key
+        //    here rather than from the sign-in fallback.
+        var candidates = (await _keyStore.GetExpiringKeysAsync(MaxRotationLeadDays, cancellationToken))
+            .Where(k => !DataProtectionKeys.IsDataProtectionKey(k.ClientId));
+        foreach (var keyGroup in candidates.Concat(expiredKeys).GroupBy(k => new { k.TenantId, k.ClientId }))
         {
             try
             {
+                var config = await _keyStore.GetRotationConfigAsync(keyGroup.Key.TenantId, keyGroup.Key.ClientId, cancellationToken);
+                if (config is { Enabled: false })
+                {
+                    continue;
+                }
+
+                var leadDays = config?.RotationLeadDays ?? new KeyRotationConfig().RotationLeadDays;
+                var rotationDue = keyGroup.Any(k => k.ExpiresAt.HasValue && k.ExpiresAt.Value <= now.AddDays(leadDays));
+                if (!rotationDue)
+                {
+                    continue;
+                }
+
                 var keys = keyGroup.Key.ClientId != null
                     ? await _keyStore.GetByClientAsync(keyGroup.Key.TenantId, keyGroup.Key.ClientId, cancellationToken)
                     : await _keyStore.GetByTenantAsync(keyGroup.Key.TenantId, cancellationToken);
 
                 var hasNewerKey = keys.Any(k =>
                     k.Status == SigningKeyStatus.Active &&
-                    !k.IsExpiringSoon &&
+                    k.ExpiresAt.HasValue &&
+                    k.ExpiresAt.Value > now.AddDays(leadDays) &&
                     k.Priority >= 100);
 
                 if (!hasNewerKey)
                 {
                     _logger.LogInformation(
-                        "Auto-rotating keys for tenant {TenantId}, client {ClientId}",
-                        keyGroup.Key.TenantId, keyGroup.Key.ClientId);
+                        "Auto-rotating keys for tenant {TenantId}, client {ClientId} ({LeadDays} days before expiry)",
+                        keyGroup.Key.TenantId, keyGroup.Key.ClientId, leadDays);
 
-                    await RotateKeysAsync(keyGroup.Key.ClientId, cancellationToken);
+                    await RotateKeysForTenantAsync(keyGroup.Key.TenantId, keyGroup.Key.ClientId, cancellationToken);
                 }
             }
             catch (Exception ex)
@@ -302,6 +383,20 @@ public class SigningKeyService : ISigningKeyService
     }
 
     #region Private Methods
+
+    /// <summary>Upper bound on the rotation lead time considered by the scheduled pass.</summary>
+    private const int MaxRotationLeadDays = 60;
+
+    /// <summary>
+    /// How long an expired key keeps verifying tokens: the tenant's rotation grace
+    /// period, which is also how long the key stays published in the JWKS.
+    /// </summary>
+    private async Task<TimeSpan> GetVerificationGraceAsync(string? tenantId, CancellationToken cancellationToken)
+    {
+        var config = await _keyStore.GetRotationConfigAsync(tenantId, null, cancellationToken);
+        var days = config?.GracePeriodDays ?? new KeyRotationConfig().GracePeriodDays;
+        return TimeSpan.FromDays(Math.Max(1, days));
+    }
 
     private static string GetDefaultAlgorithm(SigningKeyType keyType) => keyType switch
     {

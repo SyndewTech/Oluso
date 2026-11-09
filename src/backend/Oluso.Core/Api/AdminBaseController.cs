@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 
@@ -19,6 +21,7 @@ namespace Oluso.Core.Api;
 /// </summary>
 [ApiController]
 [Authorize(Policy = "AdminApi")]
+[ApiExplorerSettings(GroupName = "admin")]
 public abstract class AdminBaseController : ControllerBase
 {
     private readonly ITenantContext _tenantContext;
@@ -34,9 +37,10 @@ public abstract class AdminBaseController : ControllerBase
     protected ITenantContext TenantContext => _tenantContext;
 
     /// <summary>
-    /// Gets the current tenant ID
+    /// Gets the current tenant ID, throwing if not available.
     /// </summary>
-    protected string? TenantId => _tenantContext.TenantId;
+    protected string TenantId => _tenantContext.TenantId
+        ?? throw new UnauthorizedAccessException("Tenant ID not found in token");
 
     /// <summary>
     /// Gets the admin user's ID from the token (sub or NameIdentifier claim).
@@ -52,6 +56,12 @@ public abstract class AdminBaseController : ControllerBase
     /// </summary>
     protected string RequireAdminUserId =>
         AdminUserId ?? throw new UnauthorizedAccessException("No subject in token");
+
+    /// <summary>
+    /// Gets the current user's ID (alias for RequireAdminUserId).
+    /// Throws if not authenticated.
+    /// </summary>
+    protected string UserId => RequireAdminUserId;
 
     /// <summary>
     /// Gets the admin user's display name from the token
@@ -77,46 +87,35 @@ public abstract class AdminBaseController : ControllerBase
     protected string? UserAgent => HttpContext.Request.Headers.UserAgent.FirstOrDefault();
 
     /// <summary>
-    /// Checks if the admin user has a specific role
+    /// Checks if the admin user has a specific role.
+    /// Uses <see cref="GetAdminRoles"/> to handle JWT claim type variations
+    /// (e.g., "role" vs ClaimTypes.Role) and JSON array role claims.
     /// </summary>
-    protected bool HasRole(string role) => User.IsInRole(role);
+    protected bool HasRole(string role) =>
+        GetAdminRoles().Any(r => string.Equals(r, role, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// Checks if the admin user has any of the specified roles
+    /// Checks if the admin user has any of the specified roles.
+    /// Uses <see cref="GetAdminRoles"/> to handle JWT claim type variations
+    /// (e.g., "role" vs ClaimTypes.Role) and JSON array role claims.
     /// </summary>
-    protected bool HasAnyRole(params string[] roles) =>
-        roles.Any(role => User.IsInRole(role));
+    protected bool HasAnyRole(params string[] roles)
+    {
+        var userRoles = GetAdminRoles();
+        return roles.Any(role => userRoles.Any(ur => string.Equals(ur, role, StringComparison.OrdinalIgnoreCase)));
+    }
 
     /// <summary>
-    /// Gets all roles for the current admin user
+    /// Gets all roles for the current admin user.
+    /// Checks multiple claim types because JWT bearer MapInboundClaims
+    /// may remap "role" to the long ClaimTypes.Role URI.
     /// </summary>
-    protected IEnumerable<string> GetAdminRoles() =>
-        User.FindAll("role").Select(c => c.Value);
+    protected IEnumerable<string> GetAdminRoles() => User.GetAdminRoles();
 
     /// <summary>
     /// Checks if the current admin is a super admin (platform-wide access)
     /// </summary>
-    protected bool IsSuperAdmin
-    {
-        get
-        {
-            // Check for super_admin claim
-            var superAdminClaim = User.FindFirst("super_admin")?.Value;
-            if (superAdminClaim is "true" or "1")
-                return true;
-
-            // Check for SuperAdmin or SystemAdmin role (with null tenant_id)
-            var userTenantId = User.FindFirst("tenant_id")?.Value
-                ?? User.FindFirst("tid")?.Value;
-
-            // Only users with no tenant scope can be SuperAdmin
-            if (!string.IsNullOrEmpty(userTenantId))
-                return false;
-
-            return HasRole("SuperAdmin") || HasRole("SystemAdmin") ||
-                   HasRole("super_admin") || HasRole("platform_admin");
-        }
-    }
+    protected bool IsSuperAdmin => User.IsSuperAdmin();
 
     #region Organization Context
 
@@ -187,11 +186,10 @@ public abstract class AdminBaseController : ControllerBase
     }
 
     /// <summary>
-    /// Gets all organization IDs the user is a member of (from JWT claims).
-    /// This returns ALL organizations, not just the current one.
+    /// Gets all organization IDs the user is a member of (from claims).
+    /// Uses "org_ids" JSON array claim (standardized across cookie and OIDC auth).
     /// </summary>
-    protected IEnumerable<string> AllOrganizationIds =>
-        User.FindAll("org_id").Select(c => c.Value);
+    protected IEnumerable<string> AllOrganizationIds => User.GetOrganizationIds();
 
     /// <summary>
     /// Gets the user's role in a specific organization (from JWT claims).
@@ -227,7 +225,21 @@ public abstract class AdminBaseController : ControllerBase
     /// Checks if the user is an org admin in any organization.
     /// </summary>
     protected bool IsAnyOrgAdmin =>
-        User.FindFirst("is_org_admin")?.Value == "true";
+        string.Equals(User.FindFirst("is_org_admin")?.Value, "true", StringComparison.OrdinalIgnoreCase)
+        || User.FindFirst("is_org_admin")?.Value == "1";
+
+    /// <summary>
+    /// Whether the caller may administer the given tenant when it is named in the
+    /// route (api/admin/tenants/{tenantId}/...): SuperAdmins any tenant, OrgAdmins
+    /// the tenants of their organizations, TenantAdmins their own.
+    /// </summary>
+    protected bool CanAccessTenant(Tenant tenant)
+    {
+        if (IsSuperAdmin) return true;
+        if (!string.IsNullOrEmpty(tenant.OrganizationId) && AllOrganizationIds.Contains(tenant.OrganizationId))
+            return true;
+        return tenant.Id == TenantId;
+    }
 
     #endregion
 }

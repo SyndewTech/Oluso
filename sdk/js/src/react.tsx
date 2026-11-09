@@ -5,14 +5,17 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
   type FormEvent,
 } from 'react';
 import { OlusoClient, OlusoError } from './client';
+import { mountJourney, type JourneyLabels } from './journey/render';
 import type {
   OlusoConfig,
   JourneyInfo,
   JourneyField,
+  JourneySession,
   SubmissionResult,
 } from './types';
 
@@ -67,8 +70,8 @@ export function useOluso(): OlusoClient {
 // ============================================================================
 
 export interface UseJourneyOptions {
-  /** Journey/policy ID */
-  journeyId: string;
+  /** The journey's slug (as in /journey/start/{slug}) */
+  slug: string;
   /** Callback on successful submission */
   onSuccess?: (result: SubmissionResult) => void;
   /** Callback on error */
@@ -105,7 +108,7 @@ export interface UseJourneyResult {
  * ```tsx
  * function WaitlistForm() {
  *   const { journey, values, setValue, submit, isSubmitting, fieldErrors } = useJourney({
- *     journeyId: 'waitlist',
+ *     slug: 'waitlist',
  *     onSuccess: () => alert('Thanks for signing up!'),
  *   });
  *
@@ -149,7 +152,7 @@ export function useJourney(options: UseJourneyOptions): UseJourneyResult {
       try {
         setIsLoading(true);
         setError(null);
-        const data = await client.getJourney(options.journeyId);
+        const data = await client.getJourney(options.slug);
         if (!cancelled) {
           setJourney(data);
         }
@@ -169,7 +172,7 @@ export function useJourney(options: UseJourneyOptions): UseJourneyResult {
     return () => {
       cancelled = true;
     };
-  }, [client, options.journeyId]);
+  }, [client, options.slug]);
 
   const setValue = useCallback((field: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [field]: value }));
@@ -191,7 +194,7 @@ export function useJourney(options: UseJourneyOptions): UseJourneyResult {
       setError(null);
       setFieldErrors({});
 
-      const result = await client.submit(options.journeyId, values);
+      const result = await client.submit(options.slug, values);
 
       if (result.success) {
         options.onSuccess?.(result);
@@ -235,8 +238,8 @@ export function useJourney(options: UseJourneyOptions): UseJourneyResult {
 // ============================================================================
 
 export interface JourneyFormProps {
-  /** Journey/policy ID */
-  journeyId: string;
+  /** The journey's slug (as in /journey/start/{slug}) */
+  slug: string;
   /** Callback on successful submission */
   onSuccess?: (result: SubmissionResult) => void;
   /** Callback on error */
@@ -269,14 +272,14 @@ export interface FieldRenderProps {
  * @example
  * ```tsx
  * <JourneyForm
- *   journeyId="waitlist"
+ *   slug="waitlist"
  *   onSuccess={() => console.log('Submitted!')}
  *   submitText="Join Waitlist"
  * />
  * ```
  */
 export function JourneyForm({
-  journeyId,
+  slug,
   onSuccess,
   onError,
   className,
@@ -296,7 +299,7 @@ export function JourneyForm({
     fieldErrors,
     setValue,
     submit,
-  } = useJourney({ journeyId, onSuccess, onError });
+  } = useJourney({ slug, onSuccess, onError });
 
   const [submitted, setSubmitted] = useState<SubmissionResult | null>(null);
 
@@ -481,12 +484,77 @@ function DefaultField({ field, value, onChange, error }: DefaultFieldProps) {
 }
 
 // ============================================================================
+// Journey Component (any journey, step by step)
+// ============================================================================
+
+export interface JourneyProps {
+  /** Start this journey by slug (a waitlist, a contact form, a survey, a sign-up) */
+  slug?: string;
+  /** Input for the first step */
+  data?: Record<string, unknown>;
+  /** Continue a session your backend started, e.g. for the signed-in user */
+  session?: JourneySession;
+  /** Start the session yourself, e.g. a sign-in journey with PKCE */
+  start?: () => Promise<JourneySession>;
+  onStep?: (session: JourneySession) => void;
+  onComplete?: (session: JourneySession) => void | Promise<void>;
+  onError?: (error: Error, session?: JourneySession) => void;
+  onRedirect?: (url: string, session: JourneySession) => void;
+  showCompletion?: boolean;
+  theme?: 'light' | 'dark' | 'auto';
+  unstyled?: boolean;
+  labels?: Partial<JourneyLabels>;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+/**
+ * Render any journey in place and run it step by step: forms with uploads, sign-in with MFA or passkeys,
+ * verification codes, consent. Uses the client from OlusoProvider.
+ *
+ * @example
+ * ```tsx
+ * <Journey slug="contact-us" onComplete={() => setSent(true)} />
+ * ```
+ */
+export function Journey({ className, style, ...options }: JourneyProps) {
+  const client = useOluso();
+  const host = useRef<HTMLDivElement>(null);
+  const latest = useRef(options);
+  latest.current = options;
+
+  useEffect(() => {
+    if (!host.current) return;
+    const mount = mountJourney(host.current, {
+      client,
+      slug: options.slug,
+      data: options.data,
+      session: options.session,
+      start: options.start,
+      showCompletion: options.showCompletion,
+      theme: options.theme,
+      unstyled: options.unstyled,
+      labels: options.labels,
+      onStep: (s) => latest.current.onStep?.(s),
+      onComplete: (s) => latest.current.onComplete?.(s),
+      onError: (e, s) => latest.current.onError?.(e, s),
+      onRedirect: latest.current.onRedirect ? (url, s) => latest.current.onRedirect?.(url, s) : undefined,
+    });
+    return () => mount.destroy();
+    // A new journey (slug or session) starts a new run; callbacks are read through the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, options.slug, options.session?.sessionId]);
+
+  return <div ref={host} className={className} style={style} />;
+}
+
+// ============================================================================
 // Iframe Embed Component
 // ============================================================================
 
 export interface JourneyEmbedProps {
-  /** Journey/policy ID */
-  journeyId: string;
+  /** The journey's slug (as in /journey/start/{slug}) */
+  slug: string;
   /** Width of the iframe */
   width?: string | number;
   /** Height of the iframe */
@@ -509,14 +577,14 @@ export interface JourneyEmbedProps {
  * @example
  * ```tsx
  * <JourneyEmbed
- *   journeyId="waitlist"
+ *   slug="waitlist"
  *   height={400}
  *   onComplete={(result) => console.log('Submitted!', result)}
  * />
  * ```
  */
 export function JourneyEmbed({
-  journeyId,
+  slug,
   width = '100%',
   height = 500,
   theme,
@@ -526,14 +594,14 @@ export function JourneyEmbed({
   onComplete,
 }: JourneyEmbedProps) {
   const client = useOluso();
-  const src = client.getEmbedUrl(journeyId, { theme, hideHeader });
+  const src = client.getEmbedUrl(slug, { theme, hideHeader });
 
   useEffect(() => {
     if (!onComplete) return;
 
     const handleMessage = (event: MessageEvent) => {
       // Verify origin matches server URL
-      if (!client.getJourneyUrl(journeyId).startsWith(event.origin)) {
+      if (!client.getJourneyUrl(slug).startsWith(event.origin)) {
         return;
       }
 
@@ -544,7 +612,7 @@ export function JourneyEmbed({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [client, journeyId, onComplete]);
+  }, [client, slug, onComplete]);
 
   return (
     <iframe
@@ -556,8 +624,8 @@ export function JourneyEmbed({
         border: 'none',
         ...style,
       }}
-      title={`Oluso Journey: ${journeyId}`}
-      allow="clipboard-write"
+      title={`Oluso Journey: ${slug}`}
+      allow="clipboard-write; camera; microphone"
     />
   );
 }

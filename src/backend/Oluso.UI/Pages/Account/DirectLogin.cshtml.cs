@@ -4,7 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Protocols;
 using Oluso.Core.Services;
+using Microsoft.AspNetCore.RateLimiting;
+using Oluso.Core.Security;
 
 namespace Oluso.UI.Pages.Account;
 
@@ -21,19 +24,23 @@ namespace Oluso.UI.Pages.Account;
 /// 6. Redirects to /account/external-callback (same as OAuth/SAML)
 /// 7. ExternalCallback processes and signs into application
 /// </summary>
+[EnableRateLimiting(SignInRateLimitPolicies.SignIn)]
 public class DirectLoginModel : PageModel
 {
+    private readonly IProtocolStateStore _protocolStateStore;
     private readonly IExternalProviderConfigStore? _providerStore;
     private readonly IEnumerable<IDirectIdentityProvider> _identityProviders;
     private readonly ITenantContext? _tenantContext;
     private readonly ILogger<DirectLoginModel> _logger;
 
     public DirectLoginModel(
+        IProtocolStateStore protocolStateStore,
         ILogger<DirectLoginModel> logger,
         IEnumerable<IDirectIdentityProvider> identityProviders,
         IExternalProviderConfigStore? providerStore = null,
         ITenantContext? tenantContext = null)
     {
+        _protocolStateStore = protocolStateStore;
         _logger = logger;
         _identityProviders = identityProviders;
         _providerStore = providerStore;
@@ -55,6 +62,12 @@ public class DirectLoginModel : PageModel
 
     public async Task<IActionResult> OnGetAsync()
     {
+        if (!await AuthFlowGate.HasActiveFlowAsync(_protocolStateStore, ReturnUrl))
+        {
+            _logger.LogWarning("Direct access to /Account/DirectLogin rejected (no protocol flow in flight). ReturnUrl={ReturnUrl}", ReturnUrl);
+            return NotFound();
+        }
+
         if (string.IsNullOrEmpty(Scheme))
         {
             return RedirectToPage("/Account/Login", new { returnUrl = ReturnUrl, error = "No provider specified" });
@@ -122,8 +135,8 @@ public class DirectLoginModel : PageModel
         _logger.LogDebug("Attempting direct authentication for user {Username} via {Provider}",
             Input.Username, providerInfo.ProviderType);
 
-        // Authenticate against the provider
-        var authResult = await identityProvider.AuthenticateAsync(Input.Username, Input.Password);
+        // Authenticate against the provider with the provider-specific configuration
+        var authResult = await identityProvider.AuthenticateAsync(Input.Username, Input.Password, providerInfo);
 
         if (!authResult.Succeeded || authResult.Principal == null)
         {

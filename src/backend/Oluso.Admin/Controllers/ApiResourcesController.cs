@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Admin.Dto.Resources;
 
 namespace Oluso.Admin.Controllers;
 
@@ -31,15 +33,20 @@ public class ResourcesController : AdminBaseController
     }
 
     /// <summary>
-    /// Get all resources
+    /// Get all resources with pagination
     /// </summary>
     [HttpGet]
     [RequirePermission(AdminPermissions.ResourcesRead)]
-    public async Task<ActionResult<IEnumerable<ResourceDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<ResourceDto>>> GetAll(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken cancellationToken = default)
     {
         var resources = await _resourceStore.GetAllResourcesAsync(cancellationToken);
-        var dtos = resources.Select(MapToDto);
-        return Ok(dtos);
+        var allDtos = resources.Select(MapToDto).ToList();
+
+        var items = allDtos.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Ok(PagedResult<ResourceDto>.Create(items, allDtos.Count, page, pageSize));
     }
 
     /// <summary>
@@ -143,7 +150,7 @@ public class ResourcesController : AdminBaseController
     [RequirePermission(AdminPermissions.ResourcesWrite)]
     public async Task<ActionResult<ResourceDto>> Update(
         int id,
-        [FromBody] UpdateResourceRequest request,
+        [FromBody] ResourceDto request,
         CancellationToken cancellationToken)
     {
         var existing = await _resourceStore.GetResourceByIdAsync(id, cancellationToken);
@@ -157,27 +164,21 @@ public class ResourcesController : AdminBaseController
             return BadRequest(new { error = claimValidationError });
         }
 
-        if (request.DisplayName != null) existing.DisplayName = request.DisplayName;
-        if (request.Description != null) existing.Description = request.Description;
-        if (request.Enabled.HasValue) existing.Enabled = request.Enabled.Value;
-        if (request.ShowInDiscoveryDocument.HasValue) existing.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument.Value;
+        existing.DisplayName = request.DisplayName;
+        existing.Description = request.Description;
+        existing.Enabled = request.Enabled;
+        existing.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument;
 
-        if (request.AllowedScopes != null)
+        existing.AllowedScopes.Clear();
+        foreach (var scope in request.AllowedScopes)
         {
-            existing.AllowedScopes.Clear();
-            foreach (var scope in request.AllowedScopes)
-            {
-                existing.AllowedScopes.Add(new ResourceScope { Scope = scope });
-            }
+            existing.AllowedScopes.Add(new ResourceScope { Scope = scope });
         }
 
-        if (request.UserClaims != null)
+        existing.UserClaims.Clear();
+        foreach (var claim in request.UserClaims)
         {
-            existing.UserClaims.Clear();
-            foreach (var claim in request.UserClaims)
-            {
-                existing.UserClaims.Add(new ResourceClaim { Type = claim });
-            }
+            existing.UserClaims.Add(new ResourceClaim { Type = claim });
         }
 
         var updated = await _resourceStore.UpdateResourceAsync(existing, cancellationToken);
@@ -341,66 +342,3 @@ public class ResourcesController : AdminBaseController
         return null;
     }
 }
-
-#region DTOs
-
-public class ResourceDto
-{
-    public int Id { get; set; }
-    /// <summary>
-    /// The absolute URI identifying this resource (RFC 8707)
-    /// </summary>
-    public string Uri { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool Enabled { get; set; }
-    public bool ShowInDiscoveryDocument { get; set; }
-    public List<string> AllowedScopes { get; set; } = new();
-    public List<string> UserClaims { get; set; } = new();
-    public DateTime Created { get; set; }
-    public DateTime? Updated { get; set; }
-}
-
-public class CreateResourceRequest
-{
-    /// <summary>
-    /// The absolute URI identifying this resource (RFC 8707).
-    /// Must be a valid absolute URI without a fragment component.
-    /// </summary>
-    public string Uri { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Enabled { get; set; }
-    public bool? ShowInDiscoveryDocument { get; set; }
-    /// <summary>
-    /// Scopes that are valid for this resource.
-    /// If empty, all scopes are allowed.
-    /// </summary>
-    public List<string>? AllowedScopes { get; set; }
-    public List<string>? UserClaims { get; set; }
-}
-
-public class UpdateResourceRequest
-{
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public bool? Enabled { get; set; }
-    public bool? ShowInDiscoveryDocument { get; set; }
-    public List<string>? AllowedScopes { get; set; }
-    public List<string>? UserClaims { get; set; }
-}
-
-public class AddScopeRequest
-{
-    public string ScopeName { get; set; } = null!;
-}
-
-public class ApiScopeSummaryDto
-{
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-}
-
-#endregion
-

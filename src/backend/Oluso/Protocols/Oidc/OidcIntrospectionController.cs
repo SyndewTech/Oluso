@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Events;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
 
@@ -15,13 +16,16 @@ namespace Oluso.Protocols.Oidc;
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
 
-public class OidcIntrospectionController : ControllerBase
+public class OidcIntrospectionController : OidcControllerBase
 {
     private readonly IClientAuthenticator _clientAuthenticator;
     private readonly IPersistedGrantStore _grantStore;
     private readonly IResourceStore _resourceStore;
     private readonly ISigningCredentialStore _signingCredentialStore;
     private readonly IIssuerResolver _issuerResolver;
+    private readonly ITenantContext _tenantContext;
+    private readonly ITenantStore _tenants;
+    private readonly IOlusoEventService? _eventService;
     private readonly ILogger<OidcIntrospectionController> _logger;
 
     public OidcIntrospectionController(
@@ -30,13 +34,19 @@ public class OidcIntrospectionController : ControllerBase
         IResourceStore resourceStore,
         ISigningCredentialStore signingCredentialStore,
         IIssuerResolver issuerResolver,
-        ILogger<OidcIntrospectionController> logger)
+        ITenantContext tenantContext,
+        ITenantStore tenants,
+        ILogger<OidcIntrospectionController> logger,
+        IOlusoEventService? eventService = null)
     {
+        _tenants = tenants;
         _clientAuthenticator = clientAuthenticator;
         _grantStore = grantStore;
         _resourceStore = resourceStore;
         _signingCredentialStore = signingCredentialStore;
         _issuerResolver = issuerResolver;
+        _tenantContext = tenantContext;
+        _eventService = eventService;
         _logger = logger;
     }
 
@@ -74,6 +84,18 @@ public class OidcIntrospectionController : ControllerBase
         // Try to introspect the token
         var response = await IntrospectTokenAsync(token, tokenTypeHint, callingClient, cancellationToken);
 
+        if (_eventService != null)
+        {
+            await _eventService.RaiseAsync(new TokenIntrospectedEvent
+            {
+                TenantId = _tenantContext.TenantId,
+                ClientId = callingClient.ClientId,
+                TokenType = response.TokenType ?? tokenTypeHint ?? "access_token",
+                IsActive = response.Active,
+                SubjectId = response.Sub
+            }, cancellationToken);
+        }
+
         return Ok(response);
     }
 
@@ -88,7 +110,7 @@ public class OidcIntrospectionController : ControllerBase
         if (grant != null)
         {
             // Check if calling client is authorized to introspect this token
-            if (!await IsAuthorizedToIntrospectAsync(callingClient, grant.ClientId, grant.Data, cancellationToken))
+            if (!IsAuthorizedToIntrospect(callingClient, grant.ClientId, grant.Type == "reference_token", ReferenceTokenAudiences(grant.Data)))
             {
                 _logger.LogWarning(
                     "Client {CallingClient} attempted to introspect token owned by {TokenClient}",
@@ -104,62 +126,52 @@ public class OidcIntrospectionController : ControllerBase
     }
 
     /// <summary>
-    /// Check if the calling client is authorized to introspect a token.
-    /// A client can introspect if:
-    /// 1. It owns the token (is the client the token was issued to)
-    /// 2. The calling client's ID is in the token's audience (RFC 8707 resource-based)
+    /// Whether the calling client may introspect a token (RFC 7662 §2.1): the client the token was
+    /// issued to, or, for an access token, a resource server for one of the token's audiences
+    /// (<see cref="Client.IntrospectionResources"/>). Refresh tokens are only ever their client's.
     /// </summary>
-    private Task<bool> IsAuthorizedToIntrospectAsync(
+    private static bool IsAuthorizedToIntrospect(
         Client callingClient,
         string tokenClientId,
-        string? tokenData,
-        CancellationToken cancellationToken)
+        bool isAccessToken,
+        IReadOnlyCollection<string> audiences)
     {
-        // Client owns the token
         if (callingClient.ClientId == tokenClientId)
         {
-            return Task.FromResult(true);
+            return true;
         }
 
-        // Check if calling client is in the token's audience (RFC 8707)
-        // Per RFC 8707, resources become the audience in tokens
-        if (!string.IsNullOrEmpty(tokenData))
+        return isAccessToken
+            && callingClient.IntrospectionResources.Count > 0
+            && audiences.Any(a => callingClient.IntrospectionResources.Contains(a, StringComparer.Ordinal));
+    }
+
+    /// <summary>The audiences saved with a reference token; none for other grants or unreadable data.</summary>
+    private static IReadOnlyCollection<string> ReferenceTokenAudiences(string? grantData)
+    {
+        if (string.IsNullOrEmpty(grantData))
         {
-            try
-            {
-                var data = JsonSerializer.Deserialize<Dictionary<string, object>>(tokenData);
-
-                // Check if the calling client's ID is in the audience
-                if (data?.TryGetValue("Audience", out var audObj) == true)
-                {
-                    var audiences = JsonSerializer.Deserialize<List<string>>(audObj.ToString()!);
-                    if (audiences != null && audiences.Contains(callingClient.ClientId))
-                    {
-                        return Task.FromResult(true);
-                    }
-                }
-
-                // Also check for Resources (RFC 8707 resource parameter values)
-                if (data?.TryGetValue("Resources", out var resObj) == true)
-                {
-                    var resources = JsonSerializer.Deserialize<List<string>>(resObj.ToString()!);
-                    // Check if calling client's ID matches any resource URI
-                    // This allows resource servers to introspect tokens for their resources
-                    if (resources != null && resources.Any(r =>
-                        r == callingClient.ClientId ||
-                        r.EndsWith($"/{callingClient.ClientId}", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        return Task.FromResult(true);
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore deserialization errors
-            }
+            return Array.Empty<string>();
         }
 
-        return Task.FromResult(false);
+        try
+        {
+            using var data = JsonDocument.Parse(grantData);
+            if (data.RootElement.ValueKind == JsonValueKind.Object
+                && data.RootElement.TryGetProperty("Audiences", out var audiences)
+                && audiences.ValueKind == JsonValueKind.Array)
+            {
+                return audiences.EnumerateArray()
+                    .Where(a => a.ValueKind == JsonValueKind.String)
+                    .Select(a => a.GetString()!)
+                    .ToList();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return Array.Empty<string>();
     }
 
     private IntrospectionResponse IntrospectReferenceToken(PersistedGrant grant)
@@ -186,9 +198,14 @@ public class OidcIntrospectionController : ControllerBase
                 TokenType = grant.Type == "refresh_token" ? "refresh_token" : "access_token",
                 ClientId = grant.ClientId,
                 Sub = grant.SubjectId,
+                Aud = ReferenceTokenAudiences(grant.Data).FirstOrDefault(),
                 Iat = new DateTimeOffset(grant.CreationTime).ToUnixTimeSeconds(),
                 Exp = grant.Expiration.HasValue ? new DateTimeOffset(grant.Expiration.Value).ToUnixTimeSeconds() : null
             };
+
+            response.Cnf = Confirmation(
+                data?.GetValueOrDefault("DPoPKeyThumbprint")?.ToString(),
+                data?.GetValueOrDefault("MtlsCertificateThumbprint")?.ToString());
 
             // Add scopes
             if (data?.TryGetValue("Scopes", out var scopes) == true)
@@ -219,26 +236,40 @@ public class OidcIntrospectionController : ControllerBase
                 return new IntrospectionResponse { Active = false };
             }
 
-            // Get validation keys for signature verification
-            var validationKeys = await _signingCredentialStore.GetValidationKeysAsync(cancellationToken);
+            // Validated as Oluso's own APIs validate it: against the keys of the tenant the token names (and
+            // the platform's), and accepting any issuer of ours for that tenant. The unverified claims only pick
+            // the keys; the signature check below is what is trusted.
+            var unverified = handler.ReadJwtToken(token);
+            var tokenTenantId = unverified.Claims.FirstOrDefault(c => c.Type == "tenant_id")?.Value;
+            var tokenTenant = string.IsNullOrEmpty(tokenTenantId)
+                ? null
+                : await _tenants.GetByIdAsync(tokenTenantId, cancellationToken);
+            var validationKeys = await _signingCredentialStore.GetValidationKeysAsync(
+                tokenTenantId ?? _tenantContext.TenantId, cancellationToken);
             if (validationKeys == null || !validationKeys.Any())
             {
                 _logger.LogError("No validation keys available for token introspection");
                 return new IntrospectionResponse { Active = false };
             }
 
-            var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
+            if (!await _issuerResolver.IsOwnIssuerAsync(unverified.Issuer, tokenTenant, cancellationToken))
+            {
+                _logger.LogDebug("Introspected token has a foreign issuer {Issuer}", unverified.Issuer);
+                return new IntrospectionResponse { Active = false };
+            }
 
             // Validate the token with signature verification
             var validationParameters = new TokenValidationParameters
             {
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKeys = validationKeys.Select(k => k.Key),
-                ValidateIssuer = !string.IsNullOrEmpty(issuer),
-                ValidIssuer = issuer,
+                ValidateIssuer = true,
+                ValidIssuer = unverified.Issuer,
                 ValidateAudience = false, // Audience validation depends on the use case
                 ValidateLifetime = true,
-                ClockSkew = TimeSpan.FromMinutes(1)
+                ClockSkew = TimeSpan.FromMinutes(1),
+                // A token-exchange ticket or logout token is not an access token: inactive here.
+                TypeValidator = Oluso.Protocols.Validation.AccessTokenTypes.Validate
             };
 
             try
@@ -257,12 +288,7 @@ public class OidcIntrospectionController : ControllerBase
                 // Check authorization for JWT tokens
                 if (!string.IsNullOrEmpty(tokenClientId))
                 {
-                    // Build scope data for authorization check
-                    var scopeData = scopes.Any()
-                        ? JsonSerializer.Serialize(new Dictionary<string, object> { ["Scopes"] = scopes })
-                        : null;
-
-                    if (!await IsAuthorizedToIntrospectAsync(callingClient, tokenClientId, scopeData, cancellationToken))
+                    if (!IsAuthorizedToIntrospect(callingClient, tokenClientId, isAccessToken: true, jwt.Audiences.ToList()))
                     {
                         _logger.LogWarning(
                             "Client {CallingClient} attempted to introspect JWT token owned by {TokenClient}",
@@ -283,7 +309,8 @@ public class OidcIntrospectionController : ControllerBase
                     Exp = new DateTimeOffset(jwt.ValidTo).ToUnixTimeSeconds(),
                     Iat = jwt.IssuedAt != DateTime.MinValue ? new DateTimeOffset(jwt.IssuedAt).ToUnixTimeSeconds() : null,
                     Nbf = jwt.ValidFrom != DateTime.MinValue ? new DateTimeOffset(jwt.ValidFrom).ToUnixTimeSeconds() : null,
-                    Jti = jwt.Id
+                    Jti = jwt.Id,
+                    Cnf = ConfirmationClaim(jwt.Claims.FirstOrDefault(c => c.Type == "cnf")?.Value)
                 };
 
                 // Add scope
@@ -305,5 +332,25 @@ public class OidcIntrospectionController : ControllerBase
             _logger.LogDebug(ex, "Error during token introspection");
             return new IntrospectionResponse { Active = false };
         }
+    }
+
+    /// <summary>The <c>cnf</c> of a reference token from the key and certificate thumbprints it was bound to.</summary>
+    private static Dictionary<string, string>? Confirmation(string? dpopJkt, string? mtlsThumbprint)
+    {
+        var cnf = new Dictionary<string, string>();
+        if (!string.IsNullOrEmpty(dpopJkt)) cnf["jkt"] = dpopJkt;
+        if (!string.IsNullOrEmpty(mtlsThumbprint)) cnf["x5t#S256"] = mtlsThumbprint;
+        return cnf.Count > 0 ? cnf : null;
+    }
+
+    /// <summary>The members of a JWT's <c>cnf</c> claim, or null when it has none.</summary>
+    private static Dictionary<string, string>? ConfirmationClaim(string? cnfClaimValue)
+    {
+        if (string.IsNullOrWhiteSpace(cnfClaimValue)) return null;
+        using var cnf = JsonDocument.Parse(cnfClaimValue);
+        var members = cnf.RootElement.EnumerateObject()
+            .Where(m => m.Value.ValueKind == JsonValueKind.String)
+            .ToDictionary(m => m.Name, m => m.Value.GetString()!);
+        return members.Count > 0 ? members : null;
     }
 }

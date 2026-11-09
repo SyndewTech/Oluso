@@ -28,22 +28,39 @@ public class ExternalProviderConfigStore : IExternalProviderConfigStore
     }
 
     public async Task<IReadOnlyList<ExternalProviderDefinition>> GetEnabledProvidersAsync(
+        bool includeTenantOverrides = true,
         CancellationToken cancellationToken = default)
     {
-        var providers = await GetProvidersQuery()
+        var providers = await GetProvidersQuery(includeTenantOverrides)
             .Where(p => p.Enabled)
             .OrderBy(p => p.DisplayOrder)
             .ToListAsync(cancellationToken);
+
+        // When tenant overrides are allowed, deduplicate by scheme so a
+        // tenant-specific row shadows the global row with the same name.
+        if (includeTenantOverrides)
+        {
+            providers = providers
+                .GroupBy(p => p.Scheme, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderBy(p => p.TenantId == null ? 1 : 0).First())
+                .OrderBy(p => p.DisplayOrder)
+                .ToList();
+        }
 
         return providers.Select(MapToDefinition).ToList();
     }
 
     public async Task<ExternalProviderDefinition?> GetBySchemeAsync(
         string scheme,
+        bool includeTenantOverrides = true,
         CancellationToken cancellationToken = default)
     {
-        var provider = await GetProvidersQuery()
-            .FirstOrDefaultAsync(p => p.Scheme == scheme, cancellationToken);
+        // Order tenant-specific rows first so FirstOrDefault picks them over
+        // the global row when both exist for the same scheme.
+        var provider = await GetProvidersQuery(includeTenantOverrides)
+            .Where(p => p.Scheme == scheme)
+            .OrderBy(p => p.TenantId == null ? 1 : 0)
+            .FirstOrDefaultAsync(cancellationToken);
 
         return provider != null ? MapToDefinition(provider) : null;
     }
@@ -55,14 +72,19 @@ public class ExternalProviderConfigStore : IExternalProviderConfigStore
         if (!int.TryParse(id, out var intId))
             return null;
 
-        var provider = await GetProvidersQuery()
+        var provider = await GetProvidersQuery(includeTenantOverrides: true)
             .FirstOrDefaultAsync(p => p.Id == intId, cancellationToken);
 
         return provider != null ? MapToDefinition(provider) : null;
     }
 
-    private IQueryable<IdentityProvider> GetProvidersQuery()
+    private IQueryable<IdentityProvider> GetProvidersQuery(bool includeTenantOverrides)
     {
+        if (!includeTenantOverrides)
+        {
+            return _context.IdentityProviders.Where(p => p.TenantId == null);
+        }
+
         return _context.IdentityProviders
             .Where(p => p.TenantId == _tenantContext.TenantId || p.TenantId == null);
     }
@@ -70,6 +92,7 @@ public class ExternalProviderConfigStore : IExternalProviderConfigStore
     private static ExternalProviderDefinition MapToDefinition(IdentityProvider provider)
     {
         var config = ParseConfiguration(provider.Properties);
+        var rawJson = ParseRawJson(provider.Properties);
         var isDirectLogin = IsDirectLoginProvider(provider.ProviderType);
 
         // Allow custom directLoginPath in Properties to override the default
@@ -93,7 +116,8 @@ public class ExternalProviderConfigStore : IExternalProviderConfigStore
             AuthorizationEndpoint = config.GetValueOrDefault("authorizationEndpoint"),
             TokenEndpoint = config.GetValueOrDefault("tokenEndpoint"),
             UserInfoEndpoint = config.GetValueOrDefault("userInfoEndpoint"),
-            MetadataAddress = config.GetValueOrDefault("authority") ?? config.GetValueOrDefault("metadataUrl"),
+            Authority = config.GetValueOrDefault("authority"),
+            MetadataAddress = config.GetValueOrDefault("metadataUrl"),
             Scopes = ParseScopes(config),
             AppleTeamId = config.GetValueOrDefault("teamId"),
             AppleKeyId = config.GetValueOrDefault("keyId"),
@@ -107,7 +131,104 @@ public class ExternalProviderConfigStore : IExternalProviderConfigStore
             IncludeExternalAccessToken = config.GetBoolValue("includeExternalAccessToken"),
             IncludeExternalIdToken = config.GetBoolValue("includeExternalIdToken"),
             AutoProvisionUsers = config.GetBoolValue("autoProvisionUsers", true),
+            DefaultRoles = ParseDefaultRoles(rawJson),
+            AccessControl = ParseAccessControl(rawJson),
             Properties = config
+        };
+    }
+
+    /// <summary>
+    /// Parse Properties JSON to a <see cref="JsonElement"/> so structured
+    /// fields (defaultRoles array, accessControl object) can be read with
+    /// proper typing rather than via the flat string-string config dict.
+    /// </summary>
+    private static JsonElement? ParseRawJson(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<string> ParseDefaultRoles(JsonElement? root)
+    {
+        if (root is not { ValueKind: JsonValueKind.Object } element) return Array.Empty<string>();
+        if (!element.TryGetProperty("defaultRoles", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return Array.Empty<string>();
+
+        var roles = new List<string>();
+        foreach (var item in arr.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                var v = item.GetString();
+                if (!string.IsNullOrWhiteSpace(v)) roles.Add(v);
+            }
+        }
+        return roles;
+    }
+
+    private static ExternalAccessControl? ParseAccessControl(JsonElement? root)
+    {
+        if (root is not { ValueKind: JsonValueKind.Object } element) return null;
+        if (!element.TryGetProperty("accessControl", out var ac) || ac.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var mode = ac.TryGetProperty("mode", out var m) && m.ValueKind == JsonValueKind.String
+            ? m.GetString() ?? "open"
+            : "open";
+
+        var allowedEmails = Array.Empty<string>() as IReadOnlyList<string>;
+        if (ac.TryGetProperty("allowedEmails", out var emails) && emails.ValueKind == JsonValueKind.Array)
+        {
+            var list = new List<string>();
+            foreach (var e in emails.EnumerateArray())
+            {
+                if (e.ValueKind == JsonValueKind.String)
+                {
+                    var v = e.GetString();
+                    if (!string.IsNullOrWhiteSpace(v)) list.Add(v);
+                }
+            }
+            allowedEmails = list;
+        }
+
+        ClaimGate? claimGate = null;
+        if (ac.TryGetProperty("claimGate", out var cg) && cg.ValueKind == JsonValueKind.Object)
+        {
+            var path = cg.TryGetProperty("claimPath", out var cp) && cp.ValueKind == JsonValueKind.String
+                ? cp.GetString() ?? ""
+                : "";
+
+            var anyOf = Array.Empty<string>() as IReadOnlyList<string>;
+            if (cg.TryGetProperty("anyOf", out var any) && any.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<string>();
+                foreach (var v in any.EnumerateArray())
+                {
+                    if (v.ValueKind == JsonValueKind.String)
+                    {
+                        var s = v.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) list.Add(s);
+                    }
+                }
+                anyOf = list;
+            }
+
+            claimGate = new ClaimGate { ClaimPath = path, AnyOf = anyOf };
+        }
+
+        return new ExternalAccessControl
+        {
+            Mode = mode,
+            AllowedEmails = allowedEmails,
+            ClaimGate = claimGate
         };
     }
 

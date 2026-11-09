@@ -1,3 +1,4 @@
+using Oluso.Core.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,7 @@ public class Fido2AdminController : AdminBaseController
     /// Get FIDO2 credential statistics
     /// </summary>
     [HttpGet("stats")]
+    [RequirePermission("fido2.read")]
     public async Task<ActionResult<Fido2StatsResponse>> GetStats(CancellationToken cancellationToken = default)
     {
         var usersResult = await _userService.GetUsersAsync(new UsersQuery { Page = 1, PageSize = int.MaxValue }, cancellationToken);
@@ -82,6 +84,7 @@ public class Fido2AdminController : AdminBaseController
     /// Get all users with FIDO2 credentials
     /// </summary>
     [HttpGet("users")]
+    [RequirePermission("fido2.read")]
     public async Task<ActionResult<Fido2UsersResponse>> GetUsersWithCredentials(
         [FromQuery] string? search = null,
         [FromQuery] int page = 1,
@@ -131,6 +134,7 @@ public class Fido2AdminController : AdminBaseController
     /// Get all FIDO2 credentials for a specific user
     /// </summary>
     [HttpGet("users/{userId}/credentials")]
+    [RequirePermission("fido2.read")]
     public async Task<ActionResult<IEnumerable<AdminCredentialInfo>>> GetUserCredentials(
         string userId,
         CancellationToken cancellationToken = default)
@@ -162,6 +166,7 @@ public class Fido2AdminController : AdminBaseController
     /// Delete a specific credential for a user
     /// </summary>
     [HttpDelete("users/{userId}/credentials/{credentialId}")]
+    [RequirePermission("fido2.delete")]
     public async Task<ActionResult> DeleteUserCredential(
         string userId,
         string credentialId,
@@ -194,6 +199,7 @@ public class Fido2AdminController : AdminBaseController
     /// Delete all credentials for a user
     /// </summary>
     [HttpDelete("users/{userId}/credentials")]
+    [RequirePermission("fido2.delete")]
     public async Task<ActionResult> DeleteAllUserCredentials(
         string userId,
         CancellationToken cancellationToken = default)

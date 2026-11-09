@@ -70,6 +70,12 @@ public record WebhookEventDefinition
     public string? PayloadSchema { get; init; }
 
     /// <summary>
+    /// Typed property definitions for the event payload.
+    /// Used by workflow expression builders to show available properties.
+    /// </summary>
+    public IReadOnlyList<EventPropertyDefinition>? Properties { get; init; }
+
+    /// <summary>
     /// Whether this event is enabled by default for new subscriptions
     /// </summary>
     public bool EnabledByDefault { get; init; }
@@ -78,6 +84,63 @@ public record WebhookEventDefinition
     /// Provider ID that owns this event
     /// </summary>
     public string? ProviderId { get; init; }
+
+    /// <summary>
+    /// Subscription scope. Used by the subscription API to hide platform
+    /// events from tenant admins and to validate dispatch routing.
+    /// Defaults to Tenant for backward compatibility.
+    /// </summary>
+    public EventScope Scope { get; init; } = EventScope.Tenant;
+
+    /// <summary>
+    /// The event's declared classification. <see cref="DataSensitivity.Restricted"/> events need
+    /// <see cref="RequiredPermission"/> to subscribe to or automate on.
+    /// </summary>
+    public DataSensitivity Sensitivity { get; init; }
+
+    /// <summary>Permission required to subscribe to, automate on, or receive the sensitive data of this event.</summary>
+    public string? RequiredPermission { get; init; }
+
+    /// <summary>Why the event's data is restricted.</summary>
+    public string? ClassificationPurpose { get; init; }
+}
+
+/// <summary>
+/// Defines a typed property on an event payload.
+/// Used by the workflow expression builder to show available properties and their types.
+/// </summary>
+public record EventPropertyDefinition
+{
+    /// <summary>
+    /// Property name as it appears in the event data (snake_case, e.g., "user_id", "email")
+    /// </summary>
+    public required string Name { get; init; }
+
+    /// <summary>
+    /// Human-readable display name (e.g., "User ID", "Email Address")
+    /// </summary>
+    public required string DisplayName { get; init; }
+
+    /// <summary>
+    /// Data type: "string", "number", "boolean", "object", "array", "datetime"
+    /// </summary>
+    public required string Type { get; init; }
+
+    /// <summary>
+    /// Description of what this property contains
+    /// </summary>
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// Whether this property is always present on the event
+    /// </summary>
+    public bool Required { get; init; }
+
+    /// <summary>
+    /// Confidential: withheld from anything that leaves the platform unless the receiving endpoint or
+    /// automation is authorised for sensitive data. See <see cref="DataClassificationAttribute"/>.
+    /// </summary>
+    public bool Sensitive { get; init; }
 }
 
 /// <summary>
@@ -112,6 +175,14 @@ public record WebhookPayload
     public string ApiVersion { get; init; } = "2026-01-01";
 
     /// <summary>
+    /// What caused the event: <c>kind</c> (admin, service_client, scim, journey,
+    /// user, anonymous, system), <c>id</c> (user id, client id, SCIM client id,
+    /// journey policy id), <c>name</c> and <c>ip_address</c>. Null only for
+    /// payloads that don't come from an event, such as the endpoint test.
+    /// </summary>
+    public EventOrigin? Origin { get; init; }
+
+    /// <summary>
     /// The actual event data (curated for external consumption)
     /// </summary>
     public required object Data { get; init; }
@@ -120,6 +191,13 @@ public record WebhookPayload
     /// Optional metadata about the event
     /// </summary>
     public Dictionary<string, string>? Metadata { get; init; }
+
+    /// <summary>
+    /// Properties withheld from <see cref="Data"/> because they are sensitive and the endpoint isn't
+    /// authorised to receive them. Absent when nothing was withheld.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? RedactedFields { get; init; }
 }
 
 /// <summary>
@@ -128,19 +206,46 @@ public record WebhookPayload
 public class WebhookEventRegistry : IWebhookEventRegistry
 {
     private readonly IEnumerable<IWebhookEventProvider> _providers;
+    private readonly IEnumerable<IEventPropertySource> _propertySources;
     private readonly Lazy<IReadOnlyList<WebhookEventDefinition>> _allEvents;
     private readonly Lazy<IReadOnlyDictionary<string, WebhookEventDefinition>> _eventsByType;
     private readonly Lazy<IReadOnlyDictionary<string, IReadOnlyList<WebhookEventDefinition>>> _eventsByCategory;
 
-    public WebhookEventRegistry(IEnumerable<IWebhookEventProvider> providers)
+    public WebhookEventRegistry(
+        IEnumerable<IWebhookEventProvider> providers,
+        IEnumerable<IEventPropertySource> propertySources)
     {
         _providers = providers;
+        _propertySources = propertySources;
 
         _allEvents = new Lazy<IReadOnlyList<WebhookEventDefinition>>(() =>
         {
+            // Build a merged lookup of generated property definitions by webhook event type
+            var generatedProps = new Dictionary<string, EventPropertyDefinition[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var source in _propertySources)
+            {
+                foreach (var kvp in source.GetPropertiesByWebhookType())
+                {
+                    generatedProps.TryAdd(kvp.Key, kvp.Value);
+                }
+            }
+
             return _providers
                 .SelectMany(p => p.GetEventDefinitions()
-                    .Select(e => e with { ProviderId = p.ProviderId }))
+                    .Select(e =>
+                    {
+                        // Auto-populate Properties from generated source if not manually set
+                        if (e.Properties == null &&
+                            generatedProps.TryGetValue(e.EventType, out var props))
+                        {
+                            e = e with { Properties = props, ProviderId = p.ProviderId };
+                        }
+                        else
+                        {
+                            e = e with { ProviderId = p.ProviderId };
+                        }
+                        return e;
+                    }))
                 .ToList();
         });
 
@@ -196,9 +301,13 @@ public static class CoreWebhookEvents
     public const string UserCreated = "user.created";
     public const string UserUpdated = "user.updated";
     public const string UserDeleted = "user.deleted";
+    public const string UserDeactivated = "user.deactivated";
+    public const string UserReactivated = "user.reactivated";
     public const string UserEmailVerified = "user.email_verified";
     public const string UserPasswordChanged = "user.password_changed";
     public const string UserLockedOut = "user.locked_out";
+    public const string UserRoleAssigned = "user.role_assigned";
+    public const string UserRoleRemoved = "user.role_removed";
 
     // Authentication events
     public const string LoginSuccess = "auth.login_success";
@@ -213,6 +322,9 @@ public static class CoreWebhookEvents
     public const string ConsentGranted = "security.consent_granted";
     public const string ConsentRevoked = "security.consent_revoked";
     public const string SuspiciousActivity = "security.suspicious_activity";
+
+    // Journey/Data Collection events
+    public const string SubmissionCreated = "journey.submission_created";
 }
 
 /// <summary>

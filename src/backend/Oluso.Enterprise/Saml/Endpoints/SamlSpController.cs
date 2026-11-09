@@ -86,7 +86,7 @@ public class SamlSpController : ControllerBase
             EndpointType = EndpointType.Authorize,
             Properties = stateProperties
         };
-        correlationId = await _stateStore.StoreAsync(state, TimeSpan.FromMinutes(10), cancellationToken);
+        correlationId = await _stateStore.StoreAsync(state, cancellationToken: cancellationToken);
 
         // Create SAML AuthnRequest
         var request = await _samlSp.CreateAuthnRequestAsync(new SamlAuthnRequestParams
@@ -138,13 +138,24 @@ public class SamlSpController : ControllerBase
         // Process SAML response
         var result = await _samlSp.ProcessResponseAsync(HttpContext, samlResponse, relayState, cancellationToken);
 
+        // Pull return_url out of the stored relay state up-front so error
+        // redirects below can pipe it through. Without this the user hits
+        // the error page after a SAML failure with only a "Go Home" link
+        // pointing at the IDP's root, instead of being able to bail back
+        // to the SP-initiated context they came from.
+        var returnUrl = state.Properties?.TryGetValue("return_url", out var returnUrlValue) == true ? returnUrlValue : "/";
+
         if (!result.Succeeded)
         {
             _logger.LogWarning("SAML authentication failed: {Error}", result.Error);
-            return RedirectToPage("/Error", new { error = "saml_auth_failed", message = result.Error });
+            return RedirectToPage("/Error", new
+            {
+                error = "saml_auth_failed",
+                message = result.Error,
+                returnUrl
+            });
         }
 
-        var returnUrl = state.Properties?.TryGetValue("return_url", out var returnUrlValue) == true ? returnUrlValue : "/";
         var idpName = state.Properties?.TryGetValue("saml_idp", out var idpNameValue) == true ? idpNameValue : "saml";
 
         _logger.LogInformation("SAML authentication successful for subject {SubjectId} from IdP {IdpName}",
@@ -154,7 +165,12 @@ public class SamlSpController : ControllerBase
         if (string.IsNullOrEmpty(result.SubjectId))
         {
             _logger.LogError("SAML response had no SubjectId/NameID");
-            return RedirectToPage("/Error", new { error = "saml_no_subject", message = "SAML response did not contain a subject identifier" });
+            return RedirectToPage("/Error", new
+            {
+                error = "saml_no_subject",
+                message = "SAML response did not contain a subject identifier",
+                returnUrl
+            });
         }
 
         // Build claims for the external login
@@ -277,7 +293,11 @@ public class SamlSpController : ControllerBase
             }
 
             _logger.LogWarning("SAML logout failed");
-            return RedirectToPage("/Error", new { error = "logout_failed" });
+            // RelayState on a SAML SLO response is the URL the SP wanted to
+            // land the user on once logout completes — fine to use as the
+            // error-page returnUrl too so the "Go Back" button gets the
+            // user back to whatever they were doing before logout failed.
+            return RedirectToPage("/Error", new { error = "logout_failed", returnUrl = relayState });
         }
 
         if (!string.IsNullOrEmpty(samlRequest))

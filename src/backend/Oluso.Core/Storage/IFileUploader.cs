@@ -40,6 +40,74 @@ public interface IFileUploader
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Upload a file at the given <paramref name="accessLevel"/>. Public uploads
+    /// are stored so they can be served anonymously (a dedicated public container
+    /// when configured, otherwise the default location served via the prefix-
+    /// guarded public endpoint) and <see cref="FileUploadResult.PublicUrl"/> is
+    /// populated with a stable, non-expiring URL when one is available.
+    ///
+    /// <para>Default implementation ignores the access level and delegates to the
+    /// private <see cref="UploadAsync(string, byte[], string?, IDictionary{string, string}?, CancellationToken)"/>
+    /// — implementations that genuinely support public storage override this.
+    /// Existing behaviour (and every existing caller) is therefore unchanged.</para>
+    /// </summary>
+    Task<FileUploadResult> UploadAsync(
+        string path,
+        byte[] content,
+        FileAccessLevel accessLevel,
+        string? contentType = null,
+        IDictionary<string, string>? metadata = null,
+        CancellationToken cancellationToken = default)
+        => UploadAsync(path, content, contentType, metadata, cancellationToken);
+
+    /// <summary>
+    /// Stream overload of the access-level-aware upload. Default implementation
+    /// delegates to the private stream upload.
+    /// </summary>
+    Task<FileUploadResult> UploadAsync(
+        string path,
+        Stream content,
+        FileAccessLevel accessLevel,
+        string? contentType = null,
+        IDictionary<string, string>? metadata = null,
+        CancellationToken cancellationToken = default)
+        => UploadAsync(path, content, contentType, metadata, cancellationToken);
+
+    /// <summary>
+    /// Resolve the stable, non-expiring public URL for an already-stored public
+    /// path (e.g. a CDN or public-container URL). Returns <c>null</c> when the
+    /// provider cannot self-host a public URL (e.g. local storage, or a private
+    /// container with no CDN) — callers then fall back to the anonymous public
+    /// serve endpoint. Never returns a URL for a private path.
+    /// </summary>
+    string? GetPublicUrl(string path, FileAccessLevel accessLevel) => null;
+
+    /// <summary>
+    /// Access-level-aware download. Critical for the anonymous public serve
+    /// endpoint: a server-side download uses the storage account's own
+    /// credentials and is NOT gated by SAS, so reading through the private
+    /// container would expose any blob (e.g. <c>sensitive/…</c>) by path alone.
+    /// When a dedicated public container is configured, the Public overload
+    /// resolves reads against THAT container, so the public endpoint physically
+    /// cannot address private blobs — container isolation backing up the path
+    /// guard. Default implementation delegates to the private download (single-
+    /// container / proxy mode), where the path guard is the sole control.
+    /// </summary>
+    Task<byte[]?> DownloadAsync(string path, FileAccessLevel accessLevel, CancellationToken cancellationToken = default)
+        => DownloadAsync(path, cancellationToken);
+
+    /// <summary>
+    /// Stream form of the access-level-aware download. See
+    /// <see cref="DownloadAsync(string, FileAccessLevel, CancellationToken)"/>.
+    /// </summary>
+    Task<Stream?> DownloadStreamAsync(string path, FileAccessLevel accessLevel, CancellationToken cancellationToken = default)
+        => DownloadStreamAsync(path, cancellationToken);
+
+    /// <summary>Access-level-aware existence check (mirrors the download overloads).</summary>
+    Task<bool> ExistsAsync(string path, FileAccessLevel accessLevel, CancellationToken cancellationToken = default)
+        => ExistsAsync(path, cancellationToken);
+
+    /// <summary>
     /// Download a file
     /// </summary>
     /// <param name="path">Relative path/key for the file</param>
@@ -266,6 +334,15 @@ public class FileUploaderOptions
     /// Maximum file size in bytes (0 = unlimited)
     /// </summary>
     public long MaxFileSizeBytes { get; set; } = 0;
+
+    /// <summary>
+    /// Absolute base URL the provider's PUBLIC assets are addressed from (no
+    /// trailing slash) — e.g. a CDN host mapped to the public container. Used by
+    /// the uploader to build the stable direct public URL. When null, the
+    /// provider returns null from <see cref="IFileUploader.GetPublicUrl"/> and
+    /// callers fall back to proxy serving (local/dev).
+    /// </summary>
+    public string? PublicBaseUrl { get; set; }
 }
 
 /// <summary>
@@ -292,6 +369,23 @@ public class AzureBlobOptions : FileUploaderOptions
     /// Access tier for blobs (Hot, Cool, Archive)
     /// </summary>
     public string? AccessTier { get; set; }
+
+    /// <summary>
+    /// Optional dedicated container for PUBLIC assets. When set, public uploads
+    /// go here instead of <see cref="ContainerName"/>, so this container alone
+    /// can be granted anonymous read / fronted by a CDN while the private
+    /// container stays locked down. When null, public assets stay in the private
+    /// container and are served only via the prefix-guarded public endpoint.
+    /// </summary>
+    public string? PublicContainerName { get; set; }
+
+    /// <summary>
+    /// True only if <see cref="PublicContainerName"/> has been granted
+    /// container-level anonymous (blob) read access. Enables returning a direct
+    /// blob URL as the public URL. Leave false (default) unless ops have
+    /// deliberately made that container public — proxy serving works regardless.
+    /// </summary>
+    public bool PublicContainerAnonymousRead { get; set; }
 }
 
 /// <summary>
@@ -339,4 +433,17 @@ public class AwsS3Options : FileUploaderOptions
     /// Whether to create bucket if it doesn't exist
     /// </summary>
     public bool CreateBucketIfNotExists { get; set; } = false;
+}
+
+/// <summary>
+/// Whether a stored file is privately accessed (authorized reads / SAS only,
+/// the default for every existing caller) or publicly accessed (anonymous,
+/// stable URL, CDN-frontable). Public-ness is otherwise derived from the path
+/// via <see cref="IPublicAssetPathRegistry"/>; this enum is how a caller declares intent
+/// to the uploader.
+/// </summary>
+public enum FileAccessLevel
+{
+    Private = 0,
+    Public = 1,
 }

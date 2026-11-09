@@ -1,0 +1,788 @@
+@if (loading()) {
+  <div class="flex justify-center py-12" role="status" aria-label="Loading">
+    <svg class="animate-spin h-8 w-8 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+  </div>
+} @else if (!isNew() && !endpoint()) {
+  <div class="flex flex-col items-center justify-center py-16 text-gray-500">
+    <ui-icon name="link" class="h-12 w-12 mb-4" />
+    <p>This webhook could not be found.</p>
+    <a routerLink="/webhooks" class="mt-2 text-sm text-primary-600 hover:text-primary-700">Back to webhooks</a>
+  </div>
+} @else {
+  <div class="space-y-6">
+    <!-- Breadcrumb -->
+    <nav aria-label="Breadcrumb" class="text-sm">
+      <ol class="flex items-center gap-1 text-gray-500">
+        <li><a routerLink="/webhooks" class="hover:text-gray-700">Webhooks</a></li>
+        <li aria-hidden="true"><ui-icon name="chevron-right" class="h-4 w-4" /></li>
+        <li class="text-gray-900 truncate" aria-current="page">{{ pageTitle() }}</li>
+      </ol>
+    </nav>
+
+    <!-- Page header -->
+    <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div class="min-w-0">
+        <h1 class="text-2xl font-bold text-gray-900 truncate">{{ pageTitle() }}</h1>
+        @if (isNew()) {
+          <p class="mt-1 text-sm text-gray-500">Send events from this tenant to a URL you control.</p>
+        } @else if (endpoint(); as ep) {
+          <div class="mt-1 flex flex-wrap items-center gap-2">
+            <span class="font-mono text-xs text-gray-600 break-all">{{ ep.url }}</span>
+            <ui-badge [variant]="ep.enabled ? 'success' : 'default'">{{ ep.enabled ? 'Active' : 'Disabled' }}</ui-badge>
+          </div>
+          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+            <span>Created: <span class="text-gray-700">{{ formatDate(ep.createdAt) }}</span></span>
+            @if (ep.updatedAt) {
+              <span>Updated: <span class="text-gray-700">{{ formatDate(ep.updatedAt) }}</span></span>
+            }
+            <span>Last delivery: <span class="text-gray-700">{{ formatDate(ep.stats?.lastDeliveryAt) }}</span></span>
+          </div>
+        }
+      </div>
+      <div class="flex flex-wrap items-center gap-2 shrink-0">
+        @if (!isNew()) {
+          <ui-button variant="secondary" [loading]="testing()" (clicked)="testEndpoint()">
+            <ui-icon name="beaker" class="h-4 w-4 mr-1.5" />
+            Send test event
+          </ui-button>
+          <ui-button variant="danger" (clicked)="showDeleteConfirm.set(true)">Delete</ui-button>
+        }
+        <ui-button variant="secondary" (clicked)="onCancel()">Cancel</ui-button>
+        <ui-button [loading]="saving()" (clicked)="onSave()">{{ isNew() ? 'Create webhook' : 'Save changes' }}</ui-button>
+      </div>
+    </div>
+
+    <!-- Tabs (existing endpoints) -->
+    @if (tabs().length) {
+      <div class="border-b border-gray-200">
+        <nav class="-mb-px flex space-x-6 overflow-x-auto" role="tablist" aria-label="Webhook sections">
+          @for (tab of tabs(); track tab.id) {
+            <button
+              type="button"
+              role="tab"
+              [attr.aria-selected]="activeTab() === tab.id"
+              [class]="activeTab() === tab.id
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+              class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm"
+              (click)="setActiveTab(tab.id)"
+            >
+              {{ tab.label }}
+              @if (tab.id === 'deliveries' && endpoint()?.stats; as stats) {
+                <span class="ml-1 text-xs text-gray-400">{{ stats.totalDeliveries }}</span>
+              }
+            </button>
+          }
+        </nav>
+      </div>
+    }
+
+    @if (activeTab() === 'settings') {
+      <form (ngSubmit)="onSave()" novalidate class="grid gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
+        <!-- Section index -->
+        <aside class="hidden lg:block" aria-label="On this page">
+          <ul class="sticky top-4 space-y-1 text-sm">
+            @for (s of sections; track s.id) {
+              <li>
+                <a
+                  [href]="'#webhook-' + s.id"
+                  (click)="$event.preventDefault(); scrollToSection(s.id)"
+                  class="block rounded px-2 py-1 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                >{{ s.label }}</a>
+              </li>
+            }
+          </ul>
+        </aside>
+
+        <div class="space-y-6 min-w-0 max-w-4xl">
+          <!-- 1. Basics -->
+          <section id="webhook-basics" class="scroll-mt-4">
+            <ui-card title="Basics" subtitle="What this endpoint is and where deliveries go.">
+              <div class="grid gap-4 md:grid-cols-2">
+                <ui-input
+                  label="Name"
+                  inputId="webhook-name"
+                  [required]="true"
+                  placeholder="Order sync"
+                  [error]="fieldError('name')"
+                  [(ngModel)]="formData.name"
+                  name="name"
+                />
+                <ui-input
+                  label="Description"
+                  inputId="webhook-description"
+                  placeholder="Optional"
+                  [(ngModel)]="formData.description"
+                  name="description"
+                />
+                <div class="md:col-span-2">
+                  <ui-input
+                    label="Endpoint URL"
+                    inputId="webhook-url"
+                    type="url"
+                    [required]="true"
+                    placeholder="https://api.example.com/webhooks"
+                    hint="Deliveries are POST requests with a JSON body. Use HTTPS outside development."
+                    [error]="fieldError('url')"
+                    [(ngModel)]="formData.url"
+                    name="url"
+                  />
+                </div>
+                <div class="md:col-span-2 flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="webhook-enabled"
+                    name="enabled"
+                    [(ngModel)]="formData.enabled"
+                    class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="webhook-enabled" class="text-sm text-gray-700">
+                    Endpoint is active
+                    <span class="block text-xs text-gray-500">Turn this off to pause deliveries without losing the configuration.</span>
+                  </label>
+                </div>
+              </div>
+            </ui-card>
+          </section>
+
+          <!-- 2. Events -->
+          <section id="webhook-events" class="scroll-mt-4">
+            <ui-card title="Events" subtitle="Choose which events are delivered to this endpoint, grouped by module.">
+              <div class="space-y-3">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div class="relative flex-1">
+                    <label for="webhook-event-search" class="sr-only">Search events</label>
+                    <ui-icon name="search" class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      id="webhook-event-search"
+                      type="search"
+                      [(ngModel)]="eventSearchTerm"
+                      [ngModelOptions]="{ standalone: true }"
+                      placeholder="Search events"
+                      class="pl-9 w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div class="flex items-center gap-1 text-sm">
+                    <button type="button" (click)="expandAllGroups()" class="rounded px-2 py-1.5 text-gray-600 hover:bg-gray-100">Expand all</button>
+                    <button type="button" (click)="collapseAllGroups()" class="rounded px-2 py-1.5 text-gray-600 hover:bg-gray-100">Collapse all</button>
+                    @if (formData.eventTypes.length) {
+                      <button type="button" (click)="clearEvents()" class="rounded px-2 py-1.5 text-gray-600 hover:bg-gray-100">Clear</button>
+                    }
+                  </div>
+                </div>
+
+                <p class="text-sm" [class.text-gray-600]="!fieldError('eventTypes')" [class.text-red-600]="!!fieldError('eventTypes')" aria-live="polite">
+                  @if (fieldError('eventTypes'); as err) {
+                    {{ err }}
+                  } @else {
+                    {{ formData.eventTypes.length }} {{ formData.eventTypes.length === 1 ? 'event' : 'events' }} selected
+                  }
+                </p>
+
+                <div class="rounded-md border border-gray-200 divide-y divide-gray-200">
+                  @for (group of filteredGroups(); track group.name) {
+                    <div>
+                      <div class="flex items-center gap-3 bg-gray-50 px-3 py-2">
+                        <button
+                          type="button"
+                          class="flex items-center text-gray-500 hover:text-gray-700"
+                          [attr.aria-expanded]="isGroupExpanded(group.name)"
+                          [attr.aria-label]="(isGroupExpanded(group.name) ? 'Collapse ' : 'Expand ') + group.name"
+                          (click)="toggleGroup(group.name)"
+                        >
+                          <ui-icon [name]="isGroupExpanded(group.name) ? 'chevron-down' : 'chevron-right'" class="h-4 w-4" />
+                        </button>
+                        <input
+                          type="checkbox"
+                          [id]="'group-' + group.name"
+                          [checked]="isGroupFullySelected(group)"
+                          [indeterminate]="isGroupPartlySelected(group)"
+                          (change)="toggleGroupSelection(group)"
+                          [attr.aria-label]="'Select all ' + group.name + ' events'"
+                          class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        <button type="button" class="flex-1 text-left text-sm font-medium text-gray-800" (click)="toggleGroup(group.name)">
+                          {{ group.name }}
+                        </button>
+                        <span class="text-xs text-gray-500">{{ selectedCount(group) }} of {{ group.events.length }}</span>
+                      </div>
+                      @if (isGroupExpanded(group.name)) {
+                        <div class="grid gap-1 p-2 md:grid-cols-2">
+                          @for (event of group.events; track event.eventType) {
+                            <label
+                              class="flex items-start gap-2 rounded px-2 py-2 text-sm hover:bg-gray-50"
+                              [class.cursor-pointer]="canSelect(event) || isSelected(event.eventType)"
+                              [class.opacity-60]="!canSelect(event) && !isSelected(event.eventType)"
+                              [title]="carriesSensitiveData(event) ? restrictionTitle(event) : ''"
+                            >
+                              <input
+                                type="checkbox"
+                                [checked]="isSelected(event.eventType)"
+                                [disabled]="!canSelect(event) && !isSelected(event.eventType)"
+                                (change)="toggleEventType(event.eventType)"
+                                class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                              />
+                              <span class="min-w-0 flex-1">
+                                <span class="flex flex-wrap items-center gap-2 font-medium text-gray-900">
+                                  {{ event.displayName }}
+                                  @if (event.restricted) {
+                                    <ui-badge variant="danger">Restricted</ui-badge>
+                                  } @else if (carriesSensitiveData(event)) {
+                                    <ui-badge variant="warning">Sensitive fields</ui-badge>
+                                  }
+                                </span>
+                                <span class="block font-mono text-xs text-gray-500 break-all">{{ event.eventType }}</span>
+                                @if (!canSelect(event)) {
+                                  <span class="block text-xs text-red-600">Requires the {{ event.requiredPermission }} permission</span>
+                                }
+                                @if (event.description) {
+                                  <span class="block text-xs text-gray-500">{{ event.description }}</span>
+                                }
+                              </span>
+                            </label>
+                          }
+                        </div>
+                      }
+                    </div>
+                  } @empty {
+                    <div class="py-8 text-center text-sm text-gray-500">
+                      @if (eventSearchTerm) {
+                        No events match "{{ eventSearchTerm }}"
+                      } @else {
+                        No events are available for this tenant.
+                      }
+                    </div>
+                  }
+                </div>
+              </div>
+            </ui-card>
+          </section>
+
+          <!-- 3. Authentication -->
+          <section id="webhook-authentication" class="scroll-mt-4">
+            <ui-card title="Authentication" subtitle="How each delivery proves it comes from Oluṣọ.">
+              <fieldset class="space-y-3">
+                <legend class="sr-only">Delivery authentication</legend>
+
+                <!-- HMAC -->
+                <label
+                  class="block cursor-pointer rounded-lg border p-4"
+                  [class.border-primary-500]="authMode() === 'hmac'"
+                  [class.ring-1]="authMode() === 'hmac'"
+                  [class.ring-primary-500]="authMode() === 'hmac'"
+                  [class.border-gray-200]="authMode() !== 'hmac'"
+                >
+                  <span class="flex items-start gap-3">
+                    <input
+                      type="radio"
+                      name="authMode"
+                      value="hmac"
+                      [checked]="authMode() === 'hmac'"
+                      (change)="selectAuthMode('hmac')"
+                      class="mt-0.5 h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span class="flex-1">
+                      <span class="block text-sm font-medium text-gray-900">HMAC signature (shared secret)</span>
+                      <span class="block text-xs text-gray-500">
+                        Each delivery is signed with a <code class="font-mono">whsec_</code> secret that you give the receiver. The signature
+                        is sent in the X-Webhook-Signature header with the time in X-Webhook-Timestamp.
+                      </span>
+                    </span>
+                  </span>
+                </label>
+
+                <!-- Issuer-signed -->
+                <label
+                  class="block cursor-pointer rounded-lg border p-4"
+                  [class.border-primary-500]="authMode() === 'issuer'"
+                  [class.ring-1]="authMode() === 'issuer'"
+                  [class.ring-primary-500]="authMode() === 'issuer'"
+                  [class.border-gray-200]="authMode() !== 'issuer'"
+                >
+                  <span class="flex items-start gap-3">
+                    <input
+                      type="radio"
+                      name="authMode"
+                      value="issuer"
+                      [checked]="authMode() === 'issuer'"
+                      (change)="selectAuthMode('issuer')"
+                      class="mt-0.5 h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span class="flex-1">
+                      <span class="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-900">
+                        Signed by this tenant's issuer (no shared secret)
+                        <ui-badge variant="info">New</ui-badge>
+                      </span>
+                      <span class="block text-xs text-gray-500">
+                        Each delivery carries a short-lived token signed with this tenant's issuer key. The receiver checks it against the
+                        issuer's public keys (its JWKS); nothing secret is shared.
+                      </span>
+                    </span>
+                  </span>
+                </label>
+
+                <!-- Static credential -->
+                <label
+                  class="block cursor-pointer rounded-lg border p-4"
+                  [class.border-primary-500]="authMode() === 'static'"
+                  [class.ring-1]="authMode() === 'static'"
+                  [class.ring-primary-500]="authMode() === 'static'"
+                  [class.border-gray-200]="authMode() !== 'static'"
+                >
+                  <span class="flex items-start gap-3">
+                    <input
+                      type="radio"
+                      name="authMode"
+                      value="static"
+                      [checked]="authMode() === 'static'"
+                      (change)="selectAuthMode('static')"
+                      class="mt-0.5 h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span class="flex-1">
+                      <span class="block text-sm font-medium text-gray-900">Static credential</span>
+                      <span class="block text-xs text-gray-500">
+                        A fixed bearer token, username and password, or API key, sent with every delivery for receivers that only check a
+                        header. Deliveries are also HMAC signed.
+                      </span>
+                    </span>
+                  </span>
+                </label>
+              </fieldset>
+
+              <!-- Details of the chosen option -->
+              <div class="mt-4 rounded-md bg-gray-50 p-4 space-y-3">
+                @switch (authMode()) {
+                  @case ('hmac') {
+                    @if (isNew()) {
+                      <p class="text-sm text-gray-600">
+                        A <code class="font-mono">whsec_</code> secret is generated when you create the webhook. It is shown once, so copy it then.
+                      </p>
+                    } @else {
+                      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p class="text-sm font-medium text-gray-700">Signing secret</p>
+                          <p class="font-mono text-sm text-gray-500">whsec_••••••••••••</p>
+                          <p class="text-xs text-gray-500">Secrets are shown only when created or rotated.</p>
+                        </div>
+                        <ui-button variant="secondary" (clicked)="showRotateConfirm.set(true)">
+                          <ui-icon name="key" class="h-4 w-4 mr-1.5" />
+                          Rotate secret
+                        </ui-button>
+                      </div>
+                    }
+                  }
+                  @case ('issuer') {
+                    <div>
+                      <p class="text-sm font-medium text-gray-700" id="webhook-jwks-label">Issuer public keys (JWKS)</p>
+                      <div class="mt-1 flex items-center gap-2">
+                        <code class="flex-1 min-w-0 break-all rounded border border-gray-200 bg-white px-2 py-1.5 font-mono text-xs text-gray-800" aria-labelledby="webhook-jwks-label">
+                          {{ jwksUrl() || 'Resolving the issuer...' }}
+                        </code>
+                        <button
+                          type="button"
+                          class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+                          [disabled]="!jwksUrl()"
+                          (click)="copy(jwksUrl())"
+                          aria-label="Copy the JWKS URL"
+                          title="Copy"
+                        >
+                          <ui-icon name="document-duplicate" class="h-4 w-4" />
+                        </button>
+                      </div>
+                      <p class="mt-1 text-xs text-gray-500">
+                        @if (jwksFromDiscovery()) {
+                          From this tenant's discovery document.
+                        } @else {
+                          The default location for this tenant's issuer; check it against the issuer's discovery document if the receiver
+                          cannot fetch it.
+                        }
+                        Give the receiver this URL. Keys rotate with the tenant's signing keys, so the receiver should refetch it when it meets an
+                        unknown key.
+                      </p>
+                    </div>
+                    @if (!formData.clientId) {
+                      <p class="text-xs text-amber-700">Choose an owning client below; the token names it as its subject.</p>
+                    }
+                  }
+                  @case ('static') {
+                    <div class="grid gap-4 md:grid-cols-2">
+                      <div class="md:col-span-2">
+                        <span class="block text-sm font-medium text-gray-700 mb-2" id="webhook-static-type">Credential type</span>
+                        <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="webhook-static-type">
+                          @for (option of staticAuthOptions; track option.type) {
+                            <label
+                              class="flex cursor-pointer items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm"
+                              [class.border-primary-500]="formData.authType === option.type"
+                              [class.border-gray-300]="formData.authType !== option.type"
+                            >
+                              <input
+                                type="radio"
+                                name="staticAuthType"
+                                [checked]="formData.authType === option.type"
+                                (change)="formData.authType = option.type"
+                                class="h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
+                              />
+                              {{ option.label }}
+                            </label>
+                          }
+                        </div>
+                        @for (option of staticAuthOptions; track option.type) {
+                          @if (formData.authType === option.type) {
+                            <p class="mt-1 font-mono text-xs text-gray-500">{{ option.hint }}</p>
+                          }
+                        }
+                      </div>
+
+                      @if (formData.authType === AuthType.BasicAuth) {
+                        <ui-input
+                          label="Username"
+                          inputId="webhook-basic-username"
+                          [placeholder]="credentialStored() ? 'Leave blank to keep the current one' : ''"
+                          [(ngModel)]="formData.basicUsername"
+                          name="basicUsername"
+                        />
+                        <ui-input
+                          label="Password"
+                          inputId="webhook-basic-password"
+                          type="password"
+                          [placeholder]="credentialStored() ? 'Leave blank to keep the current one' : ''"
+                          [(ngModel)]="formData.basicPassword"
+                          name="basicPassword"
+                        />
+                      } @else {
+                        <div class="md:col-span-2">
+                          <ui-input
+                            [label]="formData.authType === AuthType.BearerToken ? 'Token' : 'API key'"
+                            inputId="webhook-credential"
+                            type="password"
+                            [placeholder]="credentialStored() ? 'Leave blank to keep the current one' : ''"
+                            [(ngModel)]="formData.credential"
+                            name="credential"
+                          />
+                        </div>
+                      }
+                      <div class="md:col-span-2">
+                        @if (fieldError('credential'); as err) {
+                          <p class="text-sm text-red-600">{{ err }}</p>
+                        } @else {
+                          <p class="text-xs text-gray-500">Stored encrypted and never shown again.</p>
+                        }
+                      </div>
+                    </div>
+                    @if (!isNew()) {
+                      <div class="flex flex-col gap-2 border-t border-gray-200 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p class="text-xs text-gray-500">The HMAC signing secret is also sent with each delivery.</p>
+                        <ui-button variant="secondary" size="sm" (clicked)="showRotateConfirm.set(true)">
+                          <ui-icon name="key" class="h-4 w-4 mr-1.5" />
+                          Rotate secret
+                        </ui-button>
+                      </div>
+                    }
+                  }
+                }
+                @if (leavingIssuerSigned()) {
+                  <p class="text-xs text-amber-700">After saving, rotate the secret to get a signing secret for the receiver.</p>
+                }
+              </div>
+            </ui-card>
+          </section>
+
+          <!-- 4. Owning client -->
+          <section id="webhook-client" class="scroll-mt-4">
+            <ui-card
+              title="Owning client"
+              subtitle="The client this endpoint belongs to. Events this client causes itself (for example comments it writes through the Service API) are not sent back to it. With issuer-signed delivery, the token names this client as its subject."
+            >
+              <div class="space-y-4">
+                <div class="max-w-xl">
+                  <label for="webhook-client-id" class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+                  <select
+                    id="webhook-client-id"
+                    name="clientId"
+                    [(ngModel)]="formData.clientId"
+                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="">None</option>
+                    @for (client of clients(); track client.clientId) {
+                      <option [value]="client.clientId">{{ clientLabel(client.clientId) }}</option>
+                    }
+                  </select>
+                </div>
+
+                @if (formData.clientId) {
+                  <div class="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="webhook-skip-own"
+                      name="skipOwnClientEvents"
+                      [(ngModel)]="formData.skipOwnClientEvents"
+                      class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="webhook-skip-own" class="text-sm text-gray-700">
+                      Skip own client events
+                      <span class="block text-xs text-gray-500">
+                        Don't send changes this client made itself. This stops the receiver being notified about its own updates, which can
+                        otherwise loop.
+                      </span>
+                    </label>
+                  </div>
+                }
+              </div>
+            </ui-card>
+          </section>
+
+          <!-- 5. Sensitive data -->
+          <section id="webhook-sensitive" class="scroll-mt-4">
+            <ui-card title="Sensitive data" subtitle="Confidential fields of restricted events are withheld unless you authorise this endpoint.">
+              @if (sensitiveEventsOf(formData.eventTypes).length > 0) {
+                <div class="rounded-md border border-amber-300 bg-amber-50 p-3">
+                  <div class="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="webhook-authorize-sensitive"
+                      name="authorizeSensitiveData"
+                      [checked]="formData.authorizeSensitiveData"
+                      [disabled]="!canAuthorizeSensitiveData()"
+                      (change)="onAuthorizeSensitiveDataChange($any($event.target).checked)"
+                      class="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="webhook-authorize-sensitive" class="text-sm text-gray-800">
+                      Send sensitive data to this endpoint
+                      <span class="block text-xs text-gray-600">
+                        Without this, the confidential fields of restricted events are withheld from deliveries and listed in
+                        <code>redacted_fields</code>.
+                        @if (!canAuthorizeSensitiveData()) {
+                          You need the permission each restricted event declares to authorise this.
+                        }
+                      </span>
+                      @if (endpoint()?.sensitiveDataAuthorizedAt) {
+                        <span class="block text-xs text-gray-600">{{ authorizationTitle(endpoint()!) }}</span>
+                      }
+                    </label>
+                  </div>
+                  <ul class="mt-2 ml-7 list-disc text-xs text-gray-600">
+                    @for (event of sensitiveEventsOf(formData.eventTypes); track event.eventType) {
+                      <li>{{ event.displayName }}</li>
+                    }
+                  </ul>
+                </div>
+              } @else {
+                <p class="text-sm text-gray-500">None of the selected events carry sensitive fields.</p>
+              }
+            </ui-card>
+          </section>
+
+          <!-- 6. Headers and API version -->
+          <section id="webhook-advanced" class="scroll-mt-4">
+            <ui-card title="Headers and version" subtitle="Extra headers sent with every delivery, and the payload format.">
+              <div class="space-y-4">
+                <div>
+                  <span class="block text-sm font-medium text-gray-700 mb-2">Custom headers</span>
+                  @if (formData.headers.length) {
+                    <div class="space-y-2">
+                      @for (row of formData.headers; track $index; let i = $index) {
+                        <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+                          <input
+                            type="text"
+                            [(ngModel)]="row.name"
+                            [name]="'headerName' + i"
+                            placeholder="X-Header-Name"
+                            [attr.aria-label]="'Header ' + (i + 1) + ' name'"
+                            class="w-full rounded-md border-gray-300 shadow-sm font-mono focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          />
+                          <input
+                            type="text"
+                            [(ngModel)]="row.value"
+                            [name]="'headerValue' + i"
+                            placeholder="Value"
+                            [attr.aria-label]="'Header ' + (i + 1) + ' value'"
+                            class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          />
+                          <button
+                            type="button"
+                            (click)="removeHeader(i)"
+                            class="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-red-600"
+                            [attr.aria-label]="'Remove header ' + (i + 1)"
+                          >
+                            <ui-icon name="trash" class="h-4 w-4" />
+                          </button>
+                        </div>
+                      }
+                    </div>
+                  } @else {
+                    <p class="text-sm text-gray-500">No custom headers.</p>
+                  }
+                  @if (fieldError('headers'); as err) {
+                    <p class="mt-2 text-sm text-red-600">{{ err }}</p>
+                  }
+                  <button type="button" (click)="addHeader()" class="mt-2 inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700">
+                    <ui-icon name="plus" class="h-4 w-4" />
+                    Add header
+                  </button>
+                  <p class="mt-1 text-xs text-gray-500">Don't put secrets here; header values are stored and shown as plain text.</p>
+                </div>
+                <div>
+                  <span class="block text-sm font-medium text-gray-700">API version</span>
+                  <p class="mt-1 font-mono text-sm text-gray-800">{{ endpoint()?.apiVersion || defaultApiVersion }}</p>
+                  <p class="text-xs text-gray-500">The payload format deliveries use.</p>
+                </div>
+              </div>
+            </ui-card>
+          </section>
+
+          <!-- Save bar -->
+          <div class="sticky bottom-0 z-10 -mx-4 flex justify-end gap-2 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border sm:shadow-sm">
+            <ui-button variant="secondary" (clicked)="onCancel()">Cancel</ui-button>
+            <ui-button type="submit" [loading]="saving()">{{ isNew() ? 'Create webhook' : 'Save changes' }}</ui-button>
+          </div>
+        </div>
+      </form>
+    }
+
+    @if (activeTab() === 'deliveries' && endpoint(); as ep) {
+      <div class="space-y-6">
+        <div class="grid gap-4 sm:grid-cols-3">
+          <ui-card>
+            <p class="text-sm text-gray-500">Total deliveries</p>
+            <p class="mt-1 text-2xl font-semibold text-gray-900">{{ ep.stats?.totalDeliveries || 0 }}</p>
+          </ui-card>
+          <ui-card>
+            <p class="text-sm text-gray-500">Succeeded</p>
+            <p class="mt-1 text-2xl font-semibold text-green-600">{{ ep.stats?.successfulDeliveries || 0 }}</p>
+            <p class="text-xs text-gray-500">Last: {{ formatDate(ep.stats?.lastSuccessAt) }}</p>
+          </ui-card>
+          <ui-card>
+            <p class="text-sm text-gray-500">Failed</p>
+            <p class="mt-1 text-2xl font-semibold text-red-600">{{ ep.stats?.failedDeliveries || 0 }}</p>
+            <p class="text-xs text-gray-500">Last: {{ formatDate(ep.stats?.lastFailureAt) }}</p>
+          </ui-card>
+        </div>
+
+        <ui-card [padding]="false">
+          <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 sm:px-6">
+            <h2 class="text-lg font-medium text-gray-900">Delivery history</h2>
+            <ui-button variant="secondary" size="sm" [loading]="deliveriesLoading()" (clicked)="loadDeliveries()">
+              <ui-icon name="arrow-path" class="h-4 w-4 mr-1.5" />
+              Refresh
+            </ui-button>
+          </div>
+          @if (deliveriesLoading() && !deliveriesLoaded()) {
+            <div class="py-8 text-center text-gray-500">Loading...</div>
+          } @else if (deliveries().length > 0) {
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Event</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Status</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">HTTP</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Attempts</th>
+                    <th scope="col" class="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Time</th>
+                    <th scope="col" class="px-4 py-2"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                  @for (delivery of deliveries(); track delivery.id) {
+                    <tr>
+                      <td class="px-4 py-2 font-mono text-sm">{{ delivery.eventType }}</td>
+                      <td class="px-4 py-2">
+                        <ui-badge [variant]="getStatusVariant(delivery.status)">{{ delivery.status }}</ui-badge>
+                        @if (delivery.errorMessage) {
+                          <span class="mt-0.5 block max-w-xs truncate text-xs text-red-600" [title]="delivery.errorMessage">{{ delivery.errorMessage }}</span>
+                        }
+                      </td>
+                      <td class="px-4 py-2 text-sm">{{ delivery.httpStatus || '-' }}</td>
+                      <td class="px-4 py-2 text-sm">{{ delivery.retryCount + 1 }}</td>
+                      <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{{ formatDate(delivery.createdAt) }}</td>
+                      <td class="px-4 py-2 text-right">
+                        @if (canRetry(delivery.status)) {
+                          <button
+                            type="button"
+                            (click)="retryDelivery(delivery)"
+                            [disabled]="retryingId() === delivery.id"
+                            class="rounded p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                            aria-label="Retry delivery"
+                            title="Retry"
+                          >
+                            <ui-icon name="refresh" class="h-4 w-4" />
+                          </button>
+                        }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          } @else {
+            <p class="py-8 text-center text-gray-500">No deliveries yet. Send a test event to try the endpoint.</p>
+          }
+        </ui-card>
+      </div>
+    }
+  </div>
+
+  <!-- Dialogs -->
+  <ui-confirm-dialog
+    [open]="showSensitiveDataConfirm()"
+    title="Send sensitive data outside the platform?"
+    [message]="sensitiveDataConfirmMessage()"
+    confirmText="Authorise"
+    cancelText="Cancel"
+    variant="danger"
+    [closeOnBackdrop]="false"
+    (confirmed)="confirmSensitiveData()"
+    (cancelled)="cancelSensitiveData()"
+  />
+
+  <ui-confirm-dialog
+    [open]="showDeleteConfirm()"
+    title="Delete webhook"
+    [message]="'Delete the webhook \'' + (endpoint()?.name || '') + '\'? Deliveries stop immediately and this cannot be undone.'"
+    confirmText="Delete"
+    cancelText="Cancel"
+    variant="danger"
+    [loading]="deleting()"
+    [closeOnBackdrop]="false"
+    (confirmed)="confirmDelete()"
+    (cancelled)="showDeleteConfirm.set(false)"
+  />
+
+  <ui-confirm-dialog
+    [open]="showRotateConfirm()"
+    title="Rotate signing secret"
+    [message]="'Rotate the secret for \'' + (endpoint()?.name || '') + '\'? The current secret stops working immediately, so update the receiver with the new one.'"
+    confirmText="Rotate secret"
+    cancelText="Cancel"
+    variant="warning"
+    [loading]="rotating()"
+    [closeOnBackdrop]="false"
+    (confirmed)="confirmRotateSecret()"
+    (cancelled)="showRotateConfirm.set(false)"
+  />
+
+  <ui-modal [open]="showSecretModal()" title="Signing secret" [closeOnBackdrop]="false" (closed)="closeSecretModal()">
+    <div class="space-y-4">
+      <p class="text-sm text-amber-700">This is the only time this secret is shown. Copy it now.</p>
+      <div class="flex items-center gap-2">
+        <code class="flex-1 break-all rounded bg-gray-100 px-3 py-2 font-mono text-sm">{{ newSecret() }}</code>
+        <ui-button variant="secondary" (clicked)="copySecret()" [attr.aria-label]="'Copy secret'">
+          @if (secretCopied()) {
+            <ui-icon name="check-circle" class="h-5 w-5 text-green-500" />
+          } @else {
+            <ui-icon name="document-duplicate" class="h-5 w-5" />
+          }
+        </ui-button>
+      </div>
+      <p class="text-xs text-gray-500">
+        Use this secret to verify webhook signatures. The signature is sent in the X-Webhook-Signature header as
+        sha256=&lt;hex-signature&gt;.
+      </p>
+      <div class="flex justify-end">
+        <ui-button (clicked)="closeSecretModal()">Done</ui-button>
+      </div>
+    </div>
+  </ui-modal>
+}

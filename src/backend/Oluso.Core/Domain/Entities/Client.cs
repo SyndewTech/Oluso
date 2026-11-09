@@ -46,8 +46,27 @@ public class Client : TenantEntity
     public int AccessTokenType { get; set; } = (int)Entities.AccessTokenType.Jwt;
     public bool EnableLocalLogin { get; set; } = true;
     public ICollection<ClientIdPRestriction> IdentityProviderRestrictions { get; set; } = new List<ClientIdPRestriction>();
+
+    /// <summary>
+    /// Resource indicators (RFC 8707) this client may request tokens for. Empty means any
+    /// registered resource; otherwise others are refused with <c>invalid_target</c>.
+    /// </summary>
+    public List<string> AllowedResources { get; set; } = new();
+
+    /// <summary>
+    /// Resources this client serves as the resource server for (RFC 7662). It may introspect
+    /// access tokens whose audience includes one of them, as well as its own tokens.
+    /// </summary>
+    public List<string> IntrospectionResources { get; set; } = new();
     public bool IncludeJwtId { get; set; } = true;
     public ICollection<ClientClaim> Claims { get; set; } = new List<ClientClaim>();
+
+    /// <summary>
+    /// Allowlist of custom /authorize request parameters this client may pass
+    /// and have surfaced as token claims (RFC 7591 vendor extension). Empty for
+    /// the vast majority of clients. See <see cref="ClientAuthorizeParameter"/>.
+    /// </summary>
+    public ICollection<ClientAuthorizeParameter> AllowedAuthorizeParameters { get; set; } = new List<ClientAuthorizeParameter>();
     public bool AlwaysSendClientClaims { get; set; } = false;
     public string ClientClaimsPrefix { get; set; } = "client_";
     public string? PairWiseSubjectSalt { get; set; }
@@ -72,6 +91,37 @@ public class Client : TenantEntity
     /// </summary>
     public string? RegistrationAccessTokenHash { get; set; }
 
+    /// <summary>
+    /// The token endpoint authentication method this client uses (RFC 7591 §2).
+    /// null = legacy implicit detection (backward compatible).
+    /// </summary>
+    public string? TokenEndpointAuthMethod { get; set; }
+
+    /// <summary>
+    /// For tls_client_auth: expected subject DN of the client certificate (RFC 8705 §2.1.1).
+    /// </summary>
+    public string? TlsClientAuthSubjectDn { get; set; }
+
+    /// <summary>
+    /// For tls_client_auth: expected SAN DNS name (RFC 8705 §2.1.2).
+    /// </summary>
+    public string? TlsClientAuthSanDns { get; set; }
+
+    /// <summary>
+    /// For tls_client_auth: expected SAN URI (RFC 8705 §2.1.2).
+    /// </summary>
+    public string? TlsClientAuthSanUri { get; set; }
+
+    /// <summary>
+    /// For tls_client_auth: expected SAN email (RFC 8705 §2.1.2).
+    /// </summary>
+    public string? TlsClientAuthSanEmail { get; set; }
+
+    /// <summary>
+    /// For tls_client_auth: expected SAN IP address (RFC 8705 §2.1.2).
+    /// </summary>
+    public string? TlsClientAuthSanIp { get; set; }
+
     // DPoP settings
     public bool RequireDPoP { get; set; } = false;
 
@@ -88,6 +138,20 @@ public class Client : TenantEntity
     // Access restrictions
     public ICollection<ClientAllowedRole> AllowedRoles { get; set; } = new List<ClientAllowedRole>();
     public ICollection<ClientAllowedUser> AllowedUsers { get; set; } = new List<ClientAllowedUser>();
+
+    /// <summary>
+    /// Permission required to authenticate with this client.
+    /// If set, users must have this permission (via their roles) to get tokens.
+    /// This allows tenant admins to create custom roles with this permission.
+    /// </summary>
+    public string? RequiredPermission { get; set; }
+
+    /// <summary>
+    /// Only users whose email address is verified get tokens for this client. For a client that identifies people
+    /// by their email (a mail server, an app that matches accounts by address), so an address nobody proved can't
+    /// sign in as its owner.
+    /// </summary>
+    public bool RequireVerifiedEmail { get; set; }
 
     // CIBA (Client Initiated Backchannel Authentication) settings
     /// <summary>

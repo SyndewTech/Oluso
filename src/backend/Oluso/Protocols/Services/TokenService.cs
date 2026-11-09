@@ -3,14 +3,16 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Oluso.Core;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
+using Oluso.Core.Authorization;
 using Oluso.Core.Services;
+using Oluso.Protocols.Grants;
 
 namespace Oluso.Protocols.Services;
 
@@ -23,33 +25,36 @@ public class TokenService : ITokenService
 {
     private readonly ISigningCredentialStore _signingCredentialStore;
     private readonly IPersistedGrantStore _grantStore;
-    private readonly IResourceStore _resourceStore;
-    private readonly ITenantContext _tenantContext;
     private readonly ITenantSettingsProvider _tenantSettings;
     private readonly IClaimsProviderRegistry _claimsProviderRegistry;
-    private readonly IOrganizationMembershipStore? _organizationMembershipStore;
-    private readonly IConfiguration _configuration;
+    private readonly IIssuerResolver _issuerResolver;
+    private readonly IIdentityScopeClaimResolver _identityScopeClaims;
+    private readonly IAudienceResolver _audiences;
+    private readonly ITenantContext _tenantContext;
+    private readonly ITenantStore _tenants;
     private readonly ILogger<TokenService> _logger;
 
     public TokenService(
         ISigningCredentialStore signingCredentialStore,
         IPersistedGrantStore grantStore,
-        IResourceStore resourceStore,
-        ITenantContext tenantContext,
         ITenantSettingsProvider tenantSettings,
         IClaimsProviderRegistry claimsProviderRegistry,
-        IConfiguration configuration,
-        ILogger<TokenService> logger,
-        IOrganizationMembershipStore? organizationMembershipStore = null)
+        IIssuerResolver issuerResolver,
+        IIdentityScopeClaimResolver identityScopeClaims,
+        IAudienceResolver audiences,
+        ITenantContext tenantContext,
+        ITenantStore tenants,
+        ILogger<TokenService> logger)
     {
+        _audiences = audiences;
+        _tenantContext = tenantContext;
+        _tenants = tenants;
         _signingCredentialStore = signingCredentialStore;
         _grantStore = grantStore;
-        _resourceStore = resourceStore;
-        _tenantContext = tenantContext;
         _tenantSettings = tenantSettings;
         _claimsProviderRegistry = claimsProviderRegistry;
-        _organizationMembershipStore = organizationMembershipStore;
-        _configuration = configuration;
+        _issuerResolver = issuerResolver;
+        _identityScopeClaims = identityScopeClaims;
         _logger = logger;
     }
 
@@ -60,6 +65,12 @@ public class TokenService : ITokenService
     {
         var client = request.Client!;
         var scopes = grant.Scopes.ToList();
+
+        // A token-exchange ticket is not an access token: no provider claims, no refresh or ID token.
+        if (grant.CustomData.TryGetValue(ExchangeTickets.CustomDataKey, out var ticketData) && ticketData is ExchangeTicketDescriptor ticket)
+        {
+            return await CreateTicketResponseAsync(grant, client, scopes, ticket, cancellationToken);
+        }
 
         // Get tenant-specific token settings
         var tokenSettings = await _tenantSettings.GetTokenSettingsAsync(cancellationToken);
@@ -74,19 +85,21 @@ public class TokenService : ITokenService
             mergedClaims[claim.Key] = claim.Value;
         }
 
-        // Add organization claims if user is member of organizations
-        if (!string.IsNullOrEmpty(grant.SubjectId))
-        {
-            var orgClaims = await GetOrganizationClaimsAsync(grant.SubjectId, cancellationToken);
-            foreach (var claim in orgClaims)
-            {
-                mergedClaims[claim.Key] = claim.Value;
-            }
-        }
+        // Authorization claims (super_admin, is_org_admin, org_ids, org_roles,
+        // allowed_tenants) come from DefaultProfileService.AddAuthorizationClaimsAsync
+        // alongside the OIDC standard claims — single source of truth shared with
+        // OlusoClaimsPrincipalFactory.
 
-        // Determine audiences from resource parameter (RFC 8707)
-        // The resource URIs directly become the audience values
-        var audiences = await GetAudiencesFromResourcesAsync(request.Resource, client.ClientId, cancellationToken);
+        // The grant's resources (code and refresh grants keep them), else this request's.
+        var resources = grant.Resources ?? request.Resource;
+        var audiences = await _audiences.ResolveAsync(resources, scopes, client.ClientId, client.AllowedResources, cancellationToken);
+
+        // Token exchange naming an audience (RFC 8693 §2.1, checked by the grant handler): the token is for it.
+        if (grant.CustomData.TryGetValue(ExchangeTickets.AudienceCustomDataKey, out var exchangeAudience)
+            && exchangeAudience is string audience && !string.IsNullOrEmpty(audience))
+        {
+            audiences = new List<string> { audience };
+        }
 
         // Create token request with DPoP thumbprint from validated proof
         var tokenRequest = new TokenCreationRequest
@@ -102,15 +115,41 @@ public class TokenService : ITokenService
             SessionId = grant.SessionId,
             IsReference = client.AccessTokenType == (int)AccessTokenType.Reference,
             IncludeJwtId = client.IncludeJwtId,
+            AlwaysIncludeUserClaimsInIdToken = client.AlwaysIncludeUserClaimsInIdToken,
             DPoPKeyThumbprint = request.DPoPKeyThumbprint,
+            MtlsCertificateThumbprint = request.MtlsCertificateThumbprint,
             PairWiseSubjectSalt = client.PairWiseSubjectSalt,
-            Audiences = audiences
+            Audiences = audiences,
+            GrantedResources = grant.GrantedResources ?? request.Resource.ToList(),
+            GrantedScopes = grant.GrantedScopes?.ToList()
         };
+
+        // How the user signed in, carried by the authorization code
+        if (grant.Amr?.Count > 0)
+        {
+            tokenRequest.Amr = grant.Amr.ToList();
+        }
+        tokenRequest.Acr ??= grant.Acr;
 
         // Nonce from authorization code
         if (grant.Claims.TryGetValue(OidcConstants.StandardClaims.Nonce, out var nonce))
         {
             tokenRequest.Nonce = nonce?.ToString();
+        }
+
+        // Include auth_time in ID token when max_age was requested (OIDC Core §2 REQUIRED)
+        // or when auth_time is available (OPTIONAL per spec, but improves compatibility)
+        var maxAgeRequested = grant.Claims.ContainsKey("max_age_requested");
+        if (grant.Claims.TryGetValue(OidcConstants.StandardClaims.AuthTime, out var authTimeValue)
+            && long.TryParse(authTimeValue?.ToString(), out var epoch))
+        {
+            if (maxAgeRequested)
+            {
+                // REQUIRED per spec — max_age was in the original authorize request
+                tokenRequest.AuthTime = DateTimeOffset.FromUnixTimeSeconds(epoch).UtcDateTime;
+            }
+            // When max_age is not requested, auth_time stays null and won't appear in the ID token.
+            // To always include it (like Auth0/Keycloak), remove the maxAgeRequested check above.
         }
 
         var response = new TokenResponse
@@ -129,7 +168,9 @@ public class TokenService : ITokenService
         }
 
         // Handle refresh token based on grant type and client settings
-        var shouldIssueRefreshToken = ShouldIssueRefreshToken(grant, scopes, client, request.GrantType);
+        var protocolSettings = await _tenantSettings.GetProtocolSettingsAsync(cancellationToken) ?? TenantProtocolSettings.Default;
+        // offline_access is the grant's: a refresh asking for fewer scopes still rotates the refresh token.
+        var shouldIssueRefreshToken = ShouldIssueRefreshToken(grant, grant.GrantedScopes?.ToList() ?? scopes, client, request.GrantType, protocolSettings);
         if (shouldIssueRefreshToken)
         {
             response.RefreshToken = await CreateRefreshTokenAsync(tokenRequest, client, cancellationToken);
@@ -153,10 +194,66 @@ public class TokenService : ITokenService
         return response;
     }
 
-    private static bool ShouldIssueRefreshToken(GrantResult grant, List<string> scopes, ValidatedClient client, string? grantType)
+    /// <summary>
+    /// Signs a one-time ticket (<see cref="OidcConstants.TokenTypes.Ticket"/>): typ <c>oluso-ticket+jwt</c>,
+    /// claims iss, sub, aud (the audience client), azp (the requesting client), scope, jti (its single-use
+    /// record), iat, exp, tenant_id. Never a <c>cnf</c>: the audience redeems it server-side.
+    /// </summary>
+    private async Task<TokenResponse> CreateTicketResponseAsync(
+        GrantResult grant, ValidatedClient client, List<string> scopes, ExchangeTicketDescriptor ticket, CancellationToken cancellationToken)
     {
-        // Must have offline_access scope and client must allow it
-        if (!scopes.Contains(OidcConstants.Scopes.OfflineAccess) || !client.AllowOfflineAccess)
+        var signerRequest = new TokenCreationRequest
+        {
+            SubjectId = grant.SubjectId,
+            ClientId = client.ClientId,
+            Claims = grant.Claims,
+        };
+        var (signingCredentials, issuer) = await SignerForAsync(signerRequest, cancellationToken);
+        var now = DateTime.UtcNow;
+
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, grant.SubjectId!),
+            new(JwtRegisteredClaimNames.Azp, client.ClientId),
+            new("scope", string.Join(" ", scopes)),
+            new(JwtRegisteredClaimNames.Jti, ticket.Jti),
+            new(JwtRegisteredClaimNames.Iat, new DateTimeOffset(now).ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64),
+        };
+        if (grant.Claims.TryGetValue(OidcConstants.StandardClaims.TenantId, out var tenantId) && tenantId?.ToString() is { Length: > 0 } tenant)
+        {
+            claims.Add(new Claim(OidcConstants.StandardClaims.TenantId, tenant));
+        }
+
+        var token = new JwtSecurityToken(
+            issuer: issuer,
+            audience: ticket.Audience,
+            claims: claims,
+            notBefore: now,
+            expires: now.AddSeconds(ticket.LifetimeSeconds),
+            signingCredentials: signingCredentials);
+        token.Header["typ"] = OidcConstants.JwtTypes.Ticket;
+
+        return new TokenResponse
+        {
+            AccessToken = new JwtSecurityTokenHandler().WriteToken(token),
+            TokenType = "N_A",
+            ExpiresIn = ticket.LifetimeSeconds,
+            Scope = string.Join(" ", scopes),
+            IssuedTokenType = OidcConstants.TokenTypes.Ticket,
+        };
+    }
+
+    /// <summary>
+    /// Whether this response carries a refresh token: <c>offline_access</c> granted to a client allowed offline
+    /// access, or a refresh-implying scope (<see cref="TenantProtocolSettings.RefreshImplyingScopes"/>, the Matrix
+    /// client API scope by default) granted to a client allowed the <c>refresh_token</c> grant. Matrix clients never
+    /// ask for <c>offline_access</c> yet must be able to refresh (Matrix spec, OAuth 2.0 API).
+    /// </summary>
+    private static bool ShouldIssueRefreshToken(GrantResult grant, List<string> scopes, ValidatedClient client, string? grantType,
+        TenantProtocolSettings? protocolSettings = null)
+    {
+        var offline = scopes.Contains(OidcConstants.Scopes.OfflineAccess) && client.AllowOfflineAccess;
+        if (!offline && !HasRefreshImplyingScope(scopes, client, protocolSettings ?? TenantProtocolSettings.Default))
         {
             return false;
         }
@@ -178,6 +275,24 @@ public class TokenService : ITokenService
         return true;
     }
 
+    private static bool HasRefreshImplyingScope(List<string> scopes, ValidatedClient client, TenantProtocolSettings protocolSettings)
+    {
+        if (!client.AllowedGrantTypes.Contains(OidcConstants.GrantTypes.RefreshToken))
+        {
+            return false;
+        }
+
+        // A tenant that limits its grant types must allow refresh for the token to be usable.
+        if (protocolSettings.AllowedGrantTypes?.Count > 0
+            && !protocolSettings.AllowedGrantTypes.Contains(OidcConstants.GrantTypes.RefreshToken))
+        {
+            return false;
+        }
+
+        var implying = protocolSettings.EffectiveRefreshImplyingScopes;
+        return implying.Count > 0 && scopes.Any(s => implying.Contains(s, StringComparer.Ordinal));
+    }
+
     public async Task<string> CreateAccessTokenAsync(
         TokenCreationRequest request,
         CancellationToken cancellationToken = default)
@@ -196,13 +311,7 @@ public class TokenService : ITokenService
         TokenCreationRequest request,
         CancellationToken cancellationToken)
     {
-        var signingCredentials = await _signingCredentialStore.GetSigningCredentialsAsync(cancellationToken);
-        if (signingCredentials == null)
-        {
-            throw new InvalidOperationException("No signing credentials configured");
-        }
-
-        var issuer = GetIssuer();
+        var (signingCredentials, issuer) = await SignerForAsync(request, cancellationToken);
         var now = DateTime.UtcNow;
 
         var claims = new List<Claim>
@@ -235,20 +344,24 @@ public class TokenService : ITokenService
             claims.Add(new Claim(OidcConstants.StandardClaims.SessionId, request.SessionId));
         }
 
-        // Add tenant ID
-        if (_tenantContext.HasTenant)
-        {
-            claims.Add(new Claim(OidcConstants.StandardClaims.TenantId, _tenantContext.TenantId!));
-        }
+        // Tenant ID comes from claims only — the user's tenant (via profile service) for user tokens,
+        // or the client's registered tenant (via grant handler) for client_credentials.
+        // Never sourced from _tenantContext (the HTTP request routing context) — that would allow
+        // tokens to be stamped with whatever tenant URL the request arrived on, bypassing the
+        // profile service's tenant membership validation. If no tenant_id claim exists, the token
+        // is platform-scoped intentionally.
 
-        // Add DPoP confirmation
+        // Add proof-of-possession confirmation (cnf claim)
+        var cnfMembers = new Dictionary<string, string>();
         if (!string.IsNullOrEmpty(request.DPoPKeyThumbprint))
-        {
-            var cnf = JsonSerializer.Serialize(new { jkt = request.DPoPKeyThumbprint });
-            claims.Add(new Claim("cnf", cnf, JsonClaimValueTypes.Json));
-        }
+            cnfMembers["jkt"] = request.DPoPKeyThumbprint;
+        if (!string.IsNullOrEmpty(request.MtlsCertificateThumbprint))
+            cnfMembers["x5t#S256"] = request.MtlsCertificateThumbprint;
+        if (cnfMembers.Count > 0)
+            claims.Add(new Claim("cnf", JsonSerializer.Serialize(cnfMembers), JsonClaimValueTypes.Json));
 
         // Add additional claims, skipping any that are already present to avoid duplicates
+        // Also filter out ASP.NET Identity SOAP-style claims — we already emit proper short-name equivalents
         var existingClaimTypes = new HashSet<string>(claims.Select(c => c.Type), StringComparer.OrdinalIgnoreCase);
         foreach (var claim in request.Claims)
         {
@@ -256,13 +369,41 @@ public class TokenService : ITokenService
             {
                 continue;
             }
-            var value = claim.Value is string s ? s : JsonSerializer.Serialize(claim.Value);
-            claims.Add(new Claim(claim.Key, value));
+
+            // Skip internal claims that should not appear in tokens:
+            // - ASP.NET Identity SOAP-style claims (duplicated by short-name OIDC equivalents)
+            // - "permission" (singular) is a reserved RoleClaim storage type; only "permissions" (plural JSON array) goes in the token
+            // - "permissions" (plural) from ClaimsPrincipalFactory is skipped here — the dedicated Permissions path below handles it
+            // - "max_age_requested" is an internal flag for auth_time inclusion logic
+            if (claim.Key.StartsWith("http://schemas.xmlsoap.org/", StringComparison.Ordinal) ||
+                claim.Key.StartsWith("http://schemas.microsoft.com/", StringComparison.Ordinal) ||
+                claim.Key.StartsWith("AspNet.Identity.", StringComparison.Ordinal) ||
+                claim.Key == OlusoRole.PermissionClaimType ||
+                claim.Key == "permissions" ||
+                claim.Key == "max_age_requested")
+            {
+                continue;
+            }
+
+            if (claim.Value is string s)
+            {
+                claims.Add(new Claim(claim.Key, s));
+            }
+            else if (claim.Value is IEnumerable<string> list)
+            {
+                var json = JsonSerializer.Serialize(list);
+                claims.Add(new Claim(claim.Key, json, JsonClaimValueTypes.JsonArray));
+            }
+            else
+            {
+                var json = JsonSerializer.Serialize(claim.Value);
+                claims.Add(new Claim(claim.Key, json, JsonClaimValueTypes.Json));
+            }
         }
 
         // Add permissions as a dedicated claim when the "permissions" scope is requested
-        // This enables client-side permission checks and reduces database lookups
-        if (request.Permissions.Count > 0 && request.Scopes.Contains(OidcConstants.Scopes.Permissions))
+        // Grant handlers are responsible for populating permissions on the token request
+        if (request.Scopes.Contains(OidcConstants.Scopes.Permissions) && request.Permissions.Count > 0)
         {
             var distinctPermissions = request.Permissions.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var permissionsJson = JsonSerializer.Serialize(distinctPermissions);
@@ -304,11 +445,21 @@ public class TokenService : ITokenService
             request.SubjectId,
             request.ClientId,
             request.Scopes,
+            // The aud a JWT would carry: introspection lets the resource servers for these see the token.
+            Audiences = request.Audiences ?? new List<string> { request.ClientId },
             request.Claims,
             request.SessionId,
             request.DPoPKeyThumbprint,
+            request.MtlsCertificateThumbprint,
             CreatedAt = DateTime.UtcNow
         });
+
+        // Derive tenant from authenticated request claims — never from _tenantContext.
+        // The token endpoint (/connect/token) is an OIDC protocol path, not an API path,
+        // so the middleware resolves tenant from URL/header without JWT validation.
+        // Using _tenantContext here would let a client store grants under arbitrary tenants.
+        var grantTenantId = request.Claims.TryGetValue("tenant_id", out var refTid)
+            ? refTid?.ToString() : null;
 
         var grant = new PersistedGrant
         {
@@ -319,17 +470,47 @@ public class TokenService : ITokenService
             ClientId = request.ClientId,
             CreationTime = DateTime.UtcNow,
             Expiration = DateTime.UtcNow.AddSeconds(request.Lifetime),
-            Data = data
+            Data = data,
+            TenantId = grantTenantId
         };
-
-        if (_tenantContext.HasTenant)
-        {
-            grant.TenantId = _tenantContext.TenantId;
-        }
 
         await _grantStore.StoreAsync(grant, cancellationToken);
 
         return handle;
+    }
+
+    /// <summary>
+    /// The key a token is signed with and the issuer it names. A token's key must belong to the tenant it is
+    /// for (its <c>tenant_id</c>) or to the platform, whose keys every tenant's tokens are validated against.
+    /// Normally that is the tenant the request was routed to. A platform-scoped token requested through a
+    /// tenant's routing (a platform client using a tenant's host) is signed and issued by the platform, so it
+    /// validates as the platform token it claims to be; a token for one tenant is never signed by another's key.
+    /// </summary>
+    private async Task<(SigningCredentials Credentials, string Issuer)> SignerForAsync(
+        TokenCreationRequest request, CancellationToken cancellationToken)
+    {
+        var routedTenant = _tenantContext.TenantId ?? PlatformConstants.TenantId;
+        var tokenTenant = request.Claims.TryGetValue(OidcConstants.StandardClaims.TenantId, out var claimed)
+            ? claimed?.ToString()
+            : null;
+
+        if (string.IsNullOrEmpty(tokenTenant) || tokenTenant == routedTenant || routedTenant == PlatformConstants.TenantId)
+        {
+            var credentials = await _signingCredentialStore.GetSigningCredentialsAsync(cancellationToken)
+                ?? throw new InvalidOperationException("No signing credentials configured");
+            return (credentials, await _issuerResolver.GetIssuerAsync(cancellationToken));
+        }
+
+        if (tokenTenant != PlatformConstants.TenantId)
+        {
+            throw new TokenTenantMismatchException(tokenTenant, routedTenant);
+        }
+
+        var platform = await _tenants.GetByIdAsync(PlatformConstants.TenantId, cancellationToken)
+            ?? throw new InvalidOperationException("The platform tenant is not configured.");
+        var platformCredentials = await _signingCredentialStore.GetSigningCredentialsAsync(PlatformConstants.TenantId, cancellationToken)
+            ?? throw new InvalidOperationException("No signing credentials configured for the platform");
+        return (platformCredentials, await _issuerResolver.GetIssuerForTenantAsync(platform, cancellationToken));
     }
 
     public async Task<string> CreateIdTokenAsync(
@@ -338,13 +519,7 @@ public class TokenService : ITokenService
         string? codeHash = null,
         CancellationToken cancellationToken = default)
     {
-        var signingCredentials = await _signingCredentialStore.GetSigningCredentialsAsync(cancellationToken);
-        if (signingCredentials == null)
-        {
-            throw new InvalidOperationException("No signing credentials configured");
-        }
-
-        var issuer = GetIssuer();
+        var (signingCredentials, issuer) = await SignerForAsync(request, cancellationToken);
         var now = DateTime.UtcNow;
 
         // Compute subject ID - use pairwise if salt is configured
@@ -379,6 +554,14 @@ public class TokenService : ITokenService
             claims.Add(new Claim(OidcConstants.StandardClaims.SessionId, request.SessionId));
         }
 
+        // Remembered (persistent cookie) sign-ins are marked so the app can keep its
+        // tokens across browser restarts; session-only sign-ins carry nothing.
+        if (request.Claims.TryGetValue(Oluso.Core.Authorization.ReservedClaimKeys.RememberMe, out var remembered)
+            && remembered is string rememberedText && rememberedText == "true")
+        {
+            claims.Add(new Claim(Oluso.Core.Authorization.ReservedClaimKeys.RememberMe, "true"));
+        }
+
         // Add amr (authentication methods)
         if (request.Amr?.Any() == true)
         {
@@ -406,24 +589,64 @@ public class TokenService : ITokenService
             claims.Add(new Claim(OidcConstants.StandardClaims.CHash, codeHash));
         }
 
-        // Add tenant ID
-        if (_tenantContext.HasTenant)
-        {
-            claims.Add(new Claim(OidcConstants.StandardClaims.TenantId, _tenantContext.TenantId!));
-        }
+        // Tenant ID comes from claims (same as access token)
 
-        // Add user claims (profile, email, etc.) if scopes allow
-        // Skip claims that are already added (sub, nonce, iat) to avoid duplicates
+        // Add the identity claims the granted identity scopes release — and only
+        // those. The scope set here is already "requested ∩ client AllowedScopes"
+        // (ScopeValidator ran at request validation), so an ID token can only
+        // carry what the client was actually granted.
+        //
+        // Allowlist rather than denylist: the ID token asserts who authenticated,
+        // so authorization attributes (role, permissions, entitlements, tenant
+        // and org context) stay out by construction instead of needing a new
+        // exclusion every time a claim is added. Those ride the access token,
+        // per RFC 9068 §2.2.3.1, and remain available at /userinfo.
+        // OIDC Core §5.4: when an access token is issued, the identity claims for
+        // profile/email/phone are fetched from /userinfo, and the ID token carries
+        // them only if the client asks. A response with no access token (a bare
+        // id_token flow) has no userinfo round trip available at that point, so
+        // the claims go in regardless — an empty at_hash is that signal.
+        var accessTokenIssued = !string.IsNullOrEmpty(accessTokenHash);
+        var includeIdentityClaims =
+            request.AlwaysIncludeUserClaimsInIdToken || !accessTokenIssued;
+
+        var identityClaimTypes = includeIdentityClaims
+            ? await _identityScopeClaims.ResolveAsync(request.Scopes, cancellationToken)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // tenant_id is the one authorization-adjacent claim kept, and it is kept
+        // unconditionally: in a multi-tenant IdP it says which tenant the user
+        // authenticated into, and TokenTenantIntegrityTests asserts the two tokens
+        // agree on it. Everything else authorization-shaped stays out.
+        identityClaimTypes.Add(ReservedClaimKeys.TenantId);
+
         var existingClaimTypes = new HashSet<string>(claims.Select(c => c.Type), StringComparer.OrdinalIgnoreCase);
         foreach (var claim in request.Claims)
         {
-            // Skip claims we've already added to avoid duplicates (which cause array values in JWT)
             if (existingClaimTypes.Contains(claim.Key))
             {
                 continue;
             }
-            var value = claim.Value is string s ? s : JsonSerializer.Serialize(claim.Value);
-            claims.Add(new Claim(claim.Key, value));
+
+            if (!identityClaimTypes.Contains(claim.Key))
+            {
+                continue;
+            }
+
+            if (claim.Value is string s)
+            {
+                claims.Add(new Claim(claim.Key, s));
+            }
+            else if (claim.Value is IEnumerable<string> list)
+            {
+                var json = JsonSerializer.Serialize(list);
+                claims.Add(new Claim(claim.Key, json, JsonClaimValueTypes.JsonArray));
+            }
+            else
+            {
+                var json = JsonSerializer.Serialize(claim.Value);
+                claims.Add(new Claim(claim.Key, json, JsonClaimValueTypes.Json));
+            }
         }
 
         // ID token lifetime: use client's setting if available, otherwise tenant settings
@@ -490,13 +713,30 @@ public class TokenService : ITokenService
         var handle = GenerateHandle();
         var now = DateTime.UtcNow;
 
+        var claims = RefreshTokenData.StoreClaims(request.Claims);
+
+        // Store auth_time in claims so it round-trips through refresh token data
+        if (request.AuthTime.HasValue && !claims.ContainsKey(OidcConstants.StandardClaims.AuthTime))
+        {
+            claims[OidcConstants.StandardClaims.AuthTime] = JsonSerializer.SerializeToElement(
+                new DateTimeOffset(request.AuthTime.Value).ToUnixTimeSeconds().ToString());
+        }
+
         var data = JsonSerializer.Serialize(new RefreshTokenData
         {
             CreatedAt = now,
-            Scopes = request.Scopes.ToList(),
-            Claims = request.Claims.ToDictionary(c => c.Key, c => c.Value?.ToString() ?? string.Empty),
-            DPoPJkt = request.DPoPKeyThumbprint
+            Scopes = (request.GrantedScopes ?? request.Scopes).ToList(),
+            Claims = claims,
+            ClaimsFormat = RefreshTokenData.JsonClaimsFormat,
+            DPoPJkt = request.DPoPKeyThumbprint,
+            Resources = request.GrantedResources?.ToList(),
+            Amr = request.Amr is { Count: > 0 } amr ? amr.ToList() : null,
+            Acr = request.Acr
         });
+
+        // Same pattern as reference tokens — derive tenant from claims, not routing context.
+        var refreshTenantId = request.Claims.TryGetValue("tenant_id", out var rtTid)
+            ? rtTid?.ToString() : null;
 
         var grant = new PersistedGrant
         {
@@ -507,84 +747,21 @@ public class TokenService : ITokenService
             ClientId = request.ClientId,
             CreationTime = now,
             Expiration = now.AddSeconds(lifetime),
-            Data = data
+            Data = data,
+            TenantId = refreshTenantId
         };
-
-        if (_tenantContext.HasTenant)
-        {
-            grant.TenantId = _tenantContext.TenantId;
-        }
 
         await _grantStore.StoreAsync(grant, cancellationToken);
 
         return handle;
     }
 
-    private async Task<string> GetIssuerAsync(CancellationToken cancellationToken = default)
-    {
-        // Priority order for issuer:
-        // 1. Tenant's IssuerUri from token settings (explicit override)
-        // 2. Tenant's CustomDomain (e.g., auth.customer.com -> https://auth.customer.com)
-        // 3. Server's configured IssuerUri
-        if (_tenantContext.HasTenant)
-        {
-            var tokenSettings = await _tenantSettings.GetTokenSettingsAsync(cancellationToken);
-            if (!string.IsNullOrEmpty(tokenSettings.IssuerUri))
-            {
-                return tokenSettings.IssuerUri.TrimEnd('/');
-            }
-
-            // Use tenant's custom domain if configured
-            var tenant = _tenantContext.Tenant;
-            if (!string.IsNullOrEmpty(tenant?.CustomDomain))
-            {
-                // Construct issuer from custom domain (assume https)
-                return $"https://{tenant.CustomDomain.TrimEnd('/')}";
-            }
-        }
-
-        return GetIssuer();
-    }
-
-    // Synchronous version - only uses server configuration
-    // For tenant-aware issuer resolution, use GetIssuerAsync
-    private string GetIssuer()
-    {
-        var baseUrl = _configuration["Oluso:IssuerUri"]
-            ?? _configuration["IdentityServer:IssuerUri"]
-            ?? throw new InvalidOperationException("IssuerUri not configured");
-
-        return baseUrl.TrimEnd('/');
-    }
 
     /// <summary>
     /// Gets audiences (aud claim) based on the resource parameter (RFC 8707).
     /// Per RFC 8707, the resource URIs directly become the audience values.
     /// If no resources are specified, defaults to the client ID.
     /// </summary>
-    private async Task<ICollection<string>> GetAudiencesFromResourcesAsync(
-        ICollection<string> resources,
-        string clientId,
-        CancellationToken cancellationToken)
-    {
-        if (resources == null || resources.Count == 0)
-        {
-            // No resource parameter provided - check for default resource in tenant settings
-            var protocolSettings = await _tenantSettings.GetProtocolSettingsAsync(cancellationToken);
-            if (!string.IsNullOrEmpty(protocolSettings.DefaultResourceUri))
-            {
-                return new List<string> { protocolSettings.DefaultResourceUri };
-            }
-
-            // No default resource, use client ID as audience (OAuth 2.0 default behavior)
-            return new List<string> { clientId };
-        }
-
-        // RFC 8707: Resource URIs directly become the audience values
-        // The resource parameter contains absolute URIs that identify the protected resources
-        return resources.Distinct().ToList();
-    }
-
     private async Task<IDictionary<string, object>> GetProviderClaimsAsync(
         GrantResult grant,
         IEnumerable<string> scopes,
@@ -597,10 +774,15 @@ public class TokenService : ITokenService
             return new Dictionary<string, object>();
         }
 
+        // Derive tenant from the grant's claims (set by the grant handler or profile service),
+        // not from the current request routing context.
+        var claimsTenantId = grant.Claims.TryGetValue("tenant_id", out var cpTid)
+            ? cpTid?.ToString() : null;
+
         var context = new ClaimsProviderContext
         {
             SubjectId = grant.SubjectId,
-            TenantId = _tenantContext.TenantId,
+            TenantId = claimsTenantId,
             ClientId = clientId,
             Scopes = scopes,
             SessionId = grant.SessionId,
@@ -618,75 +800,6 @@ public class TokenService : ITokenService
         }
     }
 
-    /// <summary>
-    /// Gets organization-related claims for a user.
-    /// These claims enable organization-based access control and tenant switching.
-    /// </summary>
-    private async Task<IDictionary<string, object>> GetOrganizationClaimsAsync(
-        string subjectId,
-        CancellationToken cancellationToken)
-    {
-        var claims = new Dictionary<string, object>();
-
-        if (_organizationMembershipStore == null)
-        {
-            return claims;
-        }
-
-        try
-        {
-            // Get all organizations the user is a member of
-            var memberships = await _organizationMembershipStore.GetByUserAsync(subjectId, cancellationToken);
-            var membershipList = memberships.ToList();
-
-            if (membershipList.Count == 0)
-            {
-                return claims;
-            }
-
-            // Add organization IDs
-            var orgIds = membershipList.Select(m => m.OrganizationId).ToList();
-            claims["org_ids"] = orgIds;
-
-            // Add organization roles (format: { "org_id": "role" })
-            var orgRoles = membershipList.ToDictionary(
-                m => m.OrganizationId,
-                m => m.Role.ToString().ToLowerInvariant());
-            claims["org_roles"] = orgRoles;
-
-            // Add allowed tenant IDs (aggregated from all memberships)
-            var allowedTenantIds = new HashSet<string>();
-            foreach (var membership in membershipList)
-            {
-                var tenantIds = await _organizationMembershipStore.GetAllowedTenantIdsAsync(
-                    subjectId, membership.OrganizationId, cancellationToken);
-                foreach (var tenantId in tenantIds)
-                {
-                    allowedTenantIds.Add(tenantId);
-                }
-            }
-
-            if (allowedTenantIds.Count > 0)
-            {
-                claims["allowed_tenants"] = allowedTenantIds.ToList();
-            }
-
-            // Check if user is an org admin (owner or admin in any org)
-            var isOrgAdmin = membershipList.Any(m =>
-                m.Role == OrganizationRole.Owner || m.Role == OrganizationRole.Admin);
-            if (isOrgAdmin)
-            {
-                claims["is_org_admin"] = true;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error collecting organization claims for user {SubjectId}", subjectId);
-        }
-
-        return claims;
-    }
-
     private static string GenerateHandle()
     {
         var bytes = new byte[32];
@@ -697,7 +810,7 @@ public class TokenService : ITokenService
             .TrimEnd('=');
     }
 
-    private static string ComputeHash(string value)
+    internal static string ComputeHash(string value)
     {
         using var sha256 = SHA256.Create();
         var bytes = Encoding.ASCII.GetBytes(value);
@@ -712,43 +825,8 @@ public class TokenService : ITokenService
 
     /// <summary>
     /// Computes the subject identifier based on subject type.
-    /// For pairwise subject type, creates a unique sub per client using HMAC-SHA256.
     /// See OpenID Connect Core 1.0 Section 8 (Subject Identifier Types).
     /// </summary>
     private static string ComputeSubjectId(string subjectId, string clientId, string? pairWiseSalt)
-    {
-        if (string.IsNullOrEmpty(pairWiseSalt))
-        {
-            // Public subject type - same sub for all clients
-            return subjectId;
-        }
-
-        // Pairwise subject type - unique sub per client
-        // Formula: Base64URL(HMAC-SHA256(salt, clientId + subjectId))
-        // Using HMAC for security (protects against salt extraction attacks)
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(pairWiseSalt));
-        var input = Encoding.UTF8.GetBytes($"{clientId}{subjectId}");
-        var hash = hmac.ComputeHash(input);
-
-        return Convert.ToBase64String(hash)
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
-    }
-}
-
-/// <summary>
-/// Data stored with refresh tokens
-/// </summary>
-public class RefreshTokenData
-{
-    public DateTime CreatedAt { get; set; }
-    public ICollection<string> Scopes { get; set; } = new List<string>();
-    public IDictionary<string, string>? Claims { get; set; }
-    public string? AccessTokenHash { get; set; }
-
-    /// <summary>
-    /// DPoP key thumbprint bound to this refresh token (RFC 9449)
-    /// </summary>
-    public string? DPoPJkt { get; set; }
+        => SubjectIdentifiers.ForClient(subjectId, clientId, pairWiseSalt);
 }

@@ -10,6 +10,9 @@ public class AuthorizationCode : TenantEntity
     public string SubjectId { get; set; } = null!;
     public string RedirectUri { get; set; } = null!;
     public List<string> Scopes { get; set; } = new();
+
+    /// <summary>Resource indicators named at sign-in (RFC 8707 §2.1); they apply to the whole grant.</summary>
+    public List<string> Resources { get; set; } = new();
     public string? CodeChallenge { get; set; }
     public string? CodeChallengeMethod { get; set; }
     public string? Nonce { get; set; }

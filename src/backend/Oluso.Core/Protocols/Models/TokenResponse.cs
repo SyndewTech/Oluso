@@ -137,6 +137,15 @@ public class IntrospectionResponse
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Jti { get; set; }
 
+    /// <summary>
+    /// Confirmation of a sender-constrained token: <c>jkt</c> for a DPoP-bound token (RFC 9449 §6.2),
+    /// <c>x5t#S256</c> for an mTLS-bound one (RFC 8705 §3.2). Lets a resource server that introspects enforce
+    /// the binding.
+    /// </summary>
+    [JsonPropertyName("cnf")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, string>? Cnf { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, object>? Claims { get; set; }
 }
@@ -212,6 +221,10 @@ public class ParRequestDto
     [JsonPropertyName("request_uri")]
     public string? RequestUri { get; set; }
 
+    /// <summary>Resource indicators (RFC 8707): the protected resources the grant is for.</summary>
+    [JsonPropertyName("resource")]
+    public List<string>? Resource { get; set; }
+
     /// <summary>
     /// Convert to AuthorizeRequest
     /// </summary>
@@ -219,9 +232,9 @@ public class ParRequestDto
     {
         return new AuthorizeRequest
         {
-            ClientId = ClientId,
+            ClientId = ClientId!,
             RedirectUri = RedirectUri,
-            ResponseType = ResponseType,
+            ResponseType = ResponseType!,
             Scope = Scope,
             State = State,
             Nonce = Nonce,
@@ -235,7 +248,8 @@ public class ParRequestDto
             AcrValues = AcrValues,
             UiLocales = UiLocales,
             Request = Request,
-            RequestUri = RequestUri
+            RequestUri = RequestUri,
+            Resource = Resource?.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct().ToList() ?? new List<string>()
         };
     }
 }

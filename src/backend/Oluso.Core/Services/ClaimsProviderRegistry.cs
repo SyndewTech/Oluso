@@ -6,18 +6,23 @@ namespace Oluso.Core.Services;
 
 /// <summary>
 /// Default implementation of IClaimsProviderRegistry.
-/// Automatically discovers and invokes claims providers from enabled plugins.
+/// Collects claims from two sources:
+/// 1. WASM plugins via IManagedPluginRegistry
+/// 2. DI-registered IClaimsProvider instances (module claims providers)
 /// </summary>
 public class ClaimsProviderRegistry : IClaimsProviderRegistry
 {
     private readonly IManagedPluginRegistry _pluginRegistry;
+    private readonly IEnumerable<IClaimsProvider> _claimsProviders;
     private readonly ILogger<ClaimsProviderRegistry> _logger;
 
     public ClaimsProviderRegistry(
         IManagedPluginRegistry pluginRegistry,
+        IEnumerable<IClaimsProvider> claimsProviders,
         ILogger<ClaimsProviderRegistry> logger)
     {
         _pluginRegistry = pluginRegistry;
+        _claimsProviders = claimsProviders;
         _logger = logger;
     }
 
@@ -27,20 +32,32 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
     {
         var allClaims = new Dictionary<string, object>();
 
-        // Get all claims providers from enabled plugins, ordered by priority
+        // 1. Get claims from WASM plugins
+        await CollectPluginClaimsAsync(context, allClaims, cancellationToken);
+
+        // 2. Get claims from DI-registered module providers
+        await CollectModuleClaimsAsync(context, allClaims, cancellationToken);
+
+        return allClaims;
+    }
+
+    private async Task CollectPluginClaimsAsync(
+        ClaimsProviderContext context,
+        Dictionary<string, object> allClaims,
+        CancellationToken cancellationToken)
+    {
         var providers = GetEnabledProviders()
             .OrderByDescending(p => p.Provider.Priority)
             .ToList();
 
         _logger.LogDebug(
-            "Found {ProviderCount} enabled claims providers for user {SubjectId}",
+            "Found {ProviderCount} enabled plugin claims providers for user {SubjectId}",
             providers.Count, context.SubjectId);
 
         var pluginContext = context.ToPluginContext();
 
         foreach (var (pluginName, provider) in providers)
         {
-            // Check if this provider should run based on protocol
             if (!ShouldProvideForProtocol(provider, context.Protocol))
             {
                 _logger.LogDebug(
@@ -49,7 +66,6 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
                 continue;
             }
 
-            // Check if this provider should run based on scopes
             if (!ShouldProvideForScopes(provider, context.Scopes))
             {
                 _logger.LogDebug(
@@ -74,18 +90,7 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
                     continue;
                 }
 
-                // Merge claims - later providers can override earlier ones
-                foreach (var claim in result.Claims)
-                {
-                    if (allClaims.TryGetValue(claim.Key, out var existingValue))
-                    {
-                        allClaims[claim.Key] = MergeClaimValues(existingValue, claim.Value);
-                    }
-                    else
-                    {
-                        allClaims[claim.Key] = claim.Value;
-                    }
-                }
+                MergeClaims(allClaims, result.Claims);
 
                 _logger.LogDebug(
                     "Claims provider from plugin {PluginName} contributed {ClaimCount} claims",
@@ -98,15 +103,96 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
                     pluginName, context.SubjectId);
             }
         }
+    }
 
-        return allClaims;
+    private async Task CollectModuleClaimsAsync(
+        ClaimsProviderContext context,
+        Dictionary<string, object> allClaims,
+        CancellationToken cancellationToken)
+    {
+        var providers = _claimsProviders
+            .OrderByDescending(p => p.Priority)
+            .ToList();
+
+        if (providers.Count == 0)
+            return;
+
+        _logger.LogDebug(
+            "Found {ProviderCount} DI-registered claims providers for user {SubjectId}",
+            providers.Count, context.SubjectId);
+
+        foreach (var provider in providers)
+        {
+            // Check scope triggers
+            if (provider.TriggerScopes != null && provider.TriggerScopes.Any())
+            {
+                if (!context.Scopes.Any(s => provider.TriggerScopes.Contains(s, StringComparer.OrdinalIgnoreCase)))
+                {
+                    _logger.LogDebug(
+                        "Skipping claims provider {ProviderId} - scopes don't match triggers",
+                        provider.ProviderId);
+                    continue;
+                }
+            }
+
+            if (!provider.ShouldProvide(context))
+            {
+                _logger.LogDebug(
+                    "Skipping claims provider {ProviderId} - ShouldProvide returned false",
+                    provider.ProviderId);
+                continue;
+            }
+
+            try
+            {
+                _logger.LogDebug(
+                    "Invoking claims provider {ProviderId} for user {SubjectId}",
+                    provider.ProviderId, context.SubjectId);
+
+                var result = await provider.GetClaimsAsync(context, cancellationToken);
+
+                if (!result.Success)
+                {
+                    _logger.LogWarning(
+                        "Claims provider {ProviderId} failed: {Error}",
+                        provider.ProviderId, result.Error);
+                    continue;
+                }
+
+                MergeClaims(allClaims, result.Claims);
+
+                _logger.LogDebug(
+                    "Claims provider {ProviderId} contributed {ClaimCount} claims for user {SubjectId}",
+                    provider.ProviderId, result.Claims.Count, context.SubjectId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Error invoking claims provider {ProviderId} for user {SubjectId}",
+                    provider.ProviderId, context.SubjectId);
+            }
+        }
+    }
+
+    private static void MergeClaims(Dictionary<string, object> target, IDictionary<string, object> source)
+    {
+        foreach (var claim in source)
+        {
+            if (target.TryGetValue(claim.Key, out var existingValue))
+            {
+                target[claim.Key] = MergeClaimValues(existingValue, claim.Value);
+            }
+            else
+            {
+                target[claim.Key] = claim.Value;
+            }
+        }
     }
 
     private IEnumerable<(string PluginName, IPluginClaimsProvider Provider)> GetEnabledProviders()
     {
         foreach (var (name, plugin) in _pluginRegistry.GetAll())
         {
-            // Only get providers from enabled plugins
             if (!plugin.IsEnabled)
             {
                 continue;
@@ -125,7 +211,7 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
         var triggers = provider.TriggerScopes?.ToList();
         if (triggers == null || triggers.Count == 0)
         {
-            return true; // Always provide if no triggers specified
+            return true;
         }
 
         return requestedScopes.Any(s => triggers.Contains(s, StringComparer.OrdinalIgnoreCase));
@@ -136,23 +222,19 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
         var triggers = provider.TriggerProtocols?.ToList();
         if (triggers == null || triggers.Count == 0)
         {
-            return true; // Always provide if no protocol triggers specified
+            return true;
         }
 
         if (string.IsNullOrEmpty(protocol))
         {
-            return true; // If no protocol specified in context, allow all
+            return true;
         }
 
         return triggers.Contains(protocol, StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Merge claim values intelligently - arrays are concatenated, scalars are replaced
-    /// </summary>
     private static object MergeClaimValues(object existing, object newValue)
     {
-        // If both are lists, concatenate
         if (existing is IList<object> existingList && newValue is IList<object> newList)
         {
             var merged = new List<object>(existingList);
@@ -166,7 +248,6 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
             return merged;
         }
 
-        // If existing is a list and new is scalar, add to list
         if (existing is IList<object> list && newValue is not IList<object>)
         {
             if (!list.Contains(newValue))
@@ -177,7 +258,6 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
             return list;
         }
 
-        // If new is a list and existing is scalar, create new list with both
         if (newValue is IList<object> newValueList && existing is not IList<object>)
         {
             var merged = new List<object> { existing };
@@ -191,7 +271,6 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
             return merged;
         }
 
-        // Handle string lists
         if (existing is IEnumerable<string> existingStrings && newValue is IEnumerable<string> newStrings)
         {
             var merged = existingStrings.ToList();
@@ -205,7 +284,6 @@ public class ClaimsProviderRegistry : IClaimsProviderRegistry
             return merged;
         }
 
-        // Default: new value wins
         return newValue;
     }
 }

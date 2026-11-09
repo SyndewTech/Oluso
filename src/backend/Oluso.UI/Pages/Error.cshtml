@@ -1,11 +1,20 @@
 @page "/error"
 @model Oluso.UI.Pages.ErrorModel
 @{
-    ViewData["Title"] = "Error";
+    ViewData["Title"] = Localizer["error_title"].Value;
 }
+
+<partial name="_TenantFavicon" />
 
 <div class="error-container">
     <div class="error-card">
+        @if (!string.IsNullOrEmpty(Model.Brand.LogoUrl))
+        {
+            <div class="error-logo">
+                <img src="@Model.Brand.LogoUrl" alt="@Model.Brand.Name" />
+            </div>
+        }
+
         <div class="error-icon">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
@@ -19,7 +28,7 @@
             }
             else
             {
-                <text>Something went wrong</text>
+                @Localizer["error_title"]
             }
         </h1>
 
@@ -30,30 +39,30 @@
             }
             else
             {
-                <text>An unexpected error occurred. Please try again.</text>
+                @Localizer["error_default_message"]
             }
         </p>
 
         @if (!string.IsNullOrEmpty(Model.RequestId))
         {
             <p class="error-request-id">
-                Request ID: <code>@Model.RequestId</code>
+                @Localizer["error_request_id"] <code>@Model.RequestId</code>
             </p>
         }
 
         <div class="error-actions">
-            @if (!string.IsNullOrEmpty(Model.ReturnUrl))
+            @if (!string.IsNullOrEmpty(Model.BackUrl))
             {
-                <a href="@Model.ReturnUrl" class="btn btn-primary">Go Back</a>
+                <a href="@Model.BackUrl" class="btn btn-primary">@Localizer["error_go_back"]</a>
             }
             else
             {
-                <a href="/" class="btn btn-primary">Go Home</a>
+                <a href="/" class="btn btn-primary">@Localizer["error_go_home"]</a>
             }
 
             @if (Model.ShowRetry)
             {
-                <button onclick="window.history.back()" class="btn btn-outline">Try Again</button>
+                <button onclick="window.history.back()" class="btn btn-outline">@Localizer["error_try_again"]</button>
             }
         </div>
     </div>
@@ -85,7 +94,7 @@
     width: 100%;
     height: 100%;
     background-image:
-        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 20% 30%, color-mix(in srgb, var(--oluso-primary) 12%, transparent) 0%, transparent 45%),
         radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
     pointer-events: none;
     z-index: 0;
@@ -184,13 +193,13 @@
 .btn-primary {
     background: linear-gradient(135deg, var(--oluso-primary) 0%, var(--oluso-primary-dark) 100%);
     color: white;
-    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--oluso-primary) 30%, transparent);
 }
 
 .btn-primary:hover {
     background: linear-gradient(135deg, var(--oluso-primary-hover) 0%, var(--oluso-primary-dark) 100%);
     transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--oluso-primary) 40%, transparent);
 }
 
 .btn-outline {
@@ -204,3 +213,37 @@
     border-color: #9ca3af;
 }
 </style>
+
+<style>
+.error-logo {
+    margin-bottom: 1.5rem;
+}
+
+.error-logo img {
+    max-height: 48px;
+    max-width: 200px;
+}
+</style>
+
+@if (!string.IsNullOrEmpty(Model.Brand.PrimaryColor) || !string.IsNullOrEmpty(Model.Brand.BackgroundColor))
+{
+    <style>
+        :root {
+            @if (!string.IsNullOrEmpty(Model.Brand.PrimaryColor))
+            {
+                @:--oluso-primary: @Model.Brand.PrimaryColor;
+                @:--oluso-primary-hover: color-mix(in srgb, @Model.Brand.PrimaryColor 85%, black);
+                @:--oluso-primary-dark: color-mix(in srgb, @Model.Brand.PrimaryColor 70%, black);
+                @:--oluso-primary-light: color-mix(in srgb, @Model.Brand.PrimaryColor 10%, transparent);
+            }
+        }
+        @if (!string.IsNullOrEmpty(Model.Brand.BackgroundColor))
+        {
+            @:.error-container { background: linear-gradient(135deg, @Model.Brand.BackgroundColor 0%, color-mix(in srgb, @Model.Brand.BackgroundColor 80%, black) 100%); }
+        }
+    </style>
+}
+@if (!string.IsNullOrEmpty(Model.Brand.CustomCss))
+{
+    <style>@Html.Raw(Model.Brand.CustomCss)</style>
+}

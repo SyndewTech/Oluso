@@ -21,16 +21,92 @@ namespace Oluso.UserJourneys.Steps;
 /// - size: "normal" or "compact" (default: "normal")
 /// - language: language code (default: "en")
 /// </remarks>
-public class CaptchaStepHandler : IStepHandler
+public class CaptchaStepHandler : IStepHandler, IStepConfigurationTester
 {
+    private static readonly IReadOnlyDictionary<string, string> VerifyUrls = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["recaptcha"] = "https://www.google.com/recaptcha/api/siteverify",
+        ["hcaptcha"] = "https://hcaptcha.com/siteverify",
+        ["cloudflare"] = "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    };
+
+    /// <summary>
+    /// Asks the CAPTCHA provider to verify a dummy answer with the step's secret: the provider
+    /// rejects the answer either way, but says separately whether the secret itself is valid.
+    /// </summary>
+    public async Task<StepConfigurationTestResult> TestConfigurationAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
+    {
+        var provider = context.GetConfig("provider", "recaptcha")!;
+        var siteKey = context.GetConfig<string?>("siteKey", null);
+        var secretKey = context.GetConfig<string?>("secretKey", null);
+        if (!VerifyUrls.TryGetValue(provider, out var verifyUrl))
+        {
+            return StepConfigurationTestResult.Failed($"Unknown CAPTCHA provider '{provider}'");
+        }
+        if (string.IsNullOrWhiteSpace(siteKey) || string.IsNullOrWhiteSpace(secretKey))
+        {
+            return StepConfigurationTestResult.Failed("Both the site key and the secret key are required");
+        }
+
+        var httpClientFactory = context.ServiceProvider.GetService<IHttpClientFactory>();
+        if (httpClientFactory == null)
+        {
+            return StepConfigurationTestResult.Failed("HTTP client isn't available");
+        }
+
+        using var client = httpClientFactory.CreateClient("CaptchaVerification");
+        client.Timeout = TimeSpan.FromSeconds(15);
+        try
+        {
+            using var response = await client.PostAsync(verifyUrl, new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["secret"] = secretKey,
+                ["response"] = "oluso-configuration-test"
+            }), cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return StepConfigurationTestResult.Failed($"{provider} answered {(int)response.StatusCode} {response.StatusCode}");
+            }
+
+            using var body = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var errors = body.RootElement.TryGetProperty("error-codes", out var codes) && codes.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? codes.EnumerateArray().Select(c => c.GetString()).OfType<string>().ToList()
+                : new List<string>();
+            var details = new[] { $"Provider: {provider}", $"Site key: {siteKey}" };
+            return errors.Any(e => e is "invalid-input-secret" or "missing-input-secret")
+                ? StepConfigurationTestResult.Failed($"{provider} rejected the secret key", details)
+                : StepConfigurationTestResult.Passed($"{provider} accepted the secret key", details);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            return StepConfigurationTestResult.Failed($"Couldn't reach {provider}: {ex.Message}");
+        }
+    }
+
     public string StepType => "captcha";
+
+    public Task<StepConfigurationValidationResult> ValidateConfigurationAsync(IDictionary<string, object>? configuration)
+    {
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(StepConfigurationHelpers.GetString(configuration, "siteKey")))
+        {
+            errors.Add("CAPTCHA site key is required");
+        }
+        if (string.IsNullOrWhiteSpace(StepConfigurationHelpers.GetString(configuration, "secretKey")))
+        {
+            errors.Add("CAPTCHA secret key is required");
+        }
+        return Task.FromResult(errors.Count == 0
+            ? StepConfigurationValidationResult.Valid()
+            : StepConfigurationValidationResult.Invalid(errors));
+    }
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
         var httpClientFactory = context.ServiceProvider.GetService<IHttpClientFactory>();
         var logger = context.ServiceProvider.GetRequiredService<ILogger<CaptchaStepHandler>>();
 
-        var provider = context.GetConfig("provider", "recaptcha").ToLower();
+        var provider = context.GetConfig("provider", "recaptcha")!.ToLower();
         var siteKey = context.GetConfig<string?>("siteKey", null);
         var secretKey = context.GetConfig<string?>("secretKey", null);
         var scoreThreshold = context.GetConfig("scoreThreshold", 0.5);
@@ -54,8 +130,8 @@ public class CaptchaStepHandler : IStepHandler
                 Provider = provider,
                 SiteKey = siteKey,
                 Action = action,
-                Theme = context.GetConfig("theme", "light"),
-                Size = context.GetConfig("size", "normal"),
+                Theme = context.GetConfig("theme", "light")!,
+                Size = context.GetConfig("size", "normal")!,
                 Language = context.GetConfig("language", "en")
             });
         }
@@ -87,8 +163,8 @@ public class CaptchaStepHandler : IStepHandler
                     Provider = provider,
                     SiteKey = siteKey,
                     Action = action,
-                    Theme = context.GetConfig("theme", "light"),
-                    Size = context.GetConfig("size", "normal"),
+                    Theme = context.GetConfig("theme", "light")!,
+                    Size = context.GetConfig("size", "normal")!,
                     Language = context.GetConfig("language", "en"),
                     ErrorMessage = "CAPTCHA verification failed. Please try again."
                 });
@@ -134,7 +210,7 @@ public class CaptchaStepHandler : IStepHandler
         });
 
         var httpResponse = await client.PostAsync(
-            "https://www.google.com/recaptcha/api/siteverify",
+            VerifyUrls["recaptcha"],
             content,
             cancellationToken);
 
@@ -180,7 +256,7 @@ public class CaptchaStepHandler : IStepHandler
         });
 
         var httpResponse = await client.PostAsync(
-            "https://hcaptcha.com/siteverify",
+            VerifyUrls["hcaptcha"],
             content,
             cancellationToken);
 
@@ -219,7 +295,7 @@ public class CaptchaStepHandler : IStepHandler
         });
 
         var httpResponse = await client.PostAsync(
-            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            VerifyUrls["cloudflare"],
             content,
             cancellationToken);
 

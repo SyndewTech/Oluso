@@ -21,6 +21,11 @@ public interface ISigningKeyService
     Task<SigningCredentials?> GetSigningCredentialsAsync(string? clientId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Signing credentials of <paramref name="tenantId"/>'s active key, whatever tenant the request was routed to.
+    /// </summary>
+    Task<SigningCredentials?> GetSigningCredentialsForTenantAsync(string tenantId, string? clientId = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Get validation keys (public only) for token verification
     /// </summary>
     Task<IEnumerable<SecurityKey>> GetValidationKeysAsync(string? clientId = null, CancellationToken cancellationToken = default);
@@ -45,6 +50,13 @@ public interface ISigningKeyService
     /// Process automatic key rotation for expiring keys
     /// </summary>
     Task ProcessScheduledRotationsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gives the platform an active signing key when it has none. Runs outside any request: a request routed
+    /// to a tenant can only create keys for that tenant, yet platform-scoped tokens requested through a
+    /// tenant's routing must be signed by the platform.
+    /// </summary>
+    Task EnsurePlatformSigningKeyAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>

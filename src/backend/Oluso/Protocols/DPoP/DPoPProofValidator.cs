@@ -194,7 +194,8 @@ public class DPoPProofValidator : IDPoPProofValidator
             }
 
             // 8. Validate jti uniqueness (replay protection)
-            var jtiValid = await _nonceStore.ValidateJtiAsync(jti, _proofLifetime, cancellationToken);
+            // Remembered for as long as the proof could still pass the iat window (future skew + lifetime + skew).
+            var jtiValid = await _nonceStore.ValidateJtiAsync(jti, _proofLifetime + _clockSkew + _clockSkew, cancellationToken);
             if (!jtiValid)
             {
                 return DPoPValidationResult.Failure("invalid_dpop_proof", "Proof has already been used (jti)");

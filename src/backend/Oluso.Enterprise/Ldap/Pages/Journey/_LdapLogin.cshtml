@@ -12,7 +12,44 @@
     {
         <div class="alert alert-danger">@Model.ErrorMessage</div>
     }
+    @if (!string.IsNullOrEmpty(Model?.InfoMessage))
+    {
+        <div class="alert alert-info">@Model.InfoMessage</div>
+    }
 
+    @if (Model?.ChangePasswordMode == true)
+    {
+        <form method="post">
+            <input type="hidden" name="action" value="change_password" />
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" class="form-control" value="@Model.Username"
+                       autocomplete="username" required />
+            </div>
+            <div class="form-group">
+                <label for="password">Current password</label>
+                <input type="password" id="password" name="password" class="form-control"
+                       autocomplete="current-password" autofocus required />
+            </div>
+            <div class="form-group">
+                <label for="newPassword">New password</label>
+                <input type="password" id="newPassword" name="newPassword" class="form-control"
+                       autocomplete="new-password" required />
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">Confirm new password</label>
+                <input type="password" id="confirmPassword" name="confirmPassword" class="form-control"
+                       autocomplete="new-password" required />
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Change password and sign in</button>
+        </form>
+        <form method="post" class="mt-3 text-center">
+            <input type="hidden" name="username" value="@Model.Username" />
+            <button type="submit" class="btn btn-link">Back to sign in</button>
+        </form>
+    }
+    else
+    {
     <form method="post">
         <div class="form-group">
             <label for="username">Username</label>
@@ -54,6 +91,16 @@
             Sign In with Corporate Directory
         </button>
     </form>
+
+    @if (Model?.AllowPasswordChange == true)
+    {
+        <form method="post" class="mt-3 text-center" novalidate>
+            <input type="hidden" name="action" value="show_change_password" />
+            <input type="hidden" name="username" value="@Model.Username" />
+            <button type="submit" class="btn btn-link">Change your password</button>
+        </form>
+    }
+    }
 
     <div class="ldap-help">
         <p class="text-muted text-center mt-3">

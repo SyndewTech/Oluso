@@ -1,0 +1,163 @@
+<div class="space-y-6">
+  <div class="flex items-start justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold text-gray-900">Entitlements</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Permissions your own applications enforce. Assign them to roles, and they arrive in the
+        <code class="font-mono">entitlements</code> claim for clients granted the
+        <code class="font-mono">entitlements</code> scope. They grant nothing inside Oluso.
+      </p>
+    </div>
+    <ui-button (clicked)="openCreateModal()">
+      <ui-icon name="plus" class="h-4 w-4 mr-1" />
+      New Entitlement
+    </ui-button>
+  </div>
+
+  @if (loading()) {
+    <div class="text-sm text-gray-500 p-4">Loading entitlements...</div>
+  } @else if (entitlements().length === 0) {
+    <ui-card>
+      <div class="text-center py-10">
+        <ui-icon name="key" class="mx-auto h-8 w-8 text-gray-300" />
+        <p class="mt-2 text-sm text-gray-500">
+          No entitlements yet. Define one to make it selectable when editing a role.
+        </p>
+      </div>
+    </ui-card>
+  } @else {
+    @for (group of groups(); track group.name) {
+      <ui-card [title]="group.name">
+        <div class="divide-y">
+          @for (entitlement of group.entitlements; track entitlement.id) {
+            <div class="flex items-start justify-between py-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-900">{{ entitlement.displayName }}</span>
+                  <span class="font-mono text-xs text-gray-500">{{ entitlement.name }}</span>
+                  @if (!entitlement.enabled) {
+                    <ui-badge variant="warning">Disabled</ui-badge>
+                  }
+                </div>
+                @if (entitlement.description) {
+                  <p class="mt-1 text-sm text-gray-500">{{ entitlement.description }}</p>
+                }
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="text-gray-500 hover:text-gray-700"
+                  title="Edit"
+                  (click)="openEditModal(entitlement)"
+                >
+                  <ui-icon name="pencil" class="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  class="text-red-500 hover:text-red-700"
+                  title="Delete"
+                  (click)="openDeleteModal(entitlement)"
+                >
+                  <ui-icon name="trash" class="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      </ui-card>
+    }
+  }
+</div>
+
+<ui-modal
+  [open]="showCreateEditModal()"
+  [title]="selected() ? 'Edit Entitlement' : 'New Entitlement'"
+  (closed)="closeCreateEditModal()"
+>
+  <div class="space-y-4">
+    @if (error()) {
+      <div class="rounded-md bg-red-50 p-3 text-sm text-red-700">{{ error() }}</div>
+    }
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+      <input
+        type="text"
+        [(ngModel)]="formData.name"
+        [disabled]="!!selected()"
+        placeholder="invoices.approve"
+        class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm disabled:bg-gray-100"
+      />
+      <p class="mt-1 text-xs text-gray-500">
+        @if (selected()) {
+          The name is what your app checks and is already in issued tokens, so it can't be changed.
+          Delete and recreate to rename.
+        } @else {
+          The exact value your application will check. No spaces.
+        }
+      </p>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Display name</label>
+      <input
+        type="text"
+        [(ngModel)]="formData.displayName"
+        placeholder="Approve invoices"
+        class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+      />
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+      <textarea
+        [(ngModel)]="formData.description"
+        rows="2"
+        class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+      ></textarea>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Group</label>
+      <input
+        type="text"
+        [(ngModel)]="formData.group"
+        placeholder="Invoices"
+        class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+      />
+      <p class="mt-1 text-xs text-gray-500">Groups the entitlement in the role editor.</p>
+    </div>
+
+    <label class="flex items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        class="h-4 w-4 mt-0.5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+        [(ngModel)]="formData.enabled"
+      />
+      <span>
+        Enabled
+        <span class="block text-gray-500">
+          Turning this off withholds it from new tokens without unassigning it from roles.
+        </span>
+      </span>
+    </label>
+  </div>
+
+  <div modal-footer class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+    <ui-button variant="secondary" (clicked)="closeCreateEditModal()">Cancel</ui-button>
+    <ui-button [loading]="saving()" [disabled]="!formData.name.trim()" (clicked)="onSave()">
+      {{ selected() ? 'Save' : 'Create' }}
+    </ui-button>
+  </div>
+</ui-modal>
+
+<ui-modal [open]="showDeleteModal()" title="Delete Entitlement" (closed)="closeDeleteModal()">
+  <p class="text-sm text-gray-500">
+    Delete <span class="font-mono">{{ selected()?.name }}</span>? It will also be removed from every
+    role that grants it, and will stop appearing in tokens.
+  </p>
+  <div modal-footer class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+    <ui-button variant="secondary" (clicked)="closeDeleteModal()">Cancel</ui-button>
+    <ui-button variant="danger" [loading]="deleting()" (clicked)="confirmDelete()">Delete</ui-button>
+  </div>
+</ui-modal>

@@ -26,6 +26,30 @@ public class LdapAuthenticationResult
     };
 }
 
+public sealed record LdapConnectionTestResult(bool Success, string Message, IReadOnlyList<string> Details);
+
+public enum LdapPasswordChangeStatus
+{
+    Changed,
+    InvalidCredentials,
+    RejectedByPolicy,
+    SecureConnectionRequired,
+    NotSupported,
+    Unavailable
+}
+
+public class LdapPasswordChangeResult
+{
+    public LdapPasswordChangeStatus Status { get; init; }
+    public string? ErrorMessage { get; init; }
+    public bool Success => Status == LdapPasswordChangeStatus.Changed;
+
+    public static LdapPasswordChangeResult Changed() => new() { Status = LdapPasswordChangeStatus.Changed };
+
+    public static LdapPasswordChangeResult Failed(LdapPasswordChangeStatus status, string message) =>
+        new() { Status = status, ErrorMessage = message };
+}
+
 /// <summary>
 /// Represents a user from LDAP directory
 /// </summary>
@@ -49,11 +73,21 @@ public class LdapUser
 public interface ILdapAuthenticator
 {
     /// <summary>
-    /// Authenticates a user with username and password
+    /// Authenticates a user with username and password using global LDAP configuration.
+    /// For per-tenant authentication, use the overload that accepts LdapProviderSettings.
     /// </summary>
     Task<LdapAuthenticationResult> AuthenticateAsync(
         string username,
         string password,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Authenticates a user with username and password using per-tenant LDAP settings.
+    /// </summary>
+    Task<LdapAuthenticationResult> AuthenticateAsync(
+        string username,
+        string password,
+        Configuration.LdapProviderSettings settings,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -64,10 +98,38 @@ public interface ILdapAuthenticator
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Looks up a user by username without authentication using per-tenant settings
+    /// </summary>
+    Task<LdapUser?> FindUserAsync(
+        string username,
+        Configuration.LdapProviderSettings settings,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Looks up a user by distinguished name
     /// </summary>
     Task<LdapUser?> FindUserByDnAsync(
         string distinguishedName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Connects, binds with the service account (anonymously when none is set) and reads the
+    /// base DN. Uses the provider's settings, or the module's directory when null.
+    /// </summary>
+    Task<LdapConnectionTestResult> TestConnectionAsync(
+        Configuration.LdapProviderSettings? settings,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Changes a user's directory password. The user proves the current password by binding
+    /// with it, so no service account needs write access. Uses the provider's settings, or the
+    /// module's directory when <paramref name="settings"/> is null.
+    /// </summary>
+    Task<LdapPasswordChangeResult> ChangePasswordAsync(
+        string username,
+        string currentPassword,
+        string newPassword,
+        Configuration.LdapProviderSettings? settings,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -349,13 +349,14 @@ public class AzureKeyVaultProvider : IKeyMaterialProvider
     {
         if (kvKey.Key.KeyType == KeyType.Rsa)
         {
-            using var rsa = kvKey.Key.ToRSA();
-            return new RsaSecurityKey(rsa.ExportParameters(false)) { KeyId = keyId };
+            // Pass RSA instance directly so RsaSecurityKey.Rsa is set (needed by JWKS endpoint)
+            var rsa = kvKey.Key.ToRSA();
+            return new RsaSecurityKey(rsa) { KeyId = keyId };
         }
         else if (kvKey.Key.KeyType == KeyType.Ec)
         {
-            using var ecdsa = kvKey.Key.ToECDsa();
-            return new ECDsaSecurityKey(ECDsa.Create(ecdsa.ExportParameters(false))) { KeyId = keyId };
+            var ecdsa = kvKey.Key.ToECDsa();
+            return new ECDsaSecurityKey(ecdsa) { KeyId = keyId };
         }
 
         throw new NotSupportedException($"Key type {kvKey.Key.KeyType} not supported");
@@ -410,14 +411,15 @@ public class AzureKeyVaultProvider : IKeyMaterialProvider
 
 /// <summary>
 /// Custom SecurityKey that performs signing operations in Azure Key Vault.
-/// The private key never leaves Key Vault.
+/// The private key never leaves Key Vault. Uses a custom CryptoProviderFactory
+/// so that JwtSecurityTokenHandler can create signatures via Key Vault.
 /// </summary>
 public class AzureKeyVaultSecurityKey : AsymmetricSecurityKey
 {
-    private readonly CryptographyClient _cryptoClient;
+    internal readonly CryptographyClient CryptoClient;
     private readonly ILogger _logger;
 
-    public override int KeySize => 2048; // Will be overridden based on actual key
+    public override int KeySize => 2048;
 
     public AzureKeyVaultSecurityKey(
         CryptographyClient cryptoClient,
@@ -425,27 +427,130 @@ public class AzureKeyVaultSecurityKey : AsymmetricSecurityKey
         string algorithm,
         ILogger logger)
     {
-        _cryptoClient = cryptoClient;
+        CryptoClient = cryptoClient;
         KeyId = keyId;
         _logger = logger;
+        CryptoProviderFactory = new AzureKeyVaultCryptoProviderFactory(logger)
+        {
+            CacheSignatureProviders = false
+        };
     }
 
-    public override bool HasPrivateKey => true; // Key Vault has the private key
+    [Obsolete("Use PrivateKeyStatus instead")]
+    public override bool HasPrivateKey => true;
 
     public override PrivateKeyStatus PrivateKeyStatus => PrivateKeyStatus.Exists;
 
-    [Obsolete("Use SignAsync directly")]
     public override bool IsSupportedAlgorithm(string algorithm)
     {
-        return algorithm switch
-        {
-            SecurityAlgorithms.RsaSha256 => true,
-            SecurityAlgorithms.RsaSha384 => true,
-            SecurityAlgorithms.RsaSha512 => true,
-            SecurityAlgorithms.EcdsaSha256 => true,
-            SecurityAlgorithms.EcdsaSha384 => true,
-            SecurityAlgorithms.EcdsaSha512 => true,
-            _ => false
-        };
+        return algorithm is SecurityAlgorithms.RsaSha256 or SecurityAlgorithms.RsaSha384
+            or SecurityAlgorithms.RsaSha512 or SecurityAlgorithms.EcdsaSha256
+            or SecurityAlgorithms.EcdsaSha384 or SecurityAlgorithms.EcdsaSha512;
     }
+}
+
+/// <summary>
+/// CryptoProviderFactory that creates SignatureProviders backed by Azure Key Vault.
+/// </summary>
+internal class AzureKeyVaultCryptoProviderFactory : CryptoProviderFactory
+{
+    private readonly ILogger _logger;
+
+    public AzureKeyVaultCryptoProviderFactory(ILogger logger)
+    {
+        _logger = logger;
+    }
+
+    public override bool IsSupportedAlgorithm(string algorithm, SecurityKey key)
+    {
+        if (key is AzureKeyVaultSecurityKey)
+        {
+            return algorithm is SecurityAlgorithms.RsaSha256 or SecurityAlgorithms.RsaSha384
+                or SecurityAlgorithms.RsaSha512 or SecurityAlgorithms.EcdsaSha256
+                or SecurityAlgorithms.EcdsaSha384 or SecurityAlgorithms.EcdsaSha512;
+        }
+        return base.IsSupportedAlgorithm(algorithm, key);
+    }
+
+    public override SignatureProvider CreateForSigning(SecurityKey key, string algorithm, bool cacheProvider)
+    {
+        if (key is AzureKeyVaultSecurityKey kvKey)
+        {
+            return new AzureKeyVaultSignatureProvider(kvKey, algorithm, _logger);
+        }
+        return base.CreateForSigning(key, algorithm, cacheProvider);
+    }
+
+    public override SignatureProvider CreateForSigning(SecurityKey key, string algorithm)
+    {
+        return CreateForSigning(key, algorithm, false);
+    }
+
+    public override SignatureProvider CreateForVerifying(SecurityKey key, string algorithm, bool cacheProvider)
+    {
+        if (key is AzureKeyVaultSecurityKey kvKey)
+        {
+            return new AzureKeyVaultSignatureProvider(kvKey, algorithm, _logger);
+        }
+        return base.CreateForVerifying(key, algorithm, cacheProvider);
+    }
+
+    public override SignatureProvider CreateForVerifying(SecurityKey key, string algorithm)
+    {
+        return CreateForVerifying(key, algorithm, false);
+    }
+}
+
+/// <summary>
+/// SignatureProvider that delegates signing/verification to Azure Key Vault's CryptographyClient.
+/// </summary>
+internal class AzureKeyVaultSignatureProvider : SignatureProvider
+{
+    private readonly CryptographyClient _cryptoClient;
+    private readonly ILogger _logger;
+
+    public AzureKeyVaultSignatureProvider(AzureKeyVaultSecurityKey key, string algorithm, ILogger logger)
+        : base(key, algorithm)
+    {
+        _cryptoClient = key.CryptoClient;
+        _logger = logger;
+    }
+
+    public override byte[] Sign(byte[] input)
+    {
+        var kvAlgorithm = MapToKeyVaultAlgorithm(Algorithm);
+        var result = _cryptoClient.SignData(kvAlgorithm, input);
+        return result.Signature;
+    }
+
+    public override bool Verify(byte[] input, byte[] signature)
+    {
+        var kvAlgorithm = MapToKeyVaultAlgorithm(Algorithm);
+        var result = _cryptoClient.VerifyData(kvAlgorithm, input, signature);
+        return result.IsValid;
+    }
+
+    public override bool Verify(byte[] input, int inputOffset, int inputLength, byte[] signature, int signatureOffset, int signatureLength)
+    {
+        var inputSlice = new byte[inputLength];
+        Buffer.BlockCopy(input, inputOffset, inputSlice, 0, inputLength);
+        var sigSlice = new byte[signatureLength];
+        Buffer.BlockCopy(signature, signatureOffset, sigSlice, 0, signatureLength);
+        return Verify(inputSlice, sigSlice);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+    }
+
+    private static SignatureAlgorithm MapToKeyVaultAlgorithm(string algorithm) => algorithm switch
+    {
+        SecurityAlgorithms.RsaSha256 => SignatureAlgorithm.RS256,
+        SecurityAlgorithms.RsaSha384 => SignatureAlgorithm.RS384,
+        SecurityAlgorithms.RsaSha512 => SignatureAlgorithm.RS512,
+        SecurityAlgorithms.EcdsaSha256 => SignatureAlgorithm.ES256,
+        SecurityAlgorithms.EcdsaSha384 => SignatureAlgorithm.ES384,
+        SecurityAlgorithms.EcdsaSha512 => SignatureAlgorithm.ES512,
+        _ => throw new NotSupportedException($"Algorithm '{algorithm}' is not supported for Key Vault signing")
+    };
 }

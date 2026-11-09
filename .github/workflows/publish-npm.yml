@@ -1,0 +1,96 @@
+name: Publish npm Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # Trusted publishing: npm takes the workflow's OIDC token instead of a stored token. Every package needs this
+  # repository and publish-npm.yml as its trusted publisher; scripts/npm-trust.sh sets that up (and publishes a
+  # package that isn't on npm yet, which npm requires first). Then set the repository variable
+  # NPM_TRUSTED_PUBLISHING to true. Until then the publish job is skipped, not failed, so a tag still publishes
+  # everything else.
+  check-trusted-publishing:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check that trusted publishing is set up
+        id: check
+        env:
+          TRUSTED: ${{ vars.NPM_TRUSTED_PUBLISHING }}
+        run: |
+          if [ "$TRUSTED" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=npm publish skipped::Run scripts/npm-trust.sh, then set the repository variable NPM_TRUSTED_PUBLISHING to true, to publish the @syndew/oluso-* packages."
+          fi
+
+  publish-public-npm:
+    needs: check-trusted-publishing
+    if: needs.check-trusted-publishing.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      # npm exchanges the workflow's OIDC token for the publish; packages from a public repository get provenance
+      # attestations too.
+      id-token: write
+      contents: read
+
+    defaults:
+      run:
+        working-directory: src/frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      # Trusted publishing needs npm 11.5.1 or later (Node 22 ships npm 10).
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the JavaScript SDK
+        run: npm ci && npm run build
+        working-directory: sdk/js
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version
+        run: ../../scripts/set-version.sh ${{ steps.version.outputs.VERSION }}
+
+      - name: Build all libs
+        run: npx nx run-many --target=build --all --configuration=production
+
+      - name: Publish packages
+        run: |
+          # A version that is already on npm is skipped, so re-running a tag doesn't fail on what went out before.
+          publish() {
+            local name version
+            name=$(node -p "require('./$1/package.json').name")
+            version=$(node -p "require('./$1/package.json').version")
+            if npm view "$name@$version" version > /dev/null 2>&1; then
+              echo "Skipping $name@$version: already published"
+            else
+              echo "Publishing $name@$version"
+              npm publish "$1" --access public
+            fi
+          }
+          # The JavaScript SDK goes out with the public libs, which depend on it (e.g. @syndew/oluso-journey-ui).
+          publish ../../sdk/js
+          for pkg in dist/libs/*/ dist/libs/plugins/*/; do
+            if [ -f "$pkg/package.json" ]; then
+              publish "${pkg%/}"
+            fi
+          done

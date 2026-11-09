@@ -1,0 +1,17 @@
+<Project>
+  <!-- Optionally prefix every package ID at pack time without touching csproj
+       names or assembly names. Set PackageIdPrefix (e.g. "Syndew.") to publish
+       under a distinct ID family; leave it unset to keep the bare Oluso.* IDs.
+
+       Imported after each project body, so $(PackageId) is already the value the
+       csproj declared (e.g. Oluso.Core) and we just prepend the prefix. Applied
+       uniformly to every packable project, so inter-package ProjectReference
+       dependencies resolve to the prefixed IDs too (Syndew.Oluso.Account ->
+       depends on -> Syndew.Oluso.Core). A packable project that declares no
+       PackageId gets the SDK's default, its AssemblyName, with the prefix.
+       Projects that are not packable (tests, samples) are left alone. -->
+  <PropertyGroup Condition="'$(PackageIdPrefix)' != '' and '$(IsPackable)' == 'true'">
+    <PackageId Condition="'$(PackageId)' == ''">$(AssemblyName)</PackageId>
+    <PackageId>$(PackageIdPrefix)$(PackageId)</PackageId>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Package metadata -->
+    <PackageId>Oluso.Enterprise.Cloudflare</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Cloudflare integration for Oluso identity platform. Provisions custom tenant domains via Cloudflare Custom Hostnames API (SSL for SaaS).</Description>
+    <PackageTags>identity;authentication;oauth;oidc;cloudflare;custom-hostnames;ssl-for-saas;domains</PackageTags>
+
+    <!-- Generate XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- All dependencies (Configuration, Logging, DI, Http) come via Oluso.Core → AspNetCore.App -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Oluso.Core\Oluso.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" Condition="Exists('README.md')" />
+  </ItemGroup>
+
+</Project>

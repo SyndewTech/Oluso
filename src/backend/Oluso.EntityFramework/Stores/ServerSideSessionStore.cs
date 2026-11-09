@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -60,15 +61,40 @@ public class ServerSideSessionStore : IServerSideSessionStore
             .OrderByDescending(s => s.Renewed)
             .ToListAsync(cancellationToken);
 
-        return sessions.Select(s => new UserSession
+        return sessions.Select(s =>
         {
-            SessionId = s.SessionId ?? s.Key,
-            SubjectId = s.SubjectId,
-            DisplayName = s.DisplayName,
-            Created = s.Created,
-            Renewed = s.Renewed,
-            Expires = s.Expires
+            var (userAgent, ipAddress) = ReadTicketOrigin(s.Data);
+            return new UserSession
+            {
+                SessionId = s.SessionId ?? s.Key,
+                SubjectId = s.SubjectId,
+                DisplayName = s.DisplayName,
+                Created = s.Created,
+                Renewed = s.Renewed,
+                Expires = s.Expires,
+                UserAgent = userAgent,
+                IpAddress = ipAddress
+            };
         }).ToList();
+    }
+
+    // The ticket is stored as JSON with a Properties bag; the ticket store puts the
+    // login's user agent and IP there. Anything unreadable simply yields nulls.
+    private static (string? UserAgent, string? IpAddress) ReadTicketOrigin(string? data)
+    {
+        if (string.IsNullOrEmpty(data)) return (null, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(data);
+            if (!doc.RootElement.TryGetProperty("Properties", out var props) || props.ValueKind != JsonValueKind.Object)
+                return (null, null);
+            string? Get(string key) => props.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            return (Get(SessionTicketProperties.UserAgent), Get(SessionTicketProperties.IpAddress));
+        }
+        catch (JsonException)
+        {
+            return (null, null);
+        }
     }
 
     public async Task UpdateSessionAsync(

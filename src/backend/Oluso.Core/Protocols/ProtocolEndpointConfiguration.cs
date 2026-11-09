@@ -11,9 +11,14 @@ public abstract class ProtocolEndpointConfiguration
     public abstract string ProtocolName { get; }
 
     /// <summary>
-    /// Default expiration for protocol state (default: 10 minutes)
+    /// How long an in-flight authentication (protocol state such as an authorize
+    /// request waiting for the user) stays resumable. The single lifetime for every
+    /// protocol-state write: OIDC, SAML and the organisation sign-in hand-off, which
+    /// must not outlive the authorize request it resumes. 15 minutes leaves room for
+    /// an external IdP round trip, MFA enrolment or verification, a password reset
+    /// and consent.
     /// </summary>
-    public TimeSpan StateExpiration { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan StateExpiration { get; set; } = TimeSpan.FromMinutes(15);
 }
 
 /// <summary>

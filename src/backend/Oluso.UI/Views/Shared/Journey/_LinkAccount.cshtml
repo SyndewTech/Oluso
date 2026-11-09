@@ -1,8 +1,8 @@
 @model Oluso.UserJourneys.Steps.LinkAccountViewModel
 
 <div class="link-account-form">
-    <h2>Linked Accounts</h2>
-    <p class="description">Manage your linked login methods. Link additional accounts for more convenient sign-in options.</p>
+    <h2>@Localizer["link_account_title"]</h2>
+    <p class="description">@Localizer["link_account_description"]</p>
 
     @if (!string.IsNullOrEmpty(Model.SuccessMessage))
     {
@@ -19,7 +19,7 @@
     }
 
     <div class="mb-4">
-        <h3 class="h5">Currently Linked</h3>
+        <h3 class="h5">@Localizer["link_account_currently_linked"]</h3>
         @if (Model.LinkedLogins.Count > 0)
         {
             <ul class="list-group">
@@ -36,8 +36,8 @@
                                 <input type="hidden" name="unlink_provider" value="@login.Provider" />
                                 <input type="hidden" name="unlink_key" value="@login.ProviderKey" />
                                 <button type="submit" class="btn btn-sm btn-outline-danger"
-                                        onclick="return confirm('Are you sure you want to unlink this account?')">
-                                    Unlink
+                                        onclick="return confirm('@Localizer["link_account_unlink_confirm"]')">
+                                    @Localizer["link_account_unlink_button"]
                                 </button>
                             </form>
                         }
@@ -47,13 +47,13 @@
         }
         else
         {
-            <p class="text-muted">No external accounts linked.</p>
+            <p class="text-muted">@Localizer["link_account_no_linked"]</p>
         }
     </div>
 
     <div class="mb-4">
-        <h3 class="h5">Link New Account</h3>
-        <p class="text-muted small">Click a provider below to link your account.</p>
+        <h3 class="h5">@Localizer["link_account_new_section"]</h3>
+        <p class="text-muted small">@Localizer["link_account_new_help"]</p>
         <div class="d-flex flex-wrap gap-2">
             @{
                 var availableProviders = new[] { "Google", "Microsoft", "GitHub", "Apple", "Facebook", "Twitter" };
@@ -78,7 +78,7 @@
     <div class="mt-4">
         <form method="post">
             <input type="hidden" name="done" value="true" />
-            <button type="submit" class="btn btn-primary">Continue</button>
+            <button type="submit" class="btn btn-primary">@Localizer["link_account_continue_button"]</button>
         </form>
     </div>
 </div>

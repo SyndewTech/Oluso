@@ -56,6 +56,7 @@ public class TelemetryLogService : ITelemetryLogService
     private readonly ITenantContext? _tenantContext;
 
     public bool IsEnabled => true;
+    public string Backend => "database";
 
     public TelemetryLogService(IOlusoDbContext context, ITenantContext? tenantContext = null)
     {
@@ -73,7 +74,23 @@ public class TelemetryLogService : ITelemetryLogService
 
         // Apply filters
         if (!string.IsNullOrEmpty(query.Level))
-            baseQuery = baseQuery.Where(l => l.Level == query.Level);
+        {
+            // Map frontend level names to backend level names
+            var levelFilter = query.Level.ToLowerInvariant() switch
+            {
+                "trace" => "Trace",
+                "debug" => "Debug",
+                "info" => "Information",
+                "information" => "Information",
+                "warn" => "Warning",
+                "warning" => "Warning",
+                "error" => "Error",
+                "fatal" => "Critical",
+                "critical" => "Critical",
+                _ => query.Level
+            };
+            baseQuery = baseQuery.Where(l => l.Level == levelFilter);
+        }
 
         if (!string.IsNullOrEmpty(query.Category))
             baseQuery = baseQuery.Where(l => l.Category.Contains(query.Category));

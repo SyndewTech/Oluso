@@ -5,6 +5,27 @@ namespace Oluso.Core.UserJourneys;
 /// </summary>
 public class UserJourneyOptions
 {
+    /// <summary>Configuration section these options are read from.</summary>
+    public const string SectionName = "Oluso:UserJourneys";
+
+    /// <summary>The standard identity claims a journey hands on by default.</summary>
+    public static readonly IReadOnlyList<string> StandardIdentityClaims =
+    [
+        "sub", "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
+        "email", "email_verified", "phone_number", "phone_number_verified", "picture", "locale", "zoneinfo",
+        "amr", "acr", "idp",
+    ];
+
+    /// <summary>
+    /// Journey data a completed journey hands on as claims when its policy maps no output
+    /// claims; <see cref="StandardIdentityClaims"/> when not set. Journey data also holds
+    /// request details, form answers, codes and internal state, so only these names leave
+    /// the journey. A policy's own output claims mapping replaces the list.
+    /// </summary>
+    public List<string>? DefaultOutputClaims { get; set; }
+
+    public IReadOnlyList<string> EffectiveDefaultOutputClaims => DefaultOutputClaims ?? StandardIdentityClaims;
+
     /// <summary>
     /// Use in-memory policy store (development only)
     /// </summary>

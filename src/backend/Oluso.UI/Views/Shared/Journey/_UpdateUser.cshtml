@@ -2,7 +2,7 @@
 @model UpdateUserViewModel
 
 <div class="update-user-card">
-    <h1 class="title">@(Model?.Title ?? "Update Your Profile")</h1>
+    <h1 class="title">@(Model?.Title ?? @Localizer["update_user_default_title"].Value)</h1>
 
     @if (!string.IsNullOrEmpty(Model?.Description))
     {
@@ -24,7 +24,7 @@
                     @field.Label
                     @if (field.Required)
                     {
-                        <span class="required">*</span>
+                        <span class="required">@Localizer["update_user_required_marker"]</span>
                     }
                 </label>
 
@@ -34,7 +34,7 @@
                             name="@field.Name"
                             class="form-control @(!string.IsNullOrEmpty(field.Error) ? "is-invalid" : "")"
                             @(field.Required ? "required" : "")>
-                        <option value="">Select...</option>
+                        <option value="">@Localizer["update_user_select_default"]</option>
                         @foreach (var option in field.Options)
                         {
                             var isSelected = field.Value == option.Value;
@@ -72,8 +72,41 @@
             </div>
         }
 
+        @if (Model?.RequireCurrentPassword == true)
+        {
+            @if (!string.IsNullOrEmpty(Model.Username))
+            {
+                @* The account this password belongs to, for password managers. Visually hidden rather than
+                   type="hidden" (which they skip), and unnamed so it is never posted. *@
+                <input type="text"
+                       id="account_username"
+                       class="visually-hidden"
+                       value="@Model.Username"
+                       autocomplete="username"
+                       aria-label="@Localizer["composite_login_username_label"]"
+                       tabindex="-1"
+                       readonly />
+            }
+            <div class="form-group">
+                <label for="currentPassword">
+                    @Localizer["update_user_current_password_label"]
+                    <span class="required">@Localizer["update_user_required_marker"]</span>
+                </label>
+                <input type="password"
+                       id="currentPassword"
+                       name="currentPassword"
+                       class="form-control @(!string.IsNullOrEmpty(Model.CurrentPasswordError) ? "is-invalid" : "")"
+                       autocomplete="current-password"
+                       required />
+                @if (!string.IsNullOrEmpty(Model.CurrentPasswordError))
+                {
+                    <div class="invalid-feedback">@Model.CurrentPasswordError</div>
+                }
+            </div>
+        }
+
         <button type="submit" class="btn btn-primary btn-block">
-            @(Model?.SubmitButtonText ?? "Update Profile")
+            @(Model?.SubmitButtonText ?? @Localizer["update_user_button"].Value)
         </button>
     </form>
 </div>

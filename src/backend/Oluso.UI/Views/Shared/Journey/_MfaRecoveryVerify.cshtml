@@ -1,0 +1,38 @@
+@using Oluso.UserJourneys.Steps
+@model MfaRecoveryVerifyViewModel
+
+<h1 class="title">@Localizer["mfa_recovery_verify_title"]</h1>
+<p class="subtitle">@Localizer["mfa_recovery_verify_subtitle"]</p>
+
+@if (!string.IsNullOrEmpty(Model?.ErrorMessage))
+{
+    <div class="alert alert-danger" role="alert">
+        <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        <span>@Model.ErrorMessage</span>
+    </div>
+}
+
+<form method="post" id="recoveryForm">
+    <input type="hidden" name="use_recovery_code" value="true" />
+
+    <div class="form-group">
+        <label for="recovery_code">@Localizer["mfa_recovery_verify_code_label"]</label>
+        <input type="text"
+               id="recovery_code"
+               name="recovery_code"
+               class="form-control"
+               placeholder="@Localizer["mfa_recovery_verify_code_placeholder"]"
+               autocomplete="off"
+               autofocus
+               required />
+        <small class="form-text text-muted">@Localizer["mfa_recovery_verify_code_help"]</small>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">@Localizer["mfa_recovery_verify_button"]</button>
+</form>
+
+<div class="journey-footer">
+    <p><a href="?">@Localizer["mfa_recovery_verify_back_link"]</a></p>
+</div>

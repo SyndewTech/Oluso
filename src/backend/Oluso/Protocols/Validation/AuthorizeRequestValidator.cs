@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
 
@@ -151,6 +152,20 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
                 responseTypeValidation.ErrorDescription);
         }
 
+        // OAuth 2.1 enforcement: reject pure implicit flows (no code component)
+        if (protocolSettings.EnforceOAuth21)
+        {
+            var hasCode = authorizeRequest.RequestedResponseTypes.Contains(ResponseTypes.Code);
+            var hasTokenOrIdToken = authorizeRequest.RequestedResponseTypes.Any(rt =>
+                rt == ResponseTypes.Token || rt == ResponseTypes.IdToken);
+            if (!hasCode && hasTokenOrIdToken)
+            {
+                return AuthorizeValidationResult.Failure(
+                    OidcConstants.Errors.UnsupportedResponseType,
+                    "Implicit flow is not allowed when OAuth 2.1 is enforced. Use authorization_code with PKCE instead.");
+            }
+        }
+
         // Validate response type is allowed for client
         var isImplicitOrHybrid = authorizeRequest.RequestedResponseTypes.Any(rt =>
             rt == ResponseTypes.Token || rt == ResponseTypes.IdToken);
@@ -176,8 +191,17 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         var requestedScopes = _scopeValidator.ParseScopes(scope).ToList();
         authorizeRequest.RequestedScopes = requestedScopes;
 
+        // Scopes the client may not have, that don't exist, or that the tenant doesn't offer are left out of the
+        // grant (RFC 6749 §3.3); the code and the consent screen carry only what is granted.
         var allowedScopes = client.AllowedScopes.Select(s => s.Scope).ToList();
-        var scopeValidation = await _scopeValidator.ValidateAsync(requestedScopes, allowedScopes, cancellationToken);
+        var scopeValidation = await _scopeValidator.ValidateAsync(new ScopeValidationContext
+        {
+            RequestedScopes = requestedScopes,
+            ClientAllowedScopes = allowedScopes,
+            ClientId = client.ClientId,
+            Endpoint = "authorize",
+            Strict = ScopeValidationContext.IsStrict(client.Properties)
+        }, cancellationToken);
         if (!scopeValidation.IsValid)
         {
             return AuthorizeValidationResult.Failure(
@@ -187,17 +211,37 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
                 validatedRedirectUri: validatedRedirectUri);
         }
 
+        // 4b. Validate required custom authorize parameters (vendor allowlist).
+        // Only parameters the client has explicitly registered are considered;
+        // a Required one that is absent fails the request before authentication.
+        foreach (var allowedParam in client.AllowedAuthorizeParameters)
+        {
+            if (!allowedParam.Required)
+            {
+                continue;
+            }
+
+            if (!parameters.TryGetValue(allowedParam.Parameter, out var paramValue) || string.IsNullOrEmpty(paramValue))
+            {
+                return AuthorizeValidationResult.Failure(
+                    "invalid_request",
+                    $"Missing required authorization parameter '{allowedParam.Parameter}'",
+                    redirectUriValidated: true,
+                    validatedRedirectUri: validatedRedirectUri);
+            }
+        }
+
         // 5. Validate PKCE
         parameters.TryGetValue("code_challenge", out var codeChallenge);
         parameters.TryGetValue("code_challenge_method", out var codeChallengeMethod);
         authorizeRequest.CodeChallenge = codeChallenge;
         authorizeRequest.CodeChallengeMethod = codeChallengeMethod ?? CodeChallengeMethods.Plain;
 
-        // PKCE is required if tenant or client requires it
+        // PKCE is required if tenant or client requires it (OAuth 2.1 always requires PKCE)
         var isCodeFlow = authorizeRequest.RequestedResponseTypes.Contains(ResponseTypes.Code);
-        var requirePkce = isCodeFlow && (protocolSettings.RequirePkce || client.RequirePkce);
-        // Tenant can disallow plain PKCE even if client allows it
-        var allowPlainPkce = client.AllowPlainTextPkce && protocolSettings.AllowPlainPkce;
+        var requirePkce = isCodeFlow && (protocolSettings.RequirePkce || client.RequirePkce || protocolSettings.EnforceOAuth21);
+        // Tenant can disallow plain PKCE even if client allows it (OAuth 2.1 never allows plain)
+        var allowPlainPkce = client.AllowPlainTextPkce && protocolSettings.AllowPlainPkce && !protocolSettings.EnforceOAuth21;
         var pkceValidation = _pkceValidator.ValidateCodeChallenge(
             codeChallenge,
             codeChallengeMethod,
@@ -289,6 +333,7 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         // Validate resource parameter based on tenant settings
         var resourceValidation = await ValidateResourceParameterAsync(
             authorizeRequest.Resource,
+            client.AllowedResources,
             protocolSettings,
             cancellationToken);
         if (!resourceValidation.IsValid)
@@ -384,6 +429,20 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
                 responseTypeValidation.ErrorDescription);
         }
 
+        // OAuth 2.1 enforcement: reject pure implicit flows (no code component)
+        if (protocolSettings.EnforceOAuth21)
+        {
+            var hasCode = authorizeRequest.RequestedResponseTypes.Contains(ResponseTypes.Code);
+            var hasTokenOrIdToken = authorizeRequest.RequestedResponseTypes.Any(rt =>
+                rt == ResponseTypes.Token || rt == ResponseTypes.IdToken);
+            if (!hasCode && hasTokenOrIdToken)
+            {
+                return AuthorizeValidationResult.Failure(
+                    OidcConstants.Errors.UnsupportedResponseType,
+                    "Implicit flow is not allowed when OAuth 2.1 is enforced. Use authorization_code with PKCE instead.");
+            }
+        }
+
         // Validate response type is allowed for client
         var isImplicitOrHybrid = authorizeRequest.RequestedResponseTypes.Any(rt =>
             rt == ResponseTypes.Token || rt == ResponseTypes.IdToken);
@@ -407,8 +466,17 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         var requestedScopes = _scopeValidator.ParseScopes(authorizeRequest.Scope).ToList();
         authorizeRequest.RequestedScopes = requestedScopes;
 
+        // Scopes the client may not have, that don't exist, or that the tenant doesn't offer are left out of the
+        // grant (RFC 6749 §3.3); the code and the consent screen carry only what is granted.
         var allowedScopes = client.AllowedScopes.Select(s => s.Scope).ToList();
-        var scopeValidation = await _scopeValidator.ValidateAsync(requestedScopes, allowedScopes, cancellationToken);
+        var scopeValidation = await _scopeValidator.ValidateAsync(new ScopeValidationContext
+        {
+            RequestedScopes = requestedScopes,
+            ClientAllowedScopes = allowedScopes,
+            ClientId = client.ClientId,
+            Endpoint = "par",
+            Strict = ScopeValidationContext.IsStrict(client.Properties)
+        }, cancellationToken);
         if (!scopeValidation.IsValid)
         {
             return AuthorizeValidationResult.Failure(
@@ -423,11 +491,11 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         var codeChallengeMethod = authorizeRequest.CodeChallengeMethod ?? CodeChallengeMethods.Plain;
         authorizeRequest.CodeChallengeMethod = codeChallengeMethod;
 
-        // PKCE is required if tenant or client requires it
+        // PKCE is required if tenant or client requires it (OAuth 2.1 always requires PKCE)
         var isCodeFlow = authorizeRequest.RequestedResponseTypes.Contains(ResponseTypes.Code);
-        var requirePkce = isCodeFlow && (protocolSettings.RequirePkce || client.RequirePkce);
-        // Tenant can disallow plain PKCE even if client allows it
-        var allowPlainPkce = client.AllowPlainTextPkce && protocolSettings.AllowPlainPkce;
+        var requirePkce = isCodeFlow && (protocolSettings.RequirePkce || client.RequirePkce || protocolSettings.EnforceOAuth21);
+        // Tenant can disallow plain PKCE even if client allows it (OAuth 2.1 never allows plain)
+        var allowPlainPkce = client.AllowPlainTextPkce && protocolSettings.AllowPlainPkce && !protocolSettings.EnforceOAuth21;
         var pkceValidation = _pkceValidator.ValidateCodeChallenge(
             codeChallenge,
             codeChallengeMethod,
@@ -466,6 +534,7 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         // 8. Validate resource parameter (RFC 8707)
         var resourceValidation = await ValidateResourceParameterAsync(
             authorizeRequest.Resource,
+            client.AllowedResources,
             protocolSettings,
             cancellationToken);
         if (!resourceValidation.IsValid)
@@ -571,6 +640,7 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
     /// </summary>
     private async Task<ResourceValidationResult> ValidateResourceParameterAsync(
         ICollection<string> resources,
+        IEnumerable<string> clientAllowedResources,
         TenantProtocolSettings protocolSettings,
         CancellationToken cancellationToken)
     {
@@ -595,7 +665,7 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         }
 
         // Validate each resource URI format per RFC 8707
-        foreach (var resourceUri in resources)
+        foreach (var resourceUri in resources!)
         {
             // RFC 8707: Resource indicators MUST be absolute URIs
             if (!Uri.TryCreate(resourceUri, UriKind.Absolute, out var uri))
@@ -648,6 +718,15 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
                         $"Resource '{resourceUri}' is disabled.");
                 }
             }
+        }
+
+        // RFC 8707 §2: a resource this client may not use is an invalid target.
+        var notAllowed = ResourceIndicators.FirstNotAllowed(clientAllowedResources, resources);
+        if (notAllowed != null)
+        {
+            return ResourceValidationResult.Failure(
+                OidcConstants.Errors.InvalidTarget,
+                $"This client may not request tokens for '{notAllowed}'.");
         }
 
         return ResourceValidationResult.Success();

@@ -29,11 +29,16 @@
         Port: <code id="ldapPort">10389</code><br>
         Base DN: <code id="baseDn">dc=oluso,dc=local</code><br>
         Admin DN: <code id="adminDn">cn=admin,dc=oluso,dc=local</code><br>
+        Tenant Isolation: <code id="tenantIsolation">true</code><br>
         Admin Password: <code>admin123</code>
     </div>
 
     <div class="card">
         <h3>Test LDAP Bind (Authentication)</h3>
+        <div class="form-group" id="tenantIdGroup">
+            <label>Tenant ID (required when tenant isolation is enabled)</label>
+            <input type="text" id="tenantId" value="default" />
+        </div>
         <div class="form-group">
             <label>Username (uid or email)</label>
             <input type="text" id="username" value="testuser@example.com" />

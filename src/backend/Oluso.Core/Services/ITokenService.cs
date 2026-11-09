@@ -75,6 +75,12 @@ public class TokenCreationRequest
     public ICollection<string>? Amr { get; set; }
     public string? Acr { get; set; }
     public ICollection<string>? Audiences { get; set; }
+
+    /// <summary>Resource indicators of the whole grant, kept on the refresh token (RFC 8707 §2.2).</summary>
+    public ICollection<string>? GrantedResources { get; set; }
+
+    /// <summary>Scopes of the whole grant, kept on the refresh token (RFC 6749 §6); null = <see cref="Scopes"/>.</summary>
+    public ICollection<string>? GrantedScopes { get; set; }
     public bool IsReference { get; set; }
 
     /// <summary>
@@ -82,8 +88,18 @@ public class TokenCreationRequest
     /// </summary>
     public bool IncludeJwtId { get; set; } = true;
 
+    /// <summary>
+    /// Whether identity claims released by the granted identity scopes are also
+    /// written into the ID token. When false and an access token is issued, the
+    /// client reads them from /userinfo instead — OIDC Core §5.4.
+    /// </summary>
+    public bool AlwaysIncludeUserClaimsInIdToken { get; set; }
+
     // DPoP
     public string? DPoPKeyThumbprint { get; set; }
+
+    // mTLS (RFC 8705 §3)
+    public string? MtlsCertificateThumbprint { get; set; }
 
     /// <summary>
     /// Salt for computing pairwise subject identifiers.

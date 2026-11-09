@@ -1,0 +1,272 @@
+<oluso-toast-container></oluso-toast-container>
+<div class="min-h-screen bg-gray-50">
+  <!-- Mobile sidebar backdrop -->
+  @if (sidebarOpen() && isMobile()) {
+    <div
+      class="fixed inset-0 z-40 bg-gray-600 bg-opacity-75 lg:hidden"
+      (click)="toggleSidebar()"
+    ></div>
+  }
+
+  <!-- Sidebar -->
+  <aside
+    class="fixed inset-y-0 left-0 z-50 w-64 flex flex-col bg-white border-r border-gray-200 transform transition-transform duration-200 ease-in-out lg:translate-x-0"
+    [class.-translate-x-full]="!sidebarOpen()"
+    [class.translate-x-0]="sidebarOpen()"
+  >
+    <!-- Logo -->
+    <div class="flex items-center justify-between h-16 px-4 flex-shrink-0">
+      <a routerLink="/" class="flex items-center">
+        <span class="text-xl font-bold text-primary-600">{{ brand.name }}</span>
+      </a>
+      <button
+        type="button"
+        class="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100"
+        (click)="toggleSidebar()"
+      >
+        <ui-icon name="close" class="h-5 w-5" />
+      </button>
+    </div>
+
+    <!-- Mode tabs (only when modes are configured AND at least one item carries a group) -->
+    @if (showNavModeTabs() && navModesConfig; as cfg) {
+      <div class="px-3 pt-3 pb-3 border-b border-gray-200">
+        <div role="tablist" class="inline-flex rounded-lg bg-gray-100 p-1 w-full gap-1">
+          @for (mode of cfg.modes; track mode.id) {
+            <button
+              type="button"
+              role="tab"
+              [attr.aria-selected]="activeMode()?.id === mode.id"
+              (click)="setMode(mode.id)"
+              class="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all duration-150"
+              [class.bg-white]="activeMode()?.id === mode.id"
+              [class.text-primary-700]="activeMode()?.id === mode.id"
+              [class.shadow-sm]="activeMode()?.id === mode.id"
+              [class.ring-1]="activeMode()?.id === mode.id"
+              [class.ring-gray-200]="activeMode()?.id === mode.id"
+              [class.text-gray-500]="activeMode()?.id !== mode.id"
+              [class.hover:text-gray-700]="activeMode()?.id !== mode.id"
+              [class.hover:bg-gray-50]="activeMode()?.id !== mode.id"
+            >
+              @if (mode.iconHtml) {
+                <span class="h-4 w-4 flex-shrink-0 inline-flex items-center justify-center [&>svg]:w-full [&>svg]:h-full" [innerHTML]="sanitizedIconHtml(mode.iconHtml)"></span>
+              } @else if (mode.icon) {
+                <ui-icon [name]="mode.icon" class="h-3.5 w-3.5 flex-shrink-0" />
+              }
+              <span class="truncate">{{ mode.label }}</span>
+            </button>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Navigation -->
+    <nav class="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
+      @if (activeMode()?.header; as masterHeader) {
+        <div class="px-2 pb-2 text-xs font-semibold tracking-tight text-gray-700">
+          {{ masterHeader }}
+        </div>
+      }
+      @for (group of groupedNavItems(); track group.group ?? '') {
+        @if (group.group) {
+          <div class="mt-3 first:mt-0 px-2 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+            {{ group.group }}
+          </div>
+        }
+        @for (item of group.items; track item.path) {
+        @if (hasChildren(item)) {
+          <!-- Nav item with children (expandable) -->
+          <div>
+            <button
+              type="button"
+              (click)="toggleExpand(item, $event)"
+              class="group w-full flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors"
+              [class.bg-primary-50]="isParentActive(item)"
+              [class.text-primary-600]="isParentActive(item)"
+              [class.text-gray-600]="!isParentActive(item)"
+              [class.hover:bg-gray-50]="!isParentActive(item)"
+              [class.hover:text-gray-900]="!isParentActive(item)"
+            >
+              <ui-icon
+                [name]="item.icon || 'menu'"
+                [class]="'mr-2.5 h-4 w-4 flex-shrink-0 ' + (isParentActive(item) ? 'text-primary-600' : 'text-gray-400')"
+              />
+              <span class="truncate flex-1 text-left">{{ item.label }}</span>
+              <ui-icon
+                name="chevron-right"
+                class="ml-auto h-4 w-4 text-gray-400 transition-transform duration-200"
+                [class.rotate-90]="isExpanded(item)"
+              />
+            </button>
+            <!-- Children -->
+            @if (isExpanded(item)) {
+              <div class="ml-4 mt-1 space-y-1">
+                @for (child of getVisibleChildren(item); track child.path) {
+                  @if (childHasChildren(child)) {
+                    <!-- Child with nested children (expandable subsection) -->
+                    <div>
+                      <button
+                        type="button"
+                        (click)="toggleExpand(child, $event)"
+                        class="group w-full flex items-center pl-4 pr-2 py-1.5 text-sm font-medium rounded-md transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      >
+                        <ui-icon
+                          [name]="child.icon || 'dot'"
+                          class="mr-2 h-3.5 w-3.5 flex-shrink-0 text-gray-400"
+                        />
+                        <span class="truncate flex-1 text-left">{{ child.label }}</span>
+                        <ui-icon
+                          name="chevron-right"
+                          class="ml-auto h-3.5 w-3.5 text-gray-400 transition-transform duration-200"
+                          [class.rotate-90]="isExpanded(child)"
+                        />
+                      </button>
+                      <!-- Grandchildren -->
+                      @if (isExpanded(child)) {
+                        <div class="ml-4 mt-1 space-y-1">
+                          @for (grandchild of getVisibleGrandChildren(child); track grandchild.path) {
+                            <a
+                              [routerLink]="grandchild.path"
+                              routerLinkActive="bg-primary-50 text-primary-600"
+                              class="group flex items-center pl-4 pr-2 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                              #grandchildRla="routerLinkActive"
+                              (click)="onNavLinkClick()"
+                            >
+                              <ui-icon
+                                [name]="grandchild.icon || 'dot'"
+                                [class]="'mr-2 h-3.5 w-3.5 flex-shrink-0 ' + (grandchildRla.isActive ? 'text-primary-600' : 'text-gray-400')"
+                              />
+                              <span class="truncate">{{ grandchild.label }}</span>
+                            </a>
+                          }
+                        </div>
+                      }
+                    </div>
+                  } @else {
+                    <!-- Regular child link -->
+                    <a
+                      [routerLink]="child.path"
+                      routerLinkActive="bg-primary-50 text-primary-600"
+                      class="group flex items-center pl-4 pr-2 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                      #childRla="routerLinkActive"
+                      (click)="onNavLinkClick()"
+                    >
+                      <ui-icon
+                        [name]="child.icon || 'dot'"
+                        [class]="'mr-2 h-3.5 w-3.5 flex-shrink-0 ' + (childRla.isActive ? 'text-primary-600' : 'text-gray-400')"
+                      />
+                      <span class="truncate">{{ child.label }}</span>
+                    </a>
+                  }
+                }
+              </div>
+            }
+          </div>
+        } @else {
+          <!-- Nav item without children (direct link) -->
+          <a
+            [routerLink]="item.path"
+            routerLinkActive="bg-primary-50 text-primary-600"
+            [routerLinkActiveOptions]="{ exact: item.path === '/' }"
+            class="group flex items-center px-2 py-2 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+            #rla="routerLinkActive"
+            (click)="onNavLinkClick()"
+          >
+            <ui-icon
+              [name]="item.icon || 'menu'"
+              [class]="'mr-2.5 h-4 w-4 flex-shrink-0 ' + (rla.isActive ? 'text-primary-600' : 'text-gray-400')"
+            />
+            <span class="truncate">{{ item.label }}</span>
+            @if (item.badge) {
+              <span class="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                {{ item.badge }}
+              </span>
+            }
+          </a>
+        }
+      }
+      }
+    </nav>
+
+    <!-- User profile at bottom -->
+    <div class="flex-shrink-0 border-t border-gray-200 p-4">
+      @if (user()) {
+        <admin-user-menu
+          placement="top"
+          [showEmail]="true"
+          (signOut)="logout()"
+        />
+      }
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <div class="lg:pl-64 flex flex-col min-h-screen transition-[padding] duration-200" [style.paddingRight.px]="helpService.isOpen() ? helpService.width() : 0">
+    <!-- Desktop header -->
+    <header class="sticky top-0 z-10 hidden lg:flex h-14 items-center justify-between border-b border-gray-200 bg-white px-6 shadow-sm">
+      <!-- Search across every record kind the caller may see -->
+      <admin-global-search class="block flex-1 max-w-md" />
+
+      <!-- Org / Tenant context -->
+      <div class="flex items-center gap-2 text-sm min-w-0 mx-4">
+        @if (currentOrgName(); as orgName) {
+          <span class="font-semibold text-gray-900 truncate">{{ orgName }}</span>
+        }
+        @if (currentOrgName() && currentTenantName()) {
+          <span class="text-gray-300">/</span>
+        }
+        @if (currentTenantName(); as name) {
+          <span class="text-gray-500 truncate">{{ name }}</span>
+        }
+      </div>
+
+      <!-- Tenant Switcher & User info -->
+      <div class="flex items-center gap-4">
+        <admin-tenant-switcher></admin-tenant-switcher>
+        <button
+          type="button"
+          class="p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          (click)="helpService.toggle()"
+          title="Toggle help panel (?)"
+        >
+          <ui-icon name="question-mark-circle" class="h-5 w-5" />
+        </button>
+        <admin-user-menu
+          placement="bottom"
+          (signOut)="logout()"
+        />
+      </div>
+    </header>
+
+    <!-- Mobile header -->
+    <header class="sticky top-0 z-10 flex lg:hidden h-16 items-center justify-between gap-x-4 border-b border-gray-200 bg-white px-4 shadow-sm">
+      <div class="flex items-center gap-x-4">
+        <button
+          type="button"
+          class="-m-2.5 p-2.5 text-gray-700"
+          (click)="toggleSidebar()"
+        >
+          <ui-icon name="menu" class="h-5 w-5" strokeWidth="1.5" />
+        </button>
+        <span class="text-lg font-semibold text-primary-600">{{ brand.shortLabel }}</span>
+      </div>
+      <admin-tenant-switcher></admin-tenant-switcher>
+    </header>
+
+    <!-- Page content -->
+    <main class="flex-1 py-6">
+      <div class="px-4 sm:px-6 lg:px-8">
+        <router-outlet></router-outlet>
+      </div>
+    </main>
+  </div>
+
+  <ui-help-panel />
+  <ui-feedback-fab />
+  <ui-feedback-panel />
+
+  <!-- Global keyboard-activated overlays. Both manage their own open state via
+       KeyboardShortcutsService signals (⌘K opens the palette, `?` opens the help). -->
+  <ui-command-palette />
+  <ui-shortcuts-help />
+</div>

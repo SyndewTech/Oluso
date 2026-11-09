@@ -1,9 +1,18 @@
 @using Oluso.Enterprise.Fido2
 @model Fido2LoginViewModel
 
-<div class="fido2-login-card">
-    <h1 class="title">Sign In</h1>
-    <p class="subtitle">Use your passkey or security key to sign in</p>
+<div class="fido2-login-card"
+     id="fido2LoginContainer"
+     data-msg-not-supported="@Localizer["fido2_login_not_supported"]"
+     data-msg-waiting="@Localizer["fido2_login_waiting"]"
+     data-msg-err-cancelled="@Localizer["fido2_login_err_cancelled"]"
+     data-msg-err-security="@Localizer["fido2_login_err_security"]"
+     data-msg-err-failed="@Localizer["fido2_login_err_failed"]"
+     data-msg-err-options-failed="@Localizer["fido2_login_err_options_failed"]"
+     data-msg-use-passkey="@Localizer["fido2_login_use_passkey"]"
+     data-options="@(Model?.Options == null ? "" : System.Text.Json.JsonSerializer.Serialize(Model.Options, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)))">
+    <h1 class="title">@Localizer["fido2_login_title"]</h1>
+    <p class="subtitle">@Localizer["fido2_login_subtitle"]</p>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
     {
@@ -18,9 +27,9 @@
                 <svg class="passkey-icon" viewBox="0 0 24 24" width="24" height="24">
                     <path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
                 </svg>
-                Sign in with Passkey
+                @Localizer["fido2_login_passkey_button"]
             </button>
-            <p class="passkey-hint">Your device will prompt you to use your fingerprint, face, or PIN</p>
+            <p class="passkey-hint">@Localizer["fido2_login_passkey_hint"]</p>
         </div>
     }
     else
@@ -28,7 +37,7 @@
         <!-- Username-first flow -->
         <form method="post" id="usernameForm">
             <div class="form-group">
-                <label for="username">Username or Email</label>
+                <label for="username">@Localizer["fido2_login_username_label"]</label>
                 <input type="text"
                        id="username"
                        name="username"
@@ -39,18 +48,18 @@
                        required />
             </div>
 
-            <button type="submit" class="btn btn-primary btn-block">Continue</button>
+            <button type="submit" class="btn btn-primary btn-block">@Localizer["fido2_login_continue"]</button>
         </form>
 
         <div class="divider">
-            <span>or</span>
+            <span>@Localizer["fido2_login_divider_or"]</span>
         </div>
 
         <button type="button" id="passkeyButton" class="btn btn-outline-primary btn-block btn-passkey">
             <svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20">
                 <path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
             </svg>
-            Use a Passkey
+            @Localizer["fido2_login_use_passkey"]
         </button>
     }
 
@@ -58,7 +67,7 @@
     {
         <hr />
         <p class="text-center text-muted">
-            <a href="?fallback=password">Sign in with password instead</a>
+            <a href="?fallback=password">@Localizer["fido2_login_password_fallback"]</a>
         </p>
     }
 </div>
@@ -71,11 +80,13 @@
 
 <script>
 (function() {
+    var container = document.getElementById('fido2LoginContainer');
+
     // Check WebAuthn support
     if (!window.PublicKeyCredential) {
         document.querySelectorAll('.btn-passkey').forEach(function(btn) {
             btn.disabled = true;
-            btn.title = 'Passkeys are not supported on this browser';
+            btn.title = container.dataset.msgNotSupported;
         });
         return;
     }
@@ -84,20 +95,13 @@
     document.getElementById('passkeyButton')?.addEventListener('click', async function() {
         try {
             this.disabled = true;
-            this.textContent = 'Waiting for authenticator...';
+            this.textContent = container.dataset.msgWaiting;
 
-            // Get assertion options from server
-            const optionsResponse = await fetch('/api/fido2/assert/options', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-            });
-
-            if (!optionsResponse.ok) {
-                throw new Error('Failed to get authentication options');
+            // The options the step issued for this journey (its challenge is the only one it accepts)
+            if (!container.dataset.options) {
+                throw new Error(container.dataset.msgErrOptionsFailed);
             }
-
-            const options = await optionsResponse.json();
+            const options = JSON.parse(container.dataset.options);
 
             // Convert base64url to ArrayBuffer
             options.challenge = base64UrlToArrayBuffer(options.challenge);
@@ -144,14 +148,14 @@
         } catch (error) {
             console.error('WebAuthn error:', error);
             this.disabled = false;
-            this.innerHTML = '<svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/></svg> Use a Passkey';
+            this.innerHTML = '<svg class="passkey-icon" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 1C8.14 1 5 4.14 5 8c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h1v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2h1a1 1 0 0 0 1-1v-3.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm0 10c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/></svg> ' + container.dataset.msgUsePasskey;
 
             if (error.name === 'NotAllowedError') {
-                alert('Authentication was cancelled or not allowed.');
+                alert(container.dataset.msgErrCancelled);
             } else if (error.name === 'SecurityError') {
-                alert('Security error. Make sure you are on a secure connection (HTTPS).');
+                alert(container.dataset.msgErrSecurity);
             } else {
-                alert('Authentication failed: ' + error.message);
+                alert(container.dataset.msgErrFailed.replace('{0}', error.message));
             }
         }
     });

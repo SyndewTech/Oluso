@@ -5,7 +5,16 @@ namespace Oluso.Core.Domain.Entities;
 /// </summary>
 public class JourneyPolicyEntity : TenantEntity
 {
+    /// <summary>Unique identity. References held by the platform (journey state, settings) use it.</summary>
     public string Id { get; set; } = default!;
+
+    /// <summary>
+    /// The handle clients use (<c>?policy=</c>, share links, the public API): unique within a
+    /// tenant and against the global (null-tenant) policies every tenant sees. Nullable only
+    /// so the column could be added before <c>BackfillJourneyPolicySlugs</c> set it to each
+    /// existing policy's ID; every saved policy has one.
+    /// </summary>
+    public string? Slug { get; set; }
     public string Name { get; set; } = default!;
     public string Type { get; set; } = default!;
     public bool Enabled { get; set; } = true;
@@ -46,6 +55,12 @@ public class JourneyPolicyEntity : TenantEntity
     /// </summary>
     public string? Tags { get; set; }
 
+    /// <summary>Module key of the owning module; null for a platform journey.</summary>
+    public string? OwnerModule { get; set; }
+
+    /// <summary>Who may use a module-owned journey (<c>JourneySharing</c>).</summary>
+    public int Sharing { get; set; }
+
     /// <summary>
     /// Whether this journey requires authentication
     /// </summary>
@@ -85,6 +100,24 @@ public class JourneyPolicyEntity : TenantEntity
     /// Success message to display after submission
     /// </summary>
     public string? SuccessMessage { get; set; }
+
+    /// <summary>
+    /// Comma-separated list of allowed origins for public API access.
+    /// If empty/null, falls back to tenant-level CORS settings.
+    /// Example: "https://oluso.io,https://www.oluso.io"
+    /// </summary>
+    public string? AllowedOrigins { get; set; }
+
+    /// <summary>
+    /// Public API key required for SDK access to this journey.
+    /// Not a secret — used as an identifier to prevent unauthorized embeds.
+    /// </summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// Whether an API key is required for public access
+    /// </summary>
+    public bool RequireApiKey { get; set; } = false;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

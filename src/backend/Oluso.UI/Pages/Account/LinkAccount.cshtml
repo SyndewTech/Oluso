@@ -1,0 +1,60 @@
+@page "/account/link-account"
+@model Oluso.UI.Pages.Account.LinkAccountModel
+@{
+    ViewData["Title"] = Localizer["link_account_title"].Value;
+}
+
+<div class="auth-container">
+    <div class="auth-card">
+        <h1 class="auth-title">@Localizer["link_account_title"]</h1>
+        <p class="auth-subtitle">
+            @Localizer["link_account_subtitle", Model.MaskedEmail ?? string.Empty, Model.ProviderName ?? string.Empty]
+        </p>
+
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Model.ErrorMessage</span>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(Model.InfoMessage))
+        {
+            <div class="alert alert-success" role="status">
+                <span>@Model.InfoMessage</span>
+            </div>
+        }
+
+        <form method="post" novalidate>
+            <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+
+            <div class="form-group">
+                <label for="code">@Localizer["link_account_code_label"]</label>
+                <input type="text"
+                       id="code"
+                       name="code"
+                       class="form-control"
+                       inputmode="numeric"
+                       autocomplete="one-time-code"
+                       maxlength="10"
+                       autofocus
+                       required />
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">@Localizer["link_account_confirm"]</button>
+        </form>
+
+        <div class="auth-links">
+            <form method="post" asp-page-handler="Resend" class="inline-form">
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <button type="submit" class="btn btn-link">@Localizer["link_account_resend"]</button>
+            </form>
+            <form method="post" asp-page-handler="Cancel" class="inline-form">
+                <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+                <button type="submit" class="btn btn-link">@Localizer["link_account_cancel"]</button>
+            </form>
+        </div>
+    </div>
+</div>

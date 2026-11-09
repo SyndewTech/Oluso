@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Oluso.Contracts</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Oluso.Contracts</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Shared zero-dependency enums and POCOs reused by Oluso.Core entities and the DTO projects.</Description>
+    <PackageTags>oluso;contracts;enums;shared</PackageTags>
+  </PropertyGroup>
+
+</Project>

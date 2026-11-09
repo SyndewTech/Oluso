@@ -1,0 +1,125 @@
+<div class="space-y-3">
+  <div class="flex items-center justify-between">
+    <h4 class="text-sm font-medium text-gray-700">{{ title }}</h4>
+    <button
+      type="button"
+      (click)="addCondition()"
+      class="text-sm text-blue-600 hover:text-blue-800 flex items-center"
+    >
+      <ui-icon name="plus" class="h-4 w-4 mr-1" />
+      Add Condition
+    </button>
+  </div>
+
+  @if (description) {
+    <p class="text-xs text-gray-500">{{ description }}</p>
+  }
+
+  @if (conditions.length === 0) {
+    <p class="text-xs text-gray-500 py-2">No conditions. Step will always execute.</p>
+  }
+
+  <div class="space-y-2">
+    @for (condition of conditions; track $index; let i = $index) {
+      <div class="flex flex-wrap items-center gap-2 p-2 bg-gray-50 rounded-lg">
+        @if (i > 0) {
+          <select
+            [ngModel]="condition.logicalOperator"
+            (ngModelChange)="updateCondition(i, { logicalOperator: $event })"
+            class="w-16 rounded-md border-gray-300 text-xs"
+          >
+            <option value="and">AND</option>
+            <option value="or">OR</option>
+          </select>
+        }
+
+        <label class="flex items-center text-xs">
+          <input
+            type="checkbox"
+            [ngModel]="condition.negate"
+            (ngModelChange)="updateCondition(i, { negate: $event })"
+            class="rounded border-gray-300 text-blue-600 mr-1"
+          />
+          NOT
+        </label>
+
+        <select
+          [ngModel]="condition.type"
+          (ngModelChange)="updateCondition(i, { type: $event })"
+          class="rounded-md border-gray-300 text-xs"
+        >
+          @for (opt of typeOptions; track opt.value) {
+            <option [value]="opt.value">{{ opt.label }}</option>
+          }
+        </select>
+
+        <div class="relative flex-1 min-w-[120px]">
+          <input
+            type="text"
+            [ngModel]="condition.field"
+            (ngModelChange)="updateCondition(i, { field: $event })"
+            placeholder="Field name"
+            [attr.list]="'field-suggestions-' + i"
+            class="w-full rounded-md border-gray-300 text-xs"
+          />
+          <datalist [id]="'field-suggestions-' + i">
+            @for (s of getFieldSuggestions(condition.type); track s) {
+              <option [value]="s"></option>
+            }
+          </datalist>
+        </div>
+
+        <select
+          [ngModel]="condition.operator"
+          (ngModelChange)="updateCondition(i, { operator: $event })"
+          class="rounded-md border-gray-300 text-xs"
+        >
+          @for (opt of operatorOptions; track opt.value) {
+            <option [value]="opt.value">{{ opt.label }}</option>
+          }
+        </select>
+
+        @if (requiresValue(condition.operator)) {
+          <input
+            type="text"
+            [ngModel]="condition.value || ''"
+            (ngModelChange)="updateCondition(i, { value: $event })"
+            [placeholder]="getPlaceholder(condition.operator)"
+            class="flex-1 min-w-[100px] rounded-md border-gray-300 text-xs"
+          />
+        }
+
+        <button
+          type="button"
+          (click)="removeCondition(i)"
+          class="text-red-400 hover:text-red-600"
+        >
+          <ui-icon name="trash" class="h-4 w-4" />
+        </button>
+      </div>
+    }
+  </div>
+
+  <!-- Preview -->
+  @if (conditions.length > 0) {
+    <div class="mt-2 p-2 bg-gray-100 rounded text-xs font-mono">
+      <div class="text-gray-500 mb-1">Preview:</div>
+      <code class="text-gray-700">
+        @for (c of conditions; track $index; let i = $index) {
+          @if (i > 0) {
+            <span class="text-blue-600"> {{ c.logicalOperator.toUpperCase() }} </span>
+          }
+          @if (c.negate) {
+            <span class="text-red-600">NOT </span>
+          }
+          <span class="text-purple-600">{{ c.type }}.</span>
+          <span class="text-green-700">{{ c.field }}</span>
+          <span class="text-gray-500"> {{ c.operator }} </span>
+          @if (c.value) {
+            <span class="text-orange-600">"{{ c.value }}"</span>
+          }
+        }
+      </code>
+    </div>
+  }
+</div>

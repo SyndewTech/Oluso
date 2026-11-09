@@ -28,6 +28,12 @@ public class ScimClientStore : IScimClientStore
             .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
     }
 
+    public async Task<ScimClient?> GetByOAuthClientIdAsync(string tenantId, string oauthClientId, CancellationToken cancellationToken = default)
+    {
+        return await _context.ScimClients
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.OAuthClientId == oauthClientId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ScimClient>> GetByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
     {
         return await _context.ScimClients

@@ -4,15 +4,15 @@ using System.Text;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Primitives;
 using Microsoft.IdentityModel.Tokens;
 using Moq;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
+using Oluso.Protocols.Mtls;
 using Oluso.Protocols.Validation;
 using Xunit;
 
@@ -29,10 +29,8 @@ namespace Oluso.Tests.Protocols.Security;
 public class ClientAuthenticatorTests : IDisposable
 {
     private readonly Mock<IClientStore> _clientStore;
-    private readonly Mock<ITenantContext> _tenantContext;
-    private readonly IConfiguration _configuration;
+    private readonly Mock<IIssuerResolver> _issuerResolver;
     private readonly Mock<IDistributedCache> _cache;
-    private readonly Mock<IHttpContextAccessor> _httpContextAccessor;
     private readonly ClientAuthenticator _authenticator;
     private readonly ECDsa _clientKey;
     private readonly string _testClientId = "test-client";
@@ -42,37 +40,34 @@ public class ClientAuthenticatorTests : IDisposable
     public ClientAuthenticatorTests()
     {
         _clientStore = new Mock<IClientStore>();
-        _tenantContext = new Mock<ITenantContext>();
-        _tenantContext.Setup(x => x.HasTenant).Returns(false);
-
-        _configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Oluso:IssuerUri"] = "https://auth.example.com"
-            })
-            .Build();
+        _issuerResolver = new Mock<IIssuerResolver>();
+        _issuerResolver.Setup(x => x.GetIssuerAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://auth.example.com");
 
         _cache = new Mock<IDistributedCache>();
-
-        var httpContext = new DefaultHttpContext();
-        httpContext.Request.Scheme = "https";
-        httpContext.Request.Host = new HostString("auth.example.com");
-
-        _httpContextAccessor = new Mock<IHttpContextAccessor>();
-        _httpContextAccessor.Setup(x => x.HttpContext).Returns(httpContext);
+        var cacheStore = new Dictionary<string, byte[]>();
+        _cache.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken _) => cacheStore.TryGetValue(key, out var v) ? v : null);
+        _cache.Setup(c => c.SetAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<DistributedCacheEntryOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<string, byte[], DistributedCacheEntryOptions, CancellationToken>((key, value, _, _) => cacheStore[key] = value)
+            .Returns(Task.CompletedTask);
 
         var endpointConfig = Options.Create(new OidcEndpointConfiguration
         {
             TokenEndpoint = "/connect/token"
         });
 
+        var certExtractor = new Mock<IClientCertificateExtractor>();
+        var mtlsOptions = new MtlsOptions { Enabled = false };
+
         _authenticator = new ClientAuthenticator(
             _clientStore.Object,
-            _tenantContext.Object,
-            _configuration,
+            _issuerResolver.Object,
             endpointConfig,
             _cache.Object,
-            _httpContextAccessor.Object);
+            certExtractor.Object,
+            mtlsOptions,
+            NullLogger<ClientAuthenticator>.Instance);
 
         // Generate client signing key for JWT tests
         _clientKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -145,6 +140,39 @@ public class ClientAuthenticatorTests : IDisposable
         var result = await _authenticator.AuthenticateAsync(request, CancellationToken.None);
 
         result.Client.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithBasicAuthEmptyPassword_AuthenticatesPublicClient()
+    {
+        // RFC 6749 §2.3.1: IdentityModel OidcClient's default AuthorizationHeader style
+        // sends Basic base64("client_id:") (empty password) for public clients, with the
+        // client_id only in the header — not the body.
+        SetupPublicClient();
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            $"{Uri.EscapeDataString(_testClientId)}:"));
+        var request = CreateRequest();
+        request.Headers.Authorization = $"Basic {encoded}";
+
+        var result = await _authenticator.AuthenticateAsync(request, CancellationToken.None);
+
+        result.Client.Should().NotBeNull();
+        result.Method.Should().Be(ClientAuthenticationMethod.None);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithBasicAuthEmptyPassword_ConfidentialClient_RequiresCredentials()
+    {
+        SetupConfidentialClient();
+        var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            $"{Uri.EscapeDataString(_testClientId)}:"));
+        var request = CreateRequest();
+        request.Headers.Authorization = $"Basic {encoded}";
+
+        var result = await _authenticator.AuthenticateAsync(request, CancellationToken.None);
+
+        result.Client.Should().BeNull();
+        result.Error.Should().Be(OidcConstants.Errors.InvalidClient);
     }
 
     [Fact]

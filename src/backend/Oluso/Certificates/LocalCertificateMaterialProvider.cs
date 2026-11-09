@@ -107,7 +107,7 @@ public class LocalCertificateMaterialProvider : ICertificateMaterialProvider
                 ? X509KeyStorageFlags.Exportable
                 : X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet;
 
-            var cert = new X509Certificate2(pfxBytes, (string?)null, keyStorageFlags);
+            var cert = X509CertificateLoader.LoadPkcs12(pfxBytes, null, keyStorageFlags);
 
             return Task.FromResult<X509Certificate2?>(cert);
         }
@@ -167,7 +167,7 @@ public class LocalCertificateMaterialProvider : ICertificateMaterialProvider
             ? X509KeyStorageFlags.Exportable
             : X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable;
 
-        return new X509Certificate2(pfxBytes, (string?)null, keyStorageFlags);
+        return X509CertificateLoader.LoadPkcs12(pfxBytes, null, keyStorageFlags);
     }
 
     private X509Certificate2 GenerateEcCertificate(CertificateGenerationParams request)
@@ -218,7 +218,7 @@ public class LocalCertificateMaterialProvider : ICertificateMaterialProvider
             ? X509KeyStorageFlags.Exportable
             : X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable;
 
-        return new X509Certificate2(pfxBytes, (string?)null, keyStorageFlags);
+        return X509CertificateLoader.LoadPkcs12(pfxBytes, null, keyStorageFlags);
     }
 
     private static void AddKeyUsage(CertificateRequest certRequest, CertificateKeyUsage usage)

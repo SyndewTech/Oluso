@@ -1,5 +1,4 @@
 using System.Security.Cryptography.X509Certificates;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
@@ -9,40 +8,28 @@ namespace Oluso.Enterprise.Saml.Services;
 
 /// <summary>
 /// Default implementation of ISamlTenantSettingsService.
-/// Stores SAML settings in the Tenant.Configuration JSON field.
+/// Stores SAML settings in the TenantConfigurationSections table via ITenantConfigurationService.
 /// </summary>
 public class SamlTenantSettingsService : ISamlTenantSettingsService
 {
-    private readonly ITenantStore _tenantStore;
+    private readonly ITenantConfigurationService _configService;
     private readonly ICertificateService _certificateService;
     private readonly ILogger<SamlTenantSettingsService> _logger;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
-
     public SamlTenantSettingsService(
-        ITenantStore tenantStore,
+        ITenantConfigurationService configService,
         ICertificateService certificateService,
         ILogger<SamlTenantSettingsService> logger)
     {
-        _tenantStore = tenantStore;
+        _configService = configService;
         _certificateService = certificateService;
         _logger = logger;
     }
 
     public async Task<SamlTenantSettings> GetSettingsAsync(string tenantId, CancellationToken cancellationToken = default)
     {
-        var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
-        if (tenant == null)
-        {
-            _logger.LogWarning("Tenant {TenantId} not found when getting SAML settings", tenantId);
-            return SamlTenantSettings.Default;
-        }
-
-        return ExtractSettings(tenant.Configuration);
+        var settings = await _configService.GetSectionAsync<SamlTenantSettings>(tenantId, SamlTenantSettings.SectionKey, cancellationToken);
+        return settings ?? SamlTenantSettings.Default;
     }
 
     public async Task<SamlTenantSettings> UpdateSettingsAsync(
@@ -50,78 +37,15 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
         Action<SamlTenantSettings> updateAction,
         CancellationToken cancellationToken = default)
     {
-        var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
-        if (tenant == null)
-        {
-            throw new InvalidOperationException($"Tenant {tenantId} not found");
-        }
+        var settings = await GetSettingsAsync(tenantId, cancellationToken);
 
-        // Get current settings
-        var settings = ExtractSettings(tenant.Configuration);
-
-        // Apply updates
         updateAction(settings);
 
-        // Merge back into configuration
-        tenant.Configuration = MergeSettings(tenant.Configuration, settings);
-        tenant.Updated = DateTime.UtcNow;
-
-        await _tenantStore.UpdateAsync(tenant, cancellationToken);
+        await _configService.SetSectionAsync(tenantId, SamlTenantSettings.SectionKey, settings, cancellationToken);
 
         _logger.LogInformation("Updated SAML IdP settings for tenant {TenantId}", tenantId);
 
         return settings;
-    }
-
-    private static SamlTenantSettings ExtractSettings(string? configurationJson)
-    {
-        if (string.IsNullOrEmpty(configurationJson))
-        {
-            return SamlTenantSettings.Default;
-        }
-
-        try
-        {
-            var config = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(configurationJson, JsonOptions);
-            if (config != null && config.TryGetValue(SamlTenantSettings.SectionKey, out var section))
-            {
-                var settings = JsonSerializer.Deserialize<SamlTenantSettings>(section.GetRawText(), JsonOptions);
-                return settings ?? SamlTenantSettings.Default;
-            }
-        }
-        catch (JsonException)
-        {
-            // Invalid JSON, return default
-        }
-
-        return SamlTenantSettings.Default;
-    }
-
-    private static string MergeSettings(string? existingConfiguration, SamlTenantSettings settings)
-    {
-        Dictionary<string, object> config;
-
-        if (!string.IsNullOrEmpty(existingConfiguration))
-        {
-            try
-            {
-                config = JsonSerializer.Deserialize<Dictionary<string, object>>(existingConfiguration, JsonOptions)
-                         ?? new Dictionary<string, object>();
-            }
-            catch (JsonException)
-            {
-                config = new Dictionary<string, object>();
-            }
-        }
-        else
-        {
-            config = new Dictionary<string, object>();
-        }
-
-        // Update the SAML section
-        config[SamlTenantSettings.SectionKey] = settings;
-
-        return JsonSerializer.Serialize(config, JsonOptions);
     }
 
     public async Task<X509Certificate2> GetSigningCertificateAsync(string tenantId, CancellationToken cancellationToken = default)
@@ -138,7 +62,6 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
     {
         var settings = await GetSettingsAsync(tenantId, cancellationToken);
 
-        // Encryption certificate is optional
         if (settings.EncryptionCertificate == null || settings.EncryptionCertificate.Source == SamlCertificateSource.Global)
         {
             return await _certificateService.GetCertificateAsync(CertificatePurpose.SamlEncryption, cancellationToken: cancellationToken);
@@ -161,7 +84,7 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
                 TenantId = tenantId,
                 Subject = $"CN=SAML Signing Certificate, O=Tenant {tenantId}",
                 KeyUsage = CertificateKeyUsage.DigitalSignature | CertificateKeyUsage.NonRepudiation,
-                ValidityDays = 365 * 2 // 2 years
+                ValidityDays = 365 * 2
             },
             cancellationToken);
 
@@ -189,7 +112,7 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
                 TenantId = tenantId,
                 Subject = $"CN=SAML Encryption Certificate, O=Tenant {tenantId}",
                 KeyUsage = CertificateKeyUsage.KeyEncipherment | CertificateKeyUsage.DataEncipherment,
-                ValidityDays = 365 * 2 // 2 years
+                ValidityDays = 365 * 2
             },
             cancellationToken);
 
@@ -307,7 +230,6 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
         string tenantId,
         CancellationToken cancellationToken)
     {
-        // If no config or Global, use the global certificate
         if (config == null || config.Source == SamlCertificateSource.Global)
         {
             var globalCert = await _certificateService.GetCertificateAsync(purpose, cancellationToken: cancellationToken);
@@ -318,10 +240,8 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
             return globalCert;
         }
 
-        // For Auto or Uploaded, we need a certificate ID
         if (string.IsNullOrEmpty(config.CertificateId))
         {
-            // Auto-generate if needed
             if (config.Source == SamlCertificateSource.Auto)
             {
                 var cert = await _certificateService.EnsureCertificateAsync(purpose, tenantId, cancellationToken: cancellationToken);
@@ -330,7 +250,6 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
             throw new InvalidOperationException($"No certificate ID configured for tenant {tenantId}");
         }
 
-        // Load by certificate ID via purpose and tenantId
         var tenantCert = await _certificateService.GetCertificateAsync(purpose, tenantId, cancellationToken: cancellationToken);
         if (tenantCert == null)
         {
@@ -348,7 +267,6 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
     {
         var source = config?.Source ?? SamlCertificateSource.Global;
 
-        // For Global, get global cert info
         if (source == SamlCertificateSource.Global)
         {
             var globalCert = await _certificateService.GetCertificateAsync(purpose, cancellationToken: cancellationToken);
@@ -367,7 +285,6 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
             };
         }
 
-        // For Auto or Uploaded, get tenant-specific cert info
         if (!string.IsNullOrEmpty(config?.CertificateId))
         {
             var certInfo = await _certificateService.GetCertificateInfoAsync(config.CertificateId, cancellationToken);
@@ -377,7 +294,6 @@ public class SamlTenantSettingsService : ISamlTenantSettingsService
             }
         }
 
-        // Try to get by purpose/tenant
         var tenantCert = await _certificateService.GetCertificateAsync(purpose, tenantId, cancellationToken: cancellationToken);
         if (tenantCert != null)
         {

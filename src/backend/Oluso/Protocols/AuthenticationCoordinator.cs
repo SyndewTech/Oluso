@@ -24,6 +24,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
     private readonly IOlusoUserService _userService;
     private readonly OidcEndpointConfiguration _oidcConfig;
     private readonly ILogger<AuthenticationCoordinator> _logger;
+    private readonly ISessionHintMatcher? _sessionHints;
 
     public AuthenticationCoordinator(
         IJourneyOrchestrator journeyOrchestrator,
@@ -33,8 +34,10 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         IHttpContextAccessor httpContextAccessor,
         IOlusoUserService userService,
         IOptions<OidcEndpointConfiguration> oidcConfig,
-        ILogger<AuthenticationCoordinator> logger)
+        ILogger<AuthenticationCoordinator> logger,
+        ISessionHintMatcher? sessionHints = null)
     {
+        _sessionHints = sessionHints;
         _journeyOrchestrator = journeyOrchestrator;
         _policyStore = policyStore;
         _journeyStateStore = journeyStateStore;
@@ -53,7 +56,19 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         // Check if we should skip login because user is already authenticated
         // unless prompt=login or prompt=create forces a new authentication
         var skipLogin = await ShouldSkipLoginAsync(requirement, cancellationToken);
-        if (skipLogin.ShouldSkip)
+        var uiMode = ResolveUiMode(context);
+
+        // A requested policy still runs for a signed-in user: its login steps are met by
+        // the session and the journey continues with the remaining steps.
+        var runPolicyForSession = skipLogin.ShouldSkip && uiMode == UiMode.Journey
+            && (!string.IsNullOrEmpty(requirement.ExplicitPolicyId) || !string.IsNullOrEmpty(context.PolicyId));
+
+        // The session stands in for the journey's sign-in only for the person the request
+        // names. A hint naming someone else gets the normal sign-in instead.
+        var reuseSession = runPolicyForSession
+            && await SessionMatchesHintsAsync(context, requirement, skipLogin.UserId!, cancellationToken);
+
+        if (skipLogin.ShouldSkip && !runPolicyForSession)
         {
             _logger.LogDebug(
                 "User {UserId} already authenticated, skipping login (prompt={Prompt})",
@@ -68,8 +83,6 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
             return new RedirectResult(callbackUrl);
         }
 
-        // Resolve UI mode
-        var uiMode = ResolveUiMode(context);
         context.UiMode = uiMode;
 
         // Store protocol state for callback
@@ -82,21 +95,51 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
 
         return uiMode switch
         {
-            UiMode.Journey => await StartJourneyAuthAsync(context, requirement, storedCorrelationId, cancellationToken),
+            UiMode.Journey => await StartJourneyAuthAsync(
+                context, requirement, storedCorrelationId,
+                reuseSession ? skipLogin.UserId : null,
+                reuseSession ? skipLogin.AuthTime : null,
+                cancellationToken),
             UiMode.Standalone => StartStandaloneAuth(context, requirement, storedCorrelationId),
             UiMode.Headless => BuildHeadlessAuthResponse(context, requirement),
             _ => throw new InvalidOperationException($"Unknown UI mode: {uiMode}")
         };
     }
 
-    private async Task<(bool ShouldSkip, string? UserId)> ShouldSkipLoginAsync(
+    private async Task<bool> SessionMatchesHintsAsync(
+        ProtocolContext context,
+        AuthenticationRequirement requirement,
+        string sessionUserId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(requirement.IdTokenHint) && string.IsNullOrWhiteSpace(requirement.LoginHint))
+        {
+            return true;
+        }
+
+        var client = context.Properties.TryGetValue("ValidatedClient", out var validated) ? validated as Oluso.Core.Domain.Entities.Client : null;
+        var clientId = client?.ClientId ?? context.Request?.ClientId;
+        var matches = _sessionHints != null && !string.IsNullOrEmpty(clientId)
+            && await _sessionHints.MatchesAsync(
+                sessionUserId, clientId, client?.PairWiseSubjectSalt,
+                requirement.IdTokenHint, requirement.LoginHint, cancellationToken);
+
+        if (!matches)
+        {
+            _logger.LogInformation(
+                "The request's hint doesn't name signed-in user {UserId}; the journey asks them to sign in", sessionUserId);
+        }
+        return matches;
+    }
+
+    private async Task<(bool ShouldSkip, string? UserId, DateTimeOffset? AuthTime)> ShouldSkipLoginAsync(
         AuthenticationRequirement requirement,
         CancellationToken cancellationToken)
     {
         var httpContext = _httpContextAccessor.HttpContext;
         if (httpContext == null)
         {
-            return (false, null);
+            return (false, null, null);
         }
 
         var authResult = await httpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
@@ -135,14 +178,14 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         {
             _logger.LogDebug("Signing out existing session: {Reason}", signOutReason);
             await httpContext.SignOutAsync(IdentityConstants.ApplicationScheme);
-            return (false, null);
+            return (false, null, null);
         }
 
         // No existing authentication
         if (!isAuthenticated)
         {
             _logger.LogDebug("No existing authentication found");
-            return (false, null);
+            return (false, null, null);
         }
 
         // Get user ID from the authenticated principal
@@ -152,7 +195,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         if (string.IsNullOrEmpty(userId))
         {
             _logger.LogDebug("Authenticated principal has no user ID claim");
-            return (false, null);
+            return (false, null, null);
         }
 
         // Verify user still exists
@@ -161,11 +204,14 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         {
             _logger.LogWarning("Authenticated user {UserId} no longer exists in store, signing out", userId);
             await httpContext.SignOutAsync(IdentityConstants.ApplicationScheme);
-            return (false, null);
+            return (false, null, null);
         }
 
         _logger.LogDebug("User {UserId} is already authenticated, can skip login", userId);
-        return (true, userId);
+        var signedInAt = long.TryParse(authResult.Principal.FindFirst("auth_time")?.Value, out var signedInUnix)
+            ? DateTimeOffset.FromUnixTimeSeconds(signedInUnix)
+            : (DateTimeOffset?)null;
+        return (true, userId, signedInAt);
     }
 
     public async Task<AuthenticationResult> HandleCallbackAsync(
@@ -181,10 +227,11 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
             return AuthenticationResult.Failed("invalid_request", "Session expired or invalid");
         }
 
-        // If journey ID provided, get journey result
+        // A hosted journey ran for this request: the signed-in user's result plus what the
+        // journey collected.
         if (!string.IsNullOrEmpty(journeyId))
         {
-            return await HandleJourneyCallbackAsync(journeyId, cancellationToken);
+            return await HandleJourneyCallbackAsync(state, correlationId, journeyId, cancellationToken);
         }
 
         // Standalone callback - user must be authenticated via cookie
@@ -233,28 +280,48 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
 
         _logger.LogInformation("Standalone authentication completed for user {UserId}", userId);
 
-        // Build claims from user
-        var claims = new Dictionary<string, object>
+        // Only what describes the session goes with the code; the user's claims (name, email, ...) come
+        // from the profile service at the token endpoint, for the scopes granted.
+        var claims = new Dictionary<string, object>();
+        if (!string.IsNullOrEmpty(userInfo.TenantId))
+            claims["tenant_id"] = userInfo.TenantId;
+        if (user.FindFirst("idp")?.Value is { Length: > 0 } idp)
+            claims["idp"] = idp;
+
+        // The login session is the cookie's: its sid is stamped by the ticket store when
+        // the cookie is issued. Tokens minted with any other id never line up with the
+        // session on the account's Sessions page and cannot be revoked with it.
+        var sessionId = user.FindFirst("sid")?.Value ?? Guid.NewGuid().ToString("N");
+
+        // "Remember me" made the cookie persistent; carry that into the tokens.
+        if (authResult.Properties?.IsPersistent == true)
         {
-            ["sub"] = userId,
-            ["name"] = userInfo.DisplayName ?? userInfo.Username ?? "",
-            ["email"] = userInfo.Email ?? "",
-            ["email_verified"] = userInfo.EmailVerified
-        };
+            claims[Oluso.Core.Authorization.ReservedClaimKeys.RememberMe] = "true";
+        }
 
-        if (!string.IsNullOrEmpty(userInfo.FirstName))
-            claims["given_name"] = userInfo.FirstName;
-        if (!string.IsNullOrEmpty(userInfo.LastName))
-            claims["family_name"] = userInfo.LastName;
+        // Grant the scopes validated at /authorize (carried through ProtocolState),
+        // not a hardcoded set. Hardcoding dropped offline_access, which suppressed
+        // refresh-token issuance for every standalone-login client. Falls back to the
+        // basic OIDC set only if no validated scopes were carried (e.g. non-OIDC).
+        var grantedScopes = state.Properties.TryGetValue("GrantedScopes", out var gs)
+                && !string.IsNullOrWhiteSpace(gs)
+            ? gs.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList()
+            : new List<string> { "openid", "profile", "email" };
 
-        // Session ID - generate new for standalone flow
-        var sessionId = Guid.NewGuid().ToString("N");
+        // How and when the session signed in (stamped on the cookie at sign-in) go with the code, so the
+        // tokens carry the same amr and auth_time as codes issued to pages (IAuthorizationCodeIssuer).
+        DateTime? authTime = long.TryParse(user.FindFirst("auth_time")?.Value, out var authTimeUnix)
+            ? DateTimeOffset.FromUnixTimeSeconds(authTimeUnix).UtcDateTime
+            : null;
 
         return AuthenticationResult.Success(
             userId: userId,
             sessionId: sessionId,
-            scopes: new List<string> { "openid", "profile", "email" },
-            claims: claims);
+            scopes: grantedScopes,
+            claims: claims,
+            amr: user.FindAll("amr").Select(c => c.Value).Distinct(StringComparer.Ordinal).ToList(),
+            authTime: authTime,
+            acr: user.FindFirst("acr")?.Value);
     }
 
     public async Task<IActionResult> HandleConsentRequiredAsync(
@@ -266,7 +333,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         var uiMode = ResolveUiMode(context);
 
         // Add consent info to context properties before storing
-        context.Properties["ClientName"] = requirement.ClientName;
+        context.Properties["ClientName"] = requirement.ClientName ?? "";
         context.Properties["RequestedScopes"] = string.Join(" ", requirement.RequestedScopes);
         context.Properties["SubjectId"] = requirement.SubjectId;
 
@@ -311,7 +378,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
     {
         // Build redirect URL - after journey completes, redirect back to authorize endpoint
         // The authorize endpoint will re-run and see consent is now granted
-        var authorizeUrl = context.HttpContext.Request.Path + context.HttpContext.Request.QueryString;
+        var authorizeUrl = context.HttpContext.Request.Path + WithoutConsentDecision(context.HttpContext.Request.Query);
         var baseUrl = $"{context.HttpContext.Request.Scheme}://{context.HttpContext.Request.Host}";
         var callbackUrl = $"{baseUrl}{authorizeUrl}";
 
@@ -325,6 +392,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
                 CorrelationId = context.CorrelationId,
                 CallbackUrl = callbackUrl,
                 RequestedScopes = requirement.RequestedScopes,
+                UserId = requirement.SubjectId,
                 Properties = new Dictionary<string, object>(context.Properties)
                 {
                     ["client_id"] = requirement.ClientId,
@@ -335,6 +403,11 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
 
         context.JourneyId = journeyState.Id;
 
+        // Back at /authorize, the completed journey is the proof of this request's consent.
+        var withDecision = $"{callbackUrl}{(callbackUrl.Contains('?') ? '&' : '?')}{ConsentDecisions.JourneyParameter}={Uri.EscapeDataString(journeyState.Id)}";
+        await _journeyStateStore.SaveAsync(journeyState with { CallbackUrl = withDecision }, cancellationToken);
+        callbackUrl = withDecision;
+
         _logger.LogInformation(
             "Started consent journey {JourneyId} for client {ClientId}, user {UserId}, callback: {CallbackUrl}",
             journeyState.Id, requirement.ClientId, requirement.SubjectId, callbackUrl);
@@ -342,14 +415,20 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         return new RedirectResult($"/journey/{journeyState.Id}");
     }
 
+    /// <summary>The request's query without a consent decision from an earlier round.</summary>
+    private static QueryString WithoutConsentDecision(IQueryCollection query) =>
+        QueryString.Create(query
+            .Where(kv => kv.Key is not (ConsentDecisions.DecisionParameter or ConsentDecisions.JourneyParameter))
+            .SelectMany(kv => kv.Value.Select(v => new KeyValuePair<string, string?>(kv.Key, v))));
+
     private IActionResult StartStandaloneConsent(
         ProtocolContext context,
         ConsentRequirement requirement)
     {
         // Build return URL - after consent, redirect back to authorize
-        var returnUrl = context.HttpContext.Request.Path + context.HttpContext.Request.QueryString;
+        var returnUrl = context.HttpContext.Request.Path + WithoutConsentDecision(context.HttpContext.Request.Query);
 
-        var consentUrl = $"/account/consent?correlationId={Uri.EscapeDataString(context.CorrelationId)}";
+        var consentUrl = $"/account/consent?correlationId={Uri.EscapeDataString(context.CorrelationId ?? "")}";
         consentUrl += $"&returnUrl={Uri.EscapeDataString(returnUrl)}";
 
         _logger.LogDebug("Redirecting to standalone consent page for client {ClientId}", requirement.ClientId);
@@ -383,24 +462,36 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
 
         // 1. Check tenant setting first (authoritative)
         var tenantUseJourney = true; // Default if no tenant
-        if (context.Properties.TryGetValue("TenantUseJourneyFlow", out var tenantSetting) && tenantSetting is bool tenantValue)
+        var hasTenantSetting = context.Properties.TryGetValue("TenantUseJourneyFlow", out var tenantSetting);
+        if (hasTenantSetting && tenantSetting is bool tenantValue)
         {
             tenantUseJourney = tenantValue;
         }
 
+        _logger.LogDebug(
+            "ResolveUiMode: TenantUseJourneyFlow present={HasSetting}, value={Value}, effective={Effective}",
+            hasTenantSetting, tenantSetting, tenantUseJourney);
+
         // If tenant disables journey flow, that's final - no client or request can override
         if (!tenantUseJourney)
         {
+            _logger.LogDebug("ResolveUiMode: Tenant disables journey, returning Standalone");
             return UiMode.Standalone;
         }
 
         // 2. Tenant allows journey - check if client has an explicit preference
         // Client.UseJourneyFlow is nullable: null = inherit tenant, true/false = explicit choice
-        if (context.Properties.TryGetValue("ClientUseJourneyFlow", out var clientSetting) && clientSetting is bool clientValue)
+        var hasClientSetting = context.Properties.TryGetValue("ClientUseJourneyFlow", out var clientSetting);
+        _logger.LogDebug(
+            "ResolveUiMode: ClientUseJourneyFlow present={HasSetting}, value={Value}",
+            hasClientSetting, clientSetting);
+
+        if (hasClientSetting && clientSetting is bool clientValue)
         {
             // Client explicitly disables journey - that's final, request cannot override
             if (!clientValue)
             {
+                _logger.LogDebug("ResolveUiMode: Client disables journey, returning Standalone");
                 return UiMode.Standalone;
             }
             // Client explicitly wants journey - continue to check request parameter
@@ -411,15 +502,19 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         // At this point: tenant allows journey, and client either allows or inherits
         // Request can choose between journey and standalone
         var uiModeParam = context.Request?.UiMode;
+        _logger.LogDebug("ResolveUiMode: Request ui_mode={UiMode}", uiModeParam ?? "(null)");
+
         if (!string.IsNullOrEmpty(uiModeParam))
         {
             if (Enum.TryParse<UiMode>(uiModeParam, ignoreCase: true, out var requestedMode))
             {
+                _logger.LogDebug("ResolveUiMode: Using request ui_mode, returning {Mode}", requestedMode);
                 return requestedMode;
             }
         }
 
         // 4. Default: use journey (tenant allows it, no explicit preference to use standalone)
+        _logger.LogDebug("ResolveUiMode: Defaulting to Journey");
         return UiMode.Journey;
     }
 
@@ -427,14 +522,41 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         ProtocolContext context,
         AuthenticationRequirement requirement,
         string correlationId,
+        string? sessionUserId,
+        DateTimeOffset? sessionAuthTime,
         CancellationToken cancellationToken)
     {
+        // A policy the client names (by slug, ?policy=) must be the one that runs: never the
+        // default in its place.
+        var requestedPolicyId = !string.IsNullOrEmpty(requirement.ExplicitPolicyId)
+            ? requirement.ExplicitPolicyId
+            : context.PolicyId;
+        if (!string.IsNullOrEmpty(requestedPolicyId))
+        {
+            var requested = await _policyStore.GetBySlugAsync(requestedPolicyId, cancellationToken);
+            if (requested == null || !requested.Enabled)
+            {
+                _logger.LogWarning("Requested policy {PolicyId} is {Reason}", requestedPolicyId, requested == null ? "not found" : "disabled");
+                return new RedirectResult(ErrorUrl("invalid_request", "The requested sign-in journey is not available.", context));
+            }
+        }
+
         // Resolve policy
         var policy = await ResolvePolicyAsync(context, requirement, cancellationToken);
         if (policy == null)
         {
-            _logger.LogError("No journey policy found for request");
-            return new BadRequestObjectResult(new { error = "server_error", error_description = "No authentication policy configured" });
+            // No policy was asked for (a named one never falls back; see above) and the tenant
+            // has none for this journey: the standard pages, if the tenant allows it.
+            var fallback = context.Properties.TryGetValue("TenantJourneyFallbackToStandard", out var allowed) && allowed is true;
+            if (fallback && string.IsNullOrEmpty(requestedPolicyId))
+            {
+                _logger.LogInformation(
+                    "No enabled {PolicyType} journey policy; using the standard pages", requirement.SuggestedPolicyType);
+                return StartStandaloneAuth(context, requirement, correlationId);
+            }
+
+            _logger.LogWarning("No enabled {PolicyType} journey policy and fallback to the standard pages is off", requirement.SuggestedPolicyType);
+            return new RedirectResult(ErrorUrl("server_error", NoJourneyMessage, context));
         }
 
         // Build callback URL
@@ -449,6 +571,8 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
                 ProtocolName = context.ProtocolName,
                 CorrelationId = correlationId,
                 CallbackUrl = callbackUrl,
+                UserId = sessionUserId,
+                SessionAuthTime = sessionAuthTime,
                 LoginHint = requirement.LoginHint,
                 AcrValues = requirement.AcrValues,
                 RequestedScopes = requirement.RequestedScopes.ToList(),
@@ -489,6 +613,20 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
             redirectUrl += $"&loginHint={Uri.EscapeDataString(requirement.LoginHint)}";
         }
 
+        if (context.Properties.TryGetValue("DomainHint", out var domainHintObj)
+            && domainHintObj is string domainHint
+            && !string.IsNullOrEmpty(domainHint))
+        {
+            redirectUrl += $"&domain_hint={Uri.EscapeDataString(domainHint)}";
+        }
+
+        if (context.Properties.TryGetValue("UiLocales", out var uiLocalesObj)
+            && uiLocalesObj is string uiLocales
+            && !string.IsNullOrEmpty(uiLocales))
+        {
+            redirectUrl += $"&ui_locales={Uri.EscapeDataString(uiLocales)}";
+        }
+
         _logger.LogDebug("Redirecting to standalone page {Page}", page);
 
         return new RedirectResult(redirectUrl);
@@ -513,6 +651,17 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         });
     }
 
+    /// <summary>Shown when journey sign-in has no policy to run and the tenant doesn't fall back.</summary>
+    public const string NoJourneyMessage = "Sign-in isn't set up here yet. Please contact your administrator.";
+
+    /// <summary>The error page, with the way back to the requesting app's homepage.</summary>
+    private static string ErrorUrl(string error, string message, ProtocolContext context)
+    {
+        var url = $"/error?error={Uri.EscapeDataString(error)}&message={Uri.EscapeDataString(message)}";
+        var clientId = context.Request?.ClientId;
+        return string.IsNullOrEmpty(clientId) ? url : $"{url}&client_id={Uri.EscapeDataString(clientId)}";
+    }
+
     private async Task<JourneyPolicy?> ResolvePolicyAsync(
         ProtocolContext context,
         AuthenticationRequirement requirement,
@@ -521,20 +670,19 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         // 1. Check explicit policy ID
         if (!string.IsNullOrEmpty(requirement.ExplicitPolicyId))
         {
-            var explicitPolicy = await _policyStore.GetAsync(requirement.ExplicitPolicyId, cancellationToken);
-            if (explicitPolicy != null)
+            var explicitPolicy = await _policyStore.GetBySlugAsync(requirement.ExplicitPolicyId, cancellationToken);
+            if (explicitPolicy is { Enabled: true })
             {
                 _logger.LogDebug("Using explicit policy {PolicyId}", requirement.ExplicitPolicyId);
                 return explicitPolicy;
             }
-            _logger.LogWarning("Explicit policy {PolicyId} not found", requirement.ExplicitPolicyId);
         }
 
         // 2. Check context policy ID (from request)
         if (!string.IsNullOrEmpty(context.PolicyId))
         {
-            var contextPolicy = await _policyStore.GetAsync(context.PolicyId, cancellationToken);
-            if (contextPolicy != null)
+            var contextPolicy = await _policyStore.GetBySlugAsync(context.PolicyId, cancellationToken);
+            if (contextPolicy is { Enabled: true })
             {
                 _logger.LogDebug("Using context policy {PolicyId}", context.PolicyId);
                 return contextPolicy;
@@ -582,7 +730,15 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         return await _protocolStateStore.StoreAsync(state, cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// Completes a request whose sign-in ran as a hosted journey. The journey issued the
+    /// session cookie, so the user comes from that cookie exactly as on the standalone path;
+    /// the journey must belong to this request and this user, and its output claims (and any
+    /// narrower consent) are added on top.
+    /// </summary>
     private async Task<AuthenticationResult> HandleJourneyCallbackAsync(
+        ProtocolState state,
+        string correlationId,
         string journeyId,
         CancellationToken cancellationToken)
     {
@@ -599,29 +755,82 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
             return AuthenticationResult.Failed("access_denied", "Authentication was not completed");
         }
 
-        if (string.IsNullOrEmpty(journeyState.AuthenticatedUserId))
+        if (!string.Equals(journeyState.CorrelationId, correlationId, StringComparison.Ordinal))
         {
-            _logger.LogWarning("Journey {JourneyId} completed but no user ID", journeyId);
-            return AuthenticationResult.Failed("access_denied", "User authentication failed");
+            _logger.LogWarning("Journey {JourneyId} does not belong to request {CorrelationId}", journeyId, correlationId);
+            return AuthenticationResult.Failed("invalid_request", "Journey does not match this sign-in request");
         }
 
-        // Build result from journey state
-        var scopes = journeyState.ClaimsBag.Get("consented_scopes")?.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            ?? Array.Empty<string>();
+        var result = await HandleStandaloneCallbackAsync(state, cancellationToken);
+        if (!result.Succeeded) return result;
 
-        var claims = new Dictionary<string, object>();
-        foreach (var claim in journeyState.ClaimsBag.GetAll())
+        var journeyUser = journeyState.UserId ?? journeyState.AuthenticatedUserId;
+        if (!string.Equals(journeyUser, result.UserId, StringComparison.Ordinal))
         {
-            claims[claim.Key] = claim.Value;
+            _logger.LogWarning("Journey {JourneyId} was completed by {JourneyUser}, not the signed-in user {UserId}",
+                journeyId, journeyUser, result.UserId);
+            return AuthenticationResult.Failed("access_denied", "Journey does not match the signed-in user");
         }
 
-        _logger.LogInformation("Journey {JourneyId} completed successfully for user {UserId}", journeyId, journeyState.AuthenticatedUserId);
+        foreach (var (name, value) in ReadOutputClaims(journeyState))
+        {
+            if (name is "sub") continue;
+            result.Claims[name] = value;
+        }
+
+        var scopes = result.Scopes;
+        if (journeyState.Data?.TryGetValue(ConsentDecisions.ConsentedScopesDataKey, out var consented) == true
+            && consented?.ToString() is { Length: > 0 } granted)
+        {
+            var allowed = granted.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            scopes = scopes.Where(scope => scope == "openid" || allowed.Contains(scope, StringComparer.Ordinal)).ToList();
+        }
+
+        _logger.LogInformation("Journey {JourneyId} completed for user {UserId}", journeyId, result.UserId);
 
         return AuthenticationResult.Success(
-            userId: journeyState.AuthenticatedUserId,
-            sessionId: journeyState.SessionId,
+            userId: result.UserId!,
+            sessionId: result.SessionId ?? journeyState.SessionId ?? journeyId,
             scopes: scopes.ToList(),
-            claims: claims);
+            claims: result.Claims,
+            amr: result.Amr,
+            authTime: result.AuthTime,
+            acr: result.Acr);
+    }
+
+    private static IEnumerable<KeyValuePair<string, object>> ReadOutputClaims(JourneyState journeyState)
+    {
+        if (journeyState.Data?.TryGetValue(DefaultJourneyOrchestrator.OutputClaimsDataKey, out var raw) != true
+            || raw?.ToString() is not { Length: > 0 } json)
+        {
+            yield break;
+        }
+
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            object? value = property.Value.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => property.Value.GetString(),
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                System.Text.Json.JsonValueKind.Number => property.Value.GetRawText(),
+                System.Text.Json.JsonValueKind.Array => property.Value.EnumerateArray()
+                    .Select(JsonLookup.AsString).Where(v => v != null).Select(v => v!).ToArray(),
+                _ => null,
+            };
+            if (value != null) yield return new(property.Name, value);
+        }
+    }
+
+    private async Task<(string? SessionId, bool Persistent)> CurrentCookieSessionAsync()
+    {
+        var httpContext = _httpContextAccessor.HttpContext;
+        if (httpContext == null) return (null, false);
+
+        var auth = await httpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        if (!auth.Succeeded) return (null, false);
+        return (auth.Principal?.FindFirst("sid")?.Value, auth.Properties?.IsPersistent == true);
     }
 
     private string BuildCallbackUrl(ProtocolContext context, string correlationId)

@@ -34,42 +34,90 @@ public class TenantCookieAuthenticationOptions : IPostConfigureOptions<CookieAut
             options.SessionStore = new ScopedTicketStoreAdapter(_scopeFactory);
         }
 
-        // Wrap the existing events
-        var existingOnValidatePrincipal = options.Events.OnValidatePrincipal;
-
-        options.Events.OnValidatePrincipal = async context =>
+        // Suppress redirects for API endpoints - return 401/403 JSON instead
+        var existingOnRedirectToLogin = options.Events.OnRedirectToLogin;
+        options.Events.OnRedirectToLogin = context =>
         {
-            // Call existing handler first
-            if (existingOnValidatePrincipal != null)
+            if (context.Request.Path.StartsWithSegments("/api"))
             {
-                await existingOnValidatePrincipal(context);
-                if (context.Principal == null) return;
+                context.Response.StatusCode = 401;
+                context.Response.ContentType = "application/json";
+                return context.Response.WriteAsync("{\"error\":\"Unauthorized\"}");
             }
-
-            // Validate tenant claim matches current tenant
-            var tenantContext = context.HttpContext.RequestServices.GetService<ITenantContext>();
-            if (tenantContext?.HasTenant == true)
-            {
-                var sessionTenantId = context.Principal?.FindFirstValue("tenant_id");
-
-                // If session has a tenant but it doesn't match current tenant, reject
-                if (!string.IsNullOrEmpty(sessionTenantId) &&
-                    sessionTenantId != tenantContext.TenantId)
-                {
-                    context.RejectPrincipal();
-                    await context.HttpContext.SignOutAsync();
-                    return;
-                }
-
-                // If session has no tenant but we're in a tenant context, reject
-                if (string.IsNullOrEmpty(sessionTenantId))
-                {
-                    context.RejectPrincipal();
-                    await context.HttpContext.SignOutAsync();
-                    return;
-                }
-            }
+            return existingOnRedirectToLogin?.Invoke(context) ?? Task.CompletedTask;
         };
+
+        var existingOnRedirectToAccessDenied = options.Events.OnRedirectToAccessDenied;
+        options.Events.OnRedirectToAccessDenied = context =>
+        {
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                context.Response.StatusCode = 403;
+                context.Response.ContentType = "application/json";
+                return context.Response.WriteAsync("{\"error\":\"Forbidden\"}");
+            }
+            return existingOnRedirectToAccessDenied?.Invoke(context) ?? Task.CompletedTask;
+        };
+
+        // Tenant-scoped principal validation only applies to the Oluso session
+        // cookie (Identity.Application). The other cookie schemes registered by
+        // AddIdentity carry TRANSIENT principals that don't (and can't) have a
+        // tenant_id claim at validation time:
+        //   • Identity.External — IdP's raw claims after OAuth/OIDC callback,
+        //     consumed by ExternalCallback and converted into an Oluso session.
+        //   • Identity.TwoFactor.RememberMe — long-lived "remember this device"
+        //     marker; the user-id is added to the application principal at
+        //     SignIn time, not stored on the cookie itself.
+        //   • Identity.TwoFactorUserId — pre-2fa scratch cookie holding the
+        //     user-id between password verification and the 2fa challenge.
+        // Running the tenant-id check on these would reject them on first
+        // read (no tenant_id claim) and break the very flows that should
+        // promote them into a proper Oluso session.
+        // Hard-coded literal to avoid pulling Microsoft.AspNetCore.Identity into
+        // Oluso.Core just to read one constant. This is the value of
+        // IdentityConstants.ApplicationScheme and is part of Identity's public
+        // contract; if it ever changes, the test suite catches the regression.
+        const string ApplicationScheme = "Identity.Application";
+        var isOlusoSessionScheme = string.Equals(name, ApplicationScheme, StringComparison.Ordinal);
+
+        if (isOlusoSessionScheme)
+        {
+            var existingOnValidatePrincipal = options.Events.OnValidatePrincipal;
+
+            options.Events.OnValidatePrincipal = async context =>
+            {
+                if (existingOnValidatePrincipal != null)
+                {
+                    await existingOnValidatePrincipal(context);
+                    if (context.Principal == null) return;
+                }
+
+                var tenantContext = context.HttpContext.RequestServices.GetService<ITenantContext>();
+                if (tenantContext?.HasTenant == true)
+                {
+                    // Platform tenant serves all tenants — skip tenant cookie validation
+                    if (string.Equals(tenantContext.TenantId, PlatformConstants.TenantId, StringComparison.OrdinalIgnoreCase))
+                        return;
+
+                    var sessionTenantId = context.Principal?.FindFirstValue("tenant_id");
+
+                    if (!string.IsNullOrEmpty(sessionTenantId) &&
+                        sessionTenantId != tenantContext.TenantId)
+                    {
+                        context.RejectPrincipal();
+                        await context.HttpContext.SignOutAsync();
+                        return;
+                    }
+
+                    if (string.IsNullOrEmpty(sessionTenantId))
+                    {
+                        context.RejectPrincipal();
+                        await context.HttpContext.SignOutAsync();
+                        return;
+                    }
+                }
+            };
+        }
 
         // Dynamic cookie name based on tenant (for path-based isolation)
         var existingCookieManager = options.CookieManager;
@@ -145,9 +193,10 @@ public class TenantAwareCookieManager : ICookieManager
     {
         if (tenantContext?.TenantId == null) return false;
 
-        // Check if tenant ID or identifier matches default
+        // Check if tenant ID or identifier matches default or platform
         return string.Equals(tenantContext.TenantId, _defaultTenantId, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(tenantContext.Tenant?.Identifier, _defaultTenantId, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(tenantContext.Tenant?.Identifier, _defaultTenantId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tenantContext.TenantId, PlatformConstants.TenantId, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CookieOptions GetTenantScopedOptions(HttpContext context, CookieOptions options)

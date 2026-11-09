@@ -15,12 +15,16 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "8.0.22");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.5");
 
             modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimAttributeMapping", b =>
                 {
                     b.Property<string>("Id")
                         .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Condition")
+                        .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
@@ -30,9 +34,8 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Direction")
-                        .IsRequired()
-                        .HasMaxLength(20)
+                    b.Property<string>("Expression")
+                        .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("InternalProperty")
@@ -133,6 +136,10 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OAuthClientId")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("RateLimitPerMinute")
                         .HasColumnType("INTEGER");
 
@@ -168,7 +175,426 @@ namespace Oluso.Enterprise.Scim.Migrations.Sqlite
                     b.HasIndex("TenantId", "Name")
                         .IsUnique();
 
+                    b.HasIndex("TenantId", "OAuthClientId");
+
                     b.ToTable("ScimClients", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimProvider", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AuthType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeprovisionMode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ErrorCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Flavor")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GroupSource")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastErrorAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastReconcileAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastReconcileSummary")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastSuccessAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LinkedScimClientId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OAuthClientId")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OAuthScope")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OAuthTokenEndpoint")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ReconcileIntervalMinutes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ScopeRoleIds")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScopeTeamIds")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SecretUpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SuccessCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SyncGroups")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SyncUsers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserNameExpression")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserNameSource")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("ScimProviders", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimProviderAttributeMapping", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Condition")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultValue")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Expression")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InternalProperty")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ScimAttribute")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScimProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Transformation")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("ScimProviderId", "ScimAttribute")
+                        .IsUnique();
+
+                    b.ToTable("ScimProviderAttributeMappings", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimProviderLog", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("DurationMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InternalId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteId")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestBody")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResourceType")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResponseBody")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScimProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("Timestamp");
+
+                    b.HasIndex("ScimProviderId", "Timestamp");
+
+                    b.ToTable("ScimProviderLogs", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimProviderOutboxItem", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InternalId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("LastStatusCode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LockedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LockedUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResourceType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScimProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.HasIndex("ScimProviderId", "ResourceType", "InternalId");
+
+                    b.HasIndex("ScimProviderId", "Status", "Priority", "CreatedAt");
+
+                    b.ToTable("ScimProviderOutbox", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimProviderResourceMapping", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InternalId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeprovisioned")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastSyncedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteVersion")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResourceType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScimProviderId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("ScimProviderId", "ResourceType", "InternalId")
+                        .IsUnique();
+
+                    b.HasIndex("ScimProviderId", "ResourceType", "RemoteId");
+
+                    b.ToTable("ScimProviderResourceMappings", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Enterprise.Scim.Entities.ScimProvisioningLog", b =>

@@ -37,7 +37,8 @@ public class TestController : ControllerBase
             host = _configuration.GetValue<string>("Oluso:LdapServer:Host", "localhost"),
             port = _configuration.GetValue<int>("Oluso:LdapServer:Port", 10389),
             baseDn = baseDn,
-            adminDn = _configuration.GetValue<string>("Oluso:LdapServer:AdminDn", $"cn=admin,{baseDn}")
+            adminDn = _configuration.GetValue<string>("Oluso:LdapServer:AdminDn", $"cn=admin,{baseDn}"),
+            tenantIsolation = _configuration.GetValue<bool>("Oluso:LdapServer:TenantIsolation", true)
         });
     }
 
@@ -50,11 +51,20 @@ public class TestController : ControllerBase
         var port = _configuration.GetValue<int>("Oluso:LdapServer:Port", 10389);
         var baseDn = _configuration.GetValue<string>("Oluso:LdapServer:BaseDn", "dc=oluso,dc=local");
         var userOu = _configuration.GetValue<string>("Oluso:LdapServer:UserOu", "users");
+        var tenantIsolation = _configuration.GetValue<bool>("Oluso:LdapServer:TenantIsolation", true);
 
         try
         {
-            // Construct user DN
-            var userDn = $"uid={request.Username},ou={userOu},{baseDn}";
+            // Construct user DN - include tenant if tenant isolation is enabled
+            string userDn;
+            if (tenantIsolation && !string.IsNullOrEmpty(request.TenantId))
+            {
+                userDn = $"uid={request.Username},ou={userOu},o={request.TenantId},{baseDn}";
+            }
+            else
+            {
+                userDn = $"uid={request.Username},ou={userOu},{baseDn}";
+            }
 
             var ldapHost = _configuration.GetValue<string>("Oluso:LdapServer:Host", "localhost")!;
             using var connection = new LdapConnection(new LdapDirectoryIdentifier(ldapHost, port));
@@ -335,6 +345,7 @@ public class LdapBindRequest
 {
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+    public string? TenantId { get; set; }
 }
 
 public class LdapSearchRequest

@@ -1,0 +1,369 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Activity Logs</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Security and compliance audit trail for all system events
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <ui-button variant="secondary" [disabled]="exporting()" (clicked)="onExport('csv')">
+        <ui-icon name="download" class="h-4 w-4 mr-1" />
+        {{ exporting() ? 'Exporting...' : 'Export CSV' }}
+      </ui-button>
+      <ui-button variant="secondary" [disabled]="loading()" (clicked)="onRefresh()">
+        <ui-icon name="refresh" [class]="'h-4 w-4 mr-1 ' + (loading() ? 'animate-spin' : '')" />
+        Refresh
+      </ui-button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <ui-card>
+    <div class="px-4 py-5 sm:p-6">
+      <form (ngSubmit)="onSearch()" class="space-y-4">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+          <!-- Search -->
+          <div class="lg:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+            <div class="relative">
+              <ui-icon name="search" class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <input
+                type="text"
+                [(ngModel)]="searchTerm"
+                name="search"
+                placeholder="Search by user, action, or details..."
+                class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+              />
+            </div>
+          </div>
+
+          <!-- Category -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+            <select
+              [value]="filter.category || ''"
+              (change)="onCategoryChange($event)"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            >
+              <option value="">All Categories</option>
+              @for (cat of categories; track cat) {
+                <option [value]="cat">{{ cat }}</option>
+              }
+            </select>
+          </div>
+
+          <!-- From Date -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+            <input
+              type="date"
+              [value]="filter.from || ''"
+              (change)="onFromDateChange($event)"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+
+          <!-- To Date -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+            <input
+              type="date"
+              [value]="filter.to || ''"
+              (change)="onToDateChange($event)"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-end gap-2">
+            <ui-button type="submit" class="flex-1">
+              <ui-icon name="filter" class="h-4 w-4 mr-1" />
+              Apply
+            </ui-button>
+            <ui-button type="button" variant="secondary" (clicked)="clearFilters()">
+              Clear
+            </ui-button>
+          </div>
+        </div>
+
+        <!-- Additional filters -->
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
+            <input
+              type="text"
+              [(ngModel)]="actionFilter"
+              name="action"
+              placeholder="e.g. CreateUser"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">User</label>
+            <ui-select
+              [options]="subjectLookup.options()"
+              [value]="filter.subjectId || ''"
+              (valueChange)="onSubjectChange($event)"
+              [remoteSearch]="true"
+              [loading]="subjectLookup.loading()"
+              [hint]="subjectLookup.hint()"
+              (searchChange)="subjectLookup.search($event)"
+              [clearable]="true"
+              placeholder="Any user"
+              searchPlaceholder="Search users…"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+            <ui-select
+              [options]="clientOptions()"
+              [value]="filter.clientId || ''"
+              (valueChange)="onClientChange($event)"
+              [clearable]="true"
+              placeholder="Any client"
+              searchPlaceholder="Search clients…"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Origin</label>
+            <select
+              [value]="filter.originKind || ''"
+              (change)="onOriginKindChange($event)"
+              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+            >
+              <option value="">Any origin</option>
+              @for (kind of originKinds; track kind.value) {
+                <option [value]="kind.value">{{ kind.label }}</option>
+              }
+            </select>
+          </div>
+          @if (filter.originKind === 'admin') {
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Admin</label>
+              <ui-select
+                [options]="adminLookup.options()"
+                [value]="filter.originId || ''"
+                (valueChange)="onOriginIdChange($event)"
+                [remoteSearch]="true"
+                [loading]="adminLookup.loading()"
+                [hint]="adminLookup.hint()"
+                (searchChange)="adminLookup.search($event)"
+                [clearable]="true"
+                placeholder="Any admin"
+                searchPlaceholder="Search users…"
+              />
+            </div>
+          } @else if (filter.originKind === 'service_client') {
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Service client</label>
+              <ui-select
+                [options]="clientOptions()"
+                [value]="filter.originId || ''"
+                (valueChange)="onOriginIdChange($event)"
+                [clearable]="true"
+                placeholder="Any service client"
+                searchPlaceholder="Search clients…"
+              />
+            </div>
+          }
+        </div>
+      </form>
+    </div>
+  </ui-card>
+
+  <!-- Results info -->
+  <div class="flex justify-between items-center">
+    <p class="text-sm text-gray-500">
+      @if (totalCount() > 0) {
+        Showing {{ getStartIndex() }} - {{ getEndIndex() }} of {{ totalCount().toLocaleString() }} records
+      } @else {
+        No activity logs found
+      }
+    </p>
+  </div>
+
+  <!-- Table -->
+  <ui-card [padding]="false">
+    @if (loading()) {
+      <div class="flex items-center justify-center h-64">
+        <div class="text-gray-500">Loading...</div>
+      </div>
+    } @else if (logs().length === 0) {
+      <div class="flex flex-col items-center justify-center h-64 text-gray-500">
+        <ui-icon name="document-text" class="h-12 w-12 mb-4" />
+        <p>No activity logs found matching your filters</p>
+      </div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Timestamp
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Action
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Category
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                User
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Client
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Origin
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                IP Address
+              </th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            @for (log of logs(); track log.id) {
+              <tr class="hover:bg-gray-50 cursor-pointer" (click)="toggleDetails(log)">
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  <span class="inline-flex items-center gap-2">
+                    <ui-icon [name]="expandedId() === log.id ? 'chevron-down' : 'chevron-right'" class="h-4 w-4 text-gray-400" />
+                    {{ log.timestamp | localeDate:'medium' }}
+                  </span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <span class="font-medium text-gray-900">{{ log.action }}</span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                    {{ log.category }}
+                  </span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  {{ log.subjectName || log.subjectId || '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ log.clientId || '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  @if (log.originKind) {
+                    <span class="inline-flex items-center gap-2">
+                      <ui-badge [variant]="originBadge(log.originKind)">{{ originLabel(log.originKind) }}</ui-badge>
+                      @if (originActor(log); as actor) {
+                        <span class="max-w-[12rem] truncate" [title]="log.originId || actor">{{ actor }}</span>
+                      }
+                    </span>
+                  } @else {
+                    -
+                  }
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="log.success ? 'success' : 'danger'">
+                    {{ log.success ? 'Success' : 'Failed' }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ log.ipAddress || '-' }}
+                </td>
+              </tr>
+              @if (expandedId() === log.id) {
+                <tr class="bg-gray-50">
+                  <td colspan="8" class="px-6 py-4">
+                    <dl class="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                      @if (log.resourceType || log.resourceName || log.resourceId) {
+                        <div>
+                          <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">Resource</dt>
+                          <dd class="mt-1 text-gray-900">
+                            {{ log.resourceType || '' }}
+                            @if (log.resourceName) { <span class="font-medium">{{ log.resourceName }}</span> }
+                            @if (log.resourceId) { <span class="text-gray-500 text-xs">({{ log.resourceId }})</span> }
+                          </dd>
+                        </div>
+                      }
+                      @if (log.originKind) {
+                        <div class="sm:col-span-2">
+                          <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">Origin</dt>
+                          <dd class="mt-1 flex flex-wrap items-center gap-2 text-gray-900">
+                            <ui-badge [variant]="originBadge(log.originKind)">{{ originLabel(log.originKind) }}</ui-badge>
+                            @if (log.originName) { <span class="font-medium">{{ log.originName }}</span> }
+                            @if (log.originId) { <span class="font-mono text-xs text-gray-500 break-all">{{ log.originId }}</span> }
+                            @if (log.ipAddress) { <span class="text-xs text-gray-500">from {{ log.ipAddress }}</span> }
+                            @if (log.originId && canFilterByActor(log.originKind)) {
+                              <ui-button variant="secondary" size="sm" (clicked)="filterByOrigin(log)">
+                                <ui-icon name="filter" class="h-3.5 w-3.5 mr-1" />
+                                Everything by this {{ log.originKind === 'admin' ? 'admin' : 'client' }}
+                              </ui-button>
+                            }
+                          </dd>
+                        </div>
+                      }
+                      @if (log.subjectId) {
+                        <div>
+                          <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">User ID</dt>
+                          <dd class="mt-1 font-mono text-xs text-gray-900 break-all">{{ log.subjectId }}</dd>
+                        </div>
+                      }
+                      @if (log.userAgent) {
+                        <div class="sm:col-span-2">
+                          <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">User agent</dt>
+                          <dd class="mt-1 text-gray-900 break-all">{{ log.userAgent }}</dd>
+                        </div>
+                      }
+                      @if (log.errorMessage) {
+                        <div class="sm:col-span-2 lg:col-span-4">
+                          <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">Error</dt>
+                          <dd class="mt-1 text-red-700">{{ log.errorMessage }}</dd>
+                        </div>
+                      }
+                      <div class="sm:col-span-2 lg:col-span-4">
+                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">Details</dt>
+                        <dd class="mt-1">
+                          @if (prettyDetails(log); as details) {
+                            <pre class="max-h-80 overflow-auto rounded-md bg-white border border-gray-200 p-3 text-xs text-gray-800">{{ details }}</pre>
+                          } @else {
+                            <span class="text-gray-500">No further details recorded.</span>
+                          }
+                        </dd>
+                      </div>
+                    </dl>
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </ui-card>
+
+  <!-- Pagination -->
+  @if (totalPages() > 1) {
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-gray-500">
+        Page {{ filter.pageNumber }} of {{ totalPages() }}
+      </p>
+      <div class="flex items-center gap-2">
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="filter.pageNumber === 1"
+          (clicked)="onPreviousPage()"
+        >
+          Previous
+        </ui-button>
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="filter.pageNumber === totalPages()"
+          (clicked)="onNextPage()"
+        >
+          Next
+        </ui-button>
+      </div>
+    </div>
+  }
+</div>

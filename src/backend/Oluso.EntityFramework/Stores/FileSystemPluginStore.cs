@@ -348,6 +348,26 @@ public class FileSystemPluginStore : IPluginStore
             (p.Tags?.ToLowerInvariant().Contains(searchLower) ?? false));
     }
 
+    public Task<PluginNetworkConfig?> GetNetworkConfigAsync(
+        string pluginId,
+        CancellationToken cancellationToken = default)
+    {
+        // Filesystem store has no network policy storage — operators using
+        // it accept that filesystem-deployed plugins are trusted code, so
+        // there's nothing to fetch. The executor falls through to the
+        // safe default ("None" → empty AllowedHosts) when this returns null.
+        return Task.FromResult<PluginNetworkConfig?>(null);
+    }
+
+    public Task<PluginNetworkConfig> UpsertNetworkConfigAsync(
+        PluginNetworkConfig config,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException(
+            "FileSystemPluginStore does not support network policy persistence. " +
+            "Use DatabasePluginStore (the default when EF is wired) to manage plugin network policies.");
+    }
+
     private string GetPluginPath(string pluginName, string? tenantId)
     {
         if (tenantId == null)

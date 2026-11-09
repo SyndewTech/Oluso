@@ -1,0 +1,1561 @@
+@if (loading()) {
+  <div class="flex justify-center py-12">
+    <svg
+      class="animate-spin h-8 w-8 text-primary-600"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+  </div>
+} @else {
+  <div class="space-y-6">
+    <!-- Plugin slot: before header -->
+    @if (!isNew() && client()) {
+      <ui-page-slot-host
+        pageId="client-detail"
+        slotId="before-header"
+        [data]="{ client: client() }"
+      />
+    }
+
+    <!-- Page header -->
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">{{ pageTitle() }}</h1>
+        @if (!isNew() && client()) {
+          <div class="mt-1 flex items-center gap-2">
+            <span class="text-sm text-gray-500">{{ client()?.clientId }}</span>
+            <ui-badge [variant]="client()?.enabled ? 'success' : 'danger'">
+              {{ client()?.enabled ? 'Enabled' : 'Disabled' }}
+            </ui-badge>
+          </div>
+          <!-- Read-only audit metadata. lastAccessed is the useful one — long
+               gaps flag stale clients ripe for cleanup. -->
+          <div class="mt-2 flex items-center gap-4 text-xs text-gray-500">
+            <span title="When the client was created">
+              Created: <span class="text-gray-700">{{ formatDate(client()?.created) }}</span>
+            </span>
+            <span title="Last modification timestamp">
+              Updated: <span class="text-gray-700">{{ formatDate(client()?.updated) }}</span>
+            </span>
+            <span title="Last time this client received a token">
+              Last accessed: <span class="text-gray-700">{{ formatDate(client()?.lastAccessed) }}</span>
+            </span>
+          </div>
+        }
+      </div>
+      <div class="flex items-center gap-2">
+        @if (!isNew()) {
+          <ui-button variant="danger" (clicked)="onDelete()">Delete</ui-button>
+        }
+        <ui-button variant="secondary" (clicked)="onCancel()">Cancel</ui-button>
+        <ui-button [loading]="saving()" (clicked)="onSave()">
+          {{ isNew() ? 'Create Client' : 'Save Changes' }}
+        </ui-button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="border-b border-gray-200">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+        @for (tab of tabs(); track tab.id) {
+          <button
+            type="button"
+            [class]="activeTab() === tab.id
+              ? 'border-primary-500 text-primary-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+            class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            (click)="setActiveTab(tab.id)"
+          >
+            {{ tab.label }}
+          </button>
+        }
+      </nav>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="mt-6">
+      <!-- Basic Tab -->
+      @if (activeTab() === 'basic') {
+        <ui-card title="Basic Information">
+          <div class="space-y-4">
+            @if (isNew()) {
+              <ui-input
+                label="Client ID"
+                [required]="true"
+                placeholder="my-client-app"
+                hint="A unique identifier for the client. Cannot be changed after creation."
+                [ngModel]="formData().clientId"
+                (ngModelChange)="updateFormField('clientId', $event)"
+              ></ui-input>
+            } @else {
+              <div>
+                <label class="block text-sm font-medium text-gray-700">Client ID</label>
+                <p class="mt-1 text-sm text-gray-900">{{ client()?.clientId }}</p>
+              </div>
+            }
+
+            <ui-input
+              label="Client Name"
+              placeholder="My Client Application"
+              [ngModel]="getCurrentValue('clientName') || ''"
+              (ngModelChange)="updateFormField('clientName', $event)"
+            ></ui-input>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                rows="3"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                placeholder="A brief description of this client application"
+                [ngModel]="getCurrentValue('description') || ''"
+                (ngModelChange)="updateFormField('description', $event)"
+              ></textarea>
+            </div>
+
+            <ui-input
+              label="Client URI"
+              placeholder="https://example.com"
+              hint="The URI of the client's homepage"
+              [ngModel]="getCurrentValue('clientUri') || ''"
+              (ngModelChange)="updateFormField('clientUri', $event)"
+            ></ui-input>
+
+            <ui-input
+              label="Logo URI"
+              placeholder="https://example.com/logo.png"
+              hint="The URI of the client's logo"
+              [ngModel]="getCurrentValue('logoUri') || ''"
+              (ngModelChange)="updateFormField('logoUri', $event)"
+            ></ui-input>
+
+            @if (!isNew()) {
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="enabled"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('enabled')"
+                  (change)="updateFormField('enabled', $any($event.target).checked)"
+                />
+                <label for="enabled" class="ml-2 block text-sm text-gray-900">
+                  Client Enabled
+                </label>
+              </div>
+            }
+          </div>
+        </ui-card>
+      }
+
+      <!-- Authentication Tab -->
+      @if (activeTab() === 'authentication') {
+        <div class="space-y-6">
+          <ui-card title="Grant Types">
+            <p class="text-sm text-gray-500 mb-4">
+              Select the OAuth 2.0 grant types this client can use.
+            </p>
+            <div class="space-y-3">
+              @for (grantType of grantTypes; track grantType.value) {
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    [id]="'grant-' + grantType.value"
+                    class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    [checked]="isGrantTypeEnabled(grantType.value)"
+                    (change)="toggleGrantType(grantType.value)"
+                  />
+                  <label [for]="'grant-' + grantType.value" class="ml-2 block text-sm text-gray-900">
+                    {{ grantType.label }}
+                  </label>
+                </div>
+              }
+            </div>
+          </ui-card>
+
+          @if (serviceApiCatalog(); as catalog) {
+            <ui-card title="Service API">
+              <div class="flex items-start">
+                <input
+                  type="checkbox"
+                  id="serviceApiEnabled"
+                  class="h-4 w-4 mt-0.5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="serviceApiEnabled()"
+                  (change)="toggleServiceApi()"
+                />
+                <label for="serviceApiEnabled" class="ml-2 block text-sm text-gray-900">
+                  Allow this client to call the Service API
+                  <span class="block text-sm text-gray-500 mt-1">
+                    Machine-to-machine access to user and role management, with no signed-in
+                    user. Turning this on enables the Client Credentials grant and adds a
+                    <strong>Service API</strong> tab where you pick what the client may do.
+                    Calls are fixed to this client's tenant.
+                  </span>
+                </label>
+              </div>
+            </ui-card>
+          }
+
+          <ui-card title="Security Settings">
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requireClientSecret"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('requireClientSecret')"
+                  (change)="updateFormField('requireClientSecret', $any($event.target).checked)"
+                />
+                <label for="requireClientSecret" class="ml-2 block text-sm text-gray-900">
+                  Require Client Secret
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requirePkce"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('requirePkce')"
+                  (change)="updateFormField('requirePkce', $any($event.target).checked)"
+                />
+                <label for="requirePkce" class="ml-2 block text-sm text-gray-900">
+                  Require PKCE
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="allowPlainTextPkce"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('allowPlainTextPkce')"
+                  (change)="updateFormField('allowPlainTextPkce', $any($event.target).checked)"
+                />
+                <label for="allowPlainTextPkce" class="ml-2 block text-sm text-gray-900">
+                  Allow Plain Text PKCE (not recommended)
+                </label>
+              </div>
+            </div>
+          </ui-card>
+
+          <!-- Client Secrets (existing clients only) -->
+          @if (!isNew() && getCurrentValue('requireClientSecret')) {
+            <ui-card title="Client Secrets">
+              <div class="flex justify-between items-start mb-4">
+                <p class="text-sm text-gray-600">
+                  Client secrets are hashed and cannot be viewed. You can add new secrets or remove existing ones.
+                </p>
+                <ui-button
+                  variant="secondary"
+                  size="sm"
+                  [loading]="regeneratingSecret()"
+                  (clicked)="regenerateSecret()"
+                >
+                  <ui-icon name="plus" class="h-4 w-4 mr-1" />
+                  Add New Secret
+                </ui-button>
+              </div>
+
+              @if (client()?.secrets && client()!.secrets.length > 0) {
+                <div class="space-y-2">
+                  @for (secret of client()!.secrets; track secret.id) {
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div class="flex-1">
+                        <div class="flex items-center gap-3">
+                          <ui-icon name="key" class="h-5 w-5 text-gray-400" />
+                          <div>
+                            <span class="text-sm font-medium text-gray-900">
+                              Secret ending in ...{{ secret.lastThreeChars || '***' }}
+                            </span>
+                            @if (secret.description) {
+                              <span class="ml-2 text-sm text-gray-500">
+                                ({{ secret.description }})
+                              </span>
+                            }
+                          </div>
+                        </div>
+                        <div class="mt-1 text-xs text-gray-500 ml-8">
+                          Created: {{ secret.created | localeDate:'mediumDate' }}
+                          @if (secret.expiration) {
+                            <span class="ml-2">
+                              - Expires: {{ secret.expiration | localeDate:'mediumDate' }}
+                            </span>
+                          }
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        class="p-1 text-red-500 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        [disabled]="deletingSecretId() === secret.id || client()!.secrets.length <= 1"
+                        [title]="client()!.secrets.length <= 1 ? 'Cannot delete the last secret' : 'Delete secret'"
+                        (click)="confirmDeleteSecret(secret)"
+                      >
+                        <ui-icon name="trash" class="h-4 w-4" />
+                      </button>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <p class="text-sm text-gray-500 italic">No secrets configured</p>
+              }
+            </ui-card>
+          }
+        </div>
+      }
+
+      <!-- URIs & CORS Tab -->
+      @if (activeTab() === 'uris') {
+        <div class="space-y-6">
+          <ui-card title="Redirect URIs">
+            <p class="text-sm text-gray-500 mb-4">
+              URIs where the client can receive authorization responses.
+            </p>
+            <div class="space-y-2">
+              @for (uri of getCurrentValue('redirectUris') || []; track uri) {
+                <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md">
+                  <span class="text-sm text-gray-900">{{ uri }}</span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeRedirectUri(uri)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+            </div>
+            <div class="mt-4 flex gap-2">
+              <ui-input
+                placeholder="https://example.com/callback"
+                [(ngModel)]="redirectUriInput"
+                class="flex-1"
+              ></ui-input>
+              <ui-button variant="secondary" (clicked)="addRedirectUri()">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="Post Logout Redirect URIs">
+            <p class="text-sm text-gray-500 mb-4">
+              URIs where the client can be redirected after logout.
+            </p>
+            <div class="space-y-2">
+              @for (uri of getCurrentValue('postLogoutRedirectUris') || []; track uri) {
+                <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md">
+                  <span class="text-sm text-gray-900">{{ uri }}</span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removePostLogoutUri(uri)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+            </div>
+            <div class="mt-4 flex gap-2">
+              <ui-input
+                placeholder="https://example.com/logout"
+                [(ngModel)]="postLogoutUriInput"
+                class="flex-1"
+              ></ui-input>
+              <ui-button variant="secondary" (clicked)="addPostLogoutUri()">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="CORS Origins">
+            <p class="text-sm text-gray-500 mb-4">
+              Origins allowed to make cross-origin requests.
+            </p>
+            <div class="space-y-2">
+              @for (origin of getCurrentValue('allowedCorsOrigins') || []; track origin) {
+                <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md">
+                  <span class="text-sm text-gray-900">{{ origin }}</span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeCorsOrigin(origin)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+            </div>
+            <div class="mt-4 flex gap-2">
+              <ui-input
+                placeholder="https://example.com"
+                [(ngModel)]="corsOriginInput"
+                class="flex-1"
+              ></ui-input>
+              <ui-button variant="secondary" (clicked)="addCorsOrigin()">Add</ui-button>
+            </div>
+          </ui-card>
+        </div>
+      }
+
+      <!-- Scopes Tab -->
+      @if (activeTab() === 'scopes') {
+        <ui-card title="Allowed Scopes">
+          <p class="text-sm text-gray-500 mb-4">
+            Select the scopes this client is allowed to request.
+          </p>
+
+          <div class="mb-6">
+            <h4 class="text-sm font-medium text-gray-700 mb-2">Identity scopes</h4>
+            <div class="flex flex-wrap gap-2">
+              @for (scope of identityScopeOptions(); track scope.name) {
+                <button
+                  type="button"
+                  [title]="scope.title"
+                  [class]="isScopeEnabled(scope.name)
+                    ? 'bg-primary-100 text-primary-800 border-primary-300'
+                    : 'bg-gray-100 text-gray-700 border-gray-300'"
+                  class="inline-flex items-center px-3 py-1 rounded-full text-sm border"
+                  (click)="toggleScope(scope.name)"
+                >
+                  {{ scope.name }}
+                  @if (isScopeEnabled(scope.name)) {
+                    <ui-icon name="check" class="ml-1 h-4 w-4" />
+                  }
+                </button>
+              }
+              <button
+                type="button"
+                title="Lets the client get a refresh token"
+                [class]="isScopeEnabled(offlineAccessScope)
+                  ? 'bg-primary-100 text-primary-800 border-primary-300'
+                  : 'bg-gray-100 text-gray-700 border-gray-300'"
+                class="inline-flex items-center px-3 py-1 rounded-full text-sm border"
+                (click)="toggleScope(offlineAccessScope)"
+              >
+                {{ offlineAccessScope }}
+                @if (isScopeEnabled(offlineAccessScope)) {
+                  <ui-icon name="check" class="ml-1 h-4 w-4" />
+                }
+              </button>
+            </div>
+            @if (identityScopesLoadFailed()) {
+              <p class="mt-2 text-xs text-amber-700">
+                Couldn't load the identity scopes. Reload to try again.
+              </p>
+            }
+          </div>
+
+          <div class="mb-6">
+            <h4 class="text-sm font-medium text-gray-700 mb-2">API scopes</h4>
+            @if (selectableApiScopes().length) {
+              <div class="flex flex-wrap gap-2">
+                @for (scope of selectableApiScopes(); track scope.name) {
+                  <button
+                    type="button"
+                    [title]="scope.displayName || scope.name"
+                    [class]="isScopeEnabled(scope.name)
+                      ? 'bg-primary-100 text-primary-800 border-primary-300'
+                      : 'bg-gray-100 text-gray-700 border-gray-300'"
+                    class="inline-flex items-center px-3 py-1 rounded-full text-sm border"
+                    (click)="toggleScope(scope.name)"
+                  >
+                    {{ scope.name }}
+                    @if (isScopeEnabled(scope.name)) {
+                      <ui-icon name="check" class="ml-1 h-4 w-4" />
+                    }
+                  </button>
+                }
+              </div>
+            } @else {
+              <p class="text-sm text-gray-500">No API scopes yet. Add them under API Scopes, then pick them here.</p>
+            }
+          </div>
+
+          <div class="mb-6">
+            <h4 class="text-sm font-medium text-gray-700 mb-1">Allowed APIs (resource indicators)</h4>
+            <p class="text-xs text-gray-500 mb-2">
+              Limit which APIs this client may get tokens for. With none selected it may ask for any registered API;
+              otherwise a request for another one is refused.
+            </p>
+            @if (resources().length) {
+              <div class="flex flex-wrap gap-2">
+                @for (resource of resources(); track resource.uri) {
+                  <button
+                    type="button"
+                    [title]="resource.displayName || resource.uri"
+                    [class]="isResourceAllowed(resource.uri)
+                      ? 'bg-primary-100 text-primary-800 border-primary-300'
+                      : 'bg-gray-100 text-gray-700 border-gray-300'"
+                    class="inline-flex items-center px-3 py-1 rounded-full text-sm border font-mono"
+                    (click)="toggleAllowedResource(resource.uri)"
+                  >
+                    {{ resource.uri }}
+                    @if (isResourceAllowed(resource.uri)) {
+                      <ui-icon name="check" class="ml-1 h-4 w-4" />
+                    }
+                  </button>
+                }
+              </div>
+            } @else {
+              <p class="text-sm text-gray-500">No APIs registered yet. Add them under Resources.</p>
+            }
+          </div>
+
+          <div class="mb-6">
+            <h4 class="text-sm font-medium text-gray-700 mb-1">Resource server for (token introspection)</h4>
+            <p class="text-xs text-gray-500 mb-2">
+              The APIs this client serves. It may introspect access tokens issued for them, not only its own tokens.
+              Use this for a backend that receives tokens from other apps, such as a mail server checking a webmail's tokens.
+            </p>
+            @if (resources().length) {
+              <div class="flex flex-wrap gap-2">
+                @for (resource of resources(); track resource.uri) {
+                  <button
+                    type="button"
+                    [title]="resource.displayName || resource.uri"
+                    [class]="isIntrospectionResource(resource.uri)
+                      ? 'bg-primary-100 text-primary-800 border-primary-300'
+                      : 'bg-gray-100 text-gray-700 border-gray-300'"
+                    class="inline-flex items-center px-3 py-1 rounded-full text-sm border font-mono"
+                    (click)="toggleIntrospectionResource(resource.uri)"
+                  >
+                    {{ resource.uri }}
+                    @if (isIntrospectionResource(resource.uri)) {
+                      <ui-icon name="check" class="ml-1 h-4 w-4" />
+                    }
+                  </button>
+                }
+              </div>
+            } @else {
+              <p class="text-sm text-gray-500">No APIs registered yet. Add them under Resources.</p>
+            }
+          </div>
+
+          <div>
+            <h4 class="text-sm font-medium text-gray-700 mb-1">Other scopes</h4>
+            <p class="text-xs text-gray-500 mb-2">Custom scopes this client may request that aren't listed above.</p>
+            @if (otherAllowedScopes().length) {
+              <div class="flex flex-wrap gap-2">
+                @for (scope of otherAllowedScopes(); track scope) {
+                  @if (isManagedServiceScope(scope)) {
+                    <span
+                      class="inline-flex items-center px-3 py-1 rounded-full text-sm border border-gray-200 text-gray-500 font-mono"
+                      title="Managed on the Service API tab"
+                    >
+                      {{ scope }}
+                    </span>
+                  } @else {
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm border border-primary-300 bg-primary-100 text-primary-800 font-mono">
+                      {{ scope }}
+                      <button
+                        type="button"
+                        class="text-primary-700 hover:text-red-700"
+                        [attr.aria-label]="'Remove ' + scope"
+                        (click)="removeScope(scope)"
+                      >
+                        <ui-icon name="close" class="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  }
+                }
+              </div>
+            }
+            <div class="mt-4 flex gap-2">
+              <ui-input
+                placeholder="custom_scope"
+                [(ngModel)]="scopeInput"
+                class="flex-1"
+              ></ui-input>
+              <ui-button variant="secondary" (clicked)="addScope()">Add</ui-button>
+            </div>
+          </div>
+
+          @if (!isNew()) {
+            <div class="mt-6 pt-6 border-t border-gray-200 flex items-start justify-between gap-4">
+              <div>
+                <p id="strictScopesLabel" class="text-sm font-medium text-gray-700">
+                  Refuse sign-in if any requested scope can't be granted
+                </p>
+                <p id="strictScopesHelp" class="text-sm text-gray-500">
+                  Off: Oluṣọ grants the scopes this app is allowed and leaves out the rest (recommended).
+                  On: the whole request fails with <code class="font-mono">invalid_scope</code>.
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="strict-scopes-switch"
+                (click)="setStrictScopes(!strictScopes())"
+                class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                [class.bg-primary-600]="strictScopes()"
+                [class.bg-gray-200]="!strictScopes()"
+                role="switch"
+                [attr.aria-checked]="strictScopes()"
+                aria-labelledby="strictScopesLabel"
+                aria-describedby="strictScopesHelp"
+              >
+                <span
+                  class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                  [class.translate-x-5]="strictScopes()"
+                  [class.translate-x-0]="!strictScopes()"
+                ></span>
+              </button>
+            </div>
+          }
+        </ui-card>
+      }
+
+      <!-- Service API Tab -->
+      @if (activeTab() === 'service' && serviceApiCatalog(); as catalog) {
+        <div class="space-y-6">
+          <ui-card title="Permissions">
+            <p class="text-sm text-gray-500 mb-4">
+              What this client may do when it calls <code class="font-mono">/api/service/*</code>
+              with a client-credentials token. Nothing is granted by default — a token with no
+              permission below can authenticate but every endpoint returns 403.
+            </p>
+
+            <div class="space-y-6">
+              @for (group of serviceApiGroups(); track group.name) {
+                <div>
+                  <h4 class="text-sm font-medium text-gray-700 mb-2">{{ group.name }}</h4>
+                  <div class="space-y-3">
+                    @for (scope of group.scopes; track scope.name) {
+                      <div class="flex items-start">
+                        <input
+                          type="checkbox"
+                          [id]="'service-scope-' + scope.name"
+                          class="h-4 w-4 mt-0.5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                          [checked]="isScopeEnabled(scope.name)"
+                          (change)="toggleScope(scope.name)"
+                        />
+                        <label [for]="'service-scope-' + scope.name" class="ml-2 block text-sm text-gray-900">
+                          {{ scope.displayName }}
+                          <span class="ml-2 font-mono text-xs text-gray-500">{{ scope.name }}</span>
+                          @if (scope.requiresExplicitGrant) {
+                            <ui-badge variant="danger" class="ml-2">Sensitive</ui-badge>
+                          }
+                          <span class="block text-sm text-gray-500">{{ scope.description }}</span>
+                          @if (scope.requiresExplicitGrant) {
+                            <span class="mt-1 block text-sm text-red-700">
+                              Sensitive — deletes accounts permanently. Only grant it to a client you fully trust.
+                              @if (scope.requiredAdminPermission) {
+                                To grant it you need the
+                                <code class="font-mono">{{ scope.requiredAdminPermission }}</code>
+                                permission assigned to one of your roles by name.
+                              }
+                            </span>
+                          }
+                        </label>
+                      </div>
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+          </ui-card>
+
+          <ui-card title="How the client gets a token">
+            <p class="text-sm text-gray-500 mb-4">
+              The tenant is fixed by this client's registration — service calls cannot switch
+              tenant, and no <code class="font-mono">X-Tenant-Id</code> header is needed.
+            </p>
+            <pre class="p-3 bg-gray-100 rounded font-mono text-xs overflow-x-auto"
+>curl -X POST {{ tokenEndpoint() }} \
+  -u '{{ getCurrentValue('clientId') }}:YOUR_CLIENT_SECRET' \
+  -d 'grant_type=client_credentials' \
+  -d 'scope={{ serviceApiRequestScopes() }}'</pre>
+            <p class="text-sm text-gray-500 mt-3">
+              Send the resulting access token as
+              <code class="font-mono">Authorization: Bearer &lt;token&gt;</code>. Do not send a
+              <code class="font-mono">resource</code> parameter — it changes the audience and the
+              token will be rejected.
+            </p>
+          </ui-card>
+        </div>
+      }
+
+      <!-- Access Control Tab -->
+      @if (activeTab() === 'access') {
+        <div class="space-y-6">
+          <ui-card title="Required Permission">
+            <p class="text-sm text-gray-500 mb-4">
+              If set, users must have this exact permission (via their roles) to authenticate with this client.
+              This is checked during the OIDC flow and blocks users who lack the permission.
+            </p>
+            <ui-input
+              label="Permission"
+              placeholder="e.g. admin.access"
+              hint="Leave empty for no permission restriction. Tenant admins can create roles with this permission to grant access."
+              [ngModel]="getCurrentValue('requiredPermission') || ''"
+              (ngModelChange)="updateFormField('requiredPermission', $event || null)"
+            ></ui-input>
+          </ui-card>
+
+          <ui-card title="Verified Email">
+            <p class="text-sm text-gray-500 mb-4">
+              Only people whose email address is verified get tokens for this client. Turn this on for an application
+              that recognizes people by their email, such as a mail server, so an address nobody proved can't be used
+              to sign in as its owner.
+            </p>
+            <div class="flex items-center">
+              <input
+                type="checkbox"
+                id="requireVerifiedEmail"
+                class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                [checked]="getCurrentValue('requireVerifiedEmail')"
+                (change)="updateFormField('requireVerifiedEmail', $any($event.target).checked)"
+              />
+              <label for="requireVerifiedEmail" class="ml-2 block text-sm text-gray-900">
+                Require a verified email address
+              </label>
+            </div>
+            <p class="text-xs text-gray-400 mt-3">
+              A user is let in when they are an allowed user or hold an allowed role, and they must also meet the
+              required permission and the verified email setting when those are set.
+            </p>
+          </ui-card>
+
+          <ui-card title="Allowed Roles">
+            <p class="text-sm text-gray-500 mb-4">
+              Users with any of these roles can authenticate with this client.
+            </p>
+            <div class="space-y-2 mb-4">
+              @for (role of getCurrentValue('allowedRoles') || []; track role) {
+                <div class="flex items-center justify-between bg-blue-50 px-3 py-2 rounded-md">
+                  <span class="text-sm text-blue-800">{{ role }}</span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeRole(role)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+              @if ((getCurrentValue('allowedRoles') || []).length === 0) {
+                <p class="text-sm text-gray-500 italic">No role restrictions (all roles allowed)</p>
+              }
+            </div>
+            <div class="flex gap-2">
+              <select
+                [(ngModel)]="selectedRoleInput"
+                class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              >
+                <option value="">Select a role...</option>
+                @for (role of getAvailableRolesForDropdown(); track role.id) {
+                  <option [value]="role.name">{{ role.name }}</option>
+                }
+              </select>
+              <ui-button variant="secondary" (clicked)="addRole()" [disabled]="!selectedRoleInput">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="Allowed Users">
+            <p class="text-sm text-gray-500 mb-4">
+              Specific users who can authenticate with this client, as well as anyone holding an allowed role.
+            </p>
+            <div class="space-y-2 mb-4">
+              @for (user of getCurrentValue('allowedUsers') || []; track user.subjectId) {
+                <div class="flex items-center justify-between bg-blue-50 px-3 py-2 rounded-md">
+                  <span class="text-sm text-blue-800">{{ user.displayName || user.subjectId }}</span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeUser(user.subjectId)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+              @if ((getCurrentValue('allowedUsers') || []).length === 0) {
+                <p class="text-sm text-gray-500 italic">No user restrictions</p>
+              }
+            </div>
+            <div class="flex gap-2">
+              <select
+                [(ngModel)]="selectedUserInput"
+                class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              >
+                <option value="">Select a user...</option>
+                @for (user of getAvailableUsersForDropdown(); track user.id) {
+                  <option [value]="user.id">{{ user.email || user.userName }}</option>
+                }
+              </select>
+              <ui-button variant="secondary" (clicked)="addUser()" [disabled]="!selectedUserInput">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="Identity Provider Restrictions">
+            <p class="text-sm text-gray-500 mb-4">
+              Restrict which external identity providers can be used. Leave empty to allow all.
+            </p>
+            <div class="space-y-2 mb-4">
+              @for (idp of getCurrentValue('identityProviderRestrictions') || []; track idp) {
+                <div class="flex items-center justify-between bg-yellow-50 px-3 py-2 rounded-md">
+                  <span class="text-sm text-yellow-800">{{ idp }}</span>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeIdpRestriction(idp)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+              @if ((getCurrentValue('identityProviderRestrictions') || []).length === 0) {
+                <p class="text-sm text-gray-500 italic">No provider restrictions (all providers allowed)</p>
+              }
+            </div>
+            <div class="flex gap-2">
+              <select
+                [(ngModel)]="selectedIdpInput"
+                class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              >
+                <option value="">Select an identity provider...</option>
+                @for (idp of getAvailableIdpsForDropdown(); track idp.id) {
+                  <option [value]="idp.scheme">{{ idp.displayName || idp.scheme }}</option>
+                }
+              </select>
+              <ui-button variant="secondary" (clicked)="addIdpRestriction()" [disabled]="!selectedIdpInput">Add</ui-button>
+            </div>
+          </ui-card>
+        </div>
+      }
+
+      <!-- Tokens Tab (Edit only) -->
+      @if (activeTab() === 'tokens' && !isNew()) {
+        <div class="space-y-6">
+          <ui-card title="Token Lifetimes">
+            <p class="text-sm text-gray-500 mb-4">
+              Configure token lifetime settings for this client.
+            </p>
+            <div class="space-y-4">
+              <div>
+                <ui-input
+                  type="number"
+                  label="Access Token Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('accessTokenLifetime') || 3600"
+                  (ngModelChange)="updateFormField('accessTokenLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('accessTokenLifetime')) }}</p>
+              </div>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="Identity Token Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('identityTokenLifetime') || 3600"
+                  (ngModelChange)="updateFormField('identityTokenLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('identityTokenLifetime')) }}</p>
+              </div>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="Authorization Code Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('authorizationCodeLifetime') || 300"
+                  (ngModelChange)="updateFormField('authorizationCodeLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('authorizationCodeLifetime')) }}</p>
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="Refresh Tokens">
+            <p class="text-sm text-gray-500 mb-4">
+              Controls whether the client can request refresh tokens and how long they live.
+              Offline access must be enabled for refresh tokens to be issued.
+            </p>
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="allowOfflineAccess"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('allowOfflineAccess')"
+                  (change)="updateFormField('allowOfflineAccess', $any($event.target).checked)"
+                />
+                <label for="allowOfflineAccess" class="ml-2 block text-sm text-gray-900">
+                  Allow Offline Access (issue refresh tokens)
+                </label>
+              </div>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="Absolute Refresh Token Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('absoluteRefreshTokenLifetime') || 2592000"
+                  (ngModelChange)="updateFormField('absoluteRefreshTokenLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('absoluteRefreshTokenLifetime')) }} — refresh token cannot be used after this.</p>
+              </div>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="Sliding Refresh Token Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('slidingRefreshTokenLifetime') || 1296000"
+                  (ngModelChange)="updateFormField('slidingRefreshTokenLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('slidingRefreshTokenLifetime')) }} — rolling window when expiration is Sliding.</p>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Refresh Token Usage</label>
+                <select
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  [ngModel]="getCurrentValue('refreshTokenUsage') ?? 1"
+                  (ngModelChange)="updateFormField('refreshTokenUsage', +$event)"
+                >
+                  <option [ngValue]="1">One-Time Only (rotate on use — recommended)</option>
+                  <option [ngValue]="0">Reusable (same token until expiry)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Refresh Token Expiration</label>
+                <select
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  [ngModel]="getCurrentValue('refreshTokenExpiration') ?? 1"
+                  (ngModelChange)="updateFormField('refreshTokenExpiration', +$event)"
+                >
+                  <option [ngValue]="1">Absolute (fixed expiry)</option>
+                  <option [ngValue]="0">Sliding (refreshes on use, up to absolute)</option>
+                </select>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="updateAccessTokenClaimsOnRefresh"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('updateAccessTokenClaimsOnRefresh')"
+                  (change)="updateFormField('updateAccessTokenClaimsOnRefresh', $any($event.target).checked)"
+                />
+                <label for="updateAccessTokenClaimsOnRefresh" class="ml-2 block text-sm text-gray-900">
+                  Re-evaluate user claims when refreshing the access token
+                </label>
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="Token Shape">
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Access Token Type</label>
+                <select
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  [ngModel]="getCurrentValue('accessTokenType') ?? 0"
+                  (ngModelChange)="updateFormField('accessTokenType', +$event)"
+                >
+                  <option [ngValue]="0">JWT (self-contained, signed)</option>
+                  <option [ngValue]="1">Reference (opaque, requires introspection)</option>
+                </select>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="alwaysIncludeUserClaimsInIdToken"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('alwaysIncludeUserClaimsInIdToken')"
+                  (change)="updateFormField('alwaysIncludeUserClaimsInIdToken', $any($event.target).checked)"
+                />
+                <label for="alwaysIncludeUserClaimsInIdToken" class="ml-2 block text-sm text-gray-900">
+                  Always include user claims in the ID token
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="allowAccessTokensViaBrowser"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('allowAccessTokensViaBrowser')"
+                  (change)="updateFormField('allowAccessTokensViaBrowser', $any($event.target).checked)"
+                />
+                <label for="allowAccessTokensViaBrowser" class="ml-2 block text-sm text-gray-900">
+                  Allow access tokens to be delivered via browser (implicit / hybrid flows)
+                </label>
+              </div>
+
+              <ui-input
+                label="Allowed ID Token Signing Algorithms"
+                placeholder="e.g. RS256,ES256 (comma-separated, leave empty for tenant default)"
+                [ngModel]="getCurrentValue('allowedIdentityTokenSigningAlgorithms') || ''"
+                (ngModelChange)="updateFormField('allowedIdentityTokenSigningAlgorithms', $event || undefined)"
+              ></ui-input>
+            </div>
+          </ui-card>
+        </div>
+      }
+
+      <!-- Logout Tab (Edit only) -->
+      @if (activeTab() === 'logout' && !isNew()) {
+        <ui-card title="Logout Settings">
+          <div class="space-y-4">
+            <div>
+              <ui-input
+                label="Front-Channel Logout URI"
+                placeholder="https://example.com/logout"
+                [ngModel]="getCurrentValue('frontChannelLogoutUri') || ''"
+                (ngModelChange)="updateFormField('frontChannelLogoutUri', $event)"
+              ></ui-input>
+              <div class="mt-2 flex items-center">
+                <input
+                  type="checkbox"
+                  id="frontChannelLogoutSessionRequired"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('frontChannelLogoutSessionRequired')"
+                  (change)="updateFormField('frontChannelLogoutSessionRequired', $any($event.target).checked)"
+                />
+                <label for="frontChannelLogoutSessionRequired" class="ml-2 block text-sm text-gray-900">
+                  Include session ID in the front-channel logout request
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <ui-input
+                label="Back-Channel Logout URI"
+                placeholder="https://example.com/api/logout"
+                [ngModel]="getCurrentValue('backChannelLogoutUri') || ''"
+                (ngModelChange)="updateFormField('backChannelLogoutUri', $event)"
+              ></ui-input>
+              <div class="mt-2 flex items-center">
+                <input
+                  type="checkbox"
+                  id="backChannelLogoutSessionRequired"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('backChannelLogoutSessionRequired')"
+                  (change)="updateFormField('backChannelLogoutSessionRequired', $any($event.target).checked)"
+                />
+                <label for="backChannelLogoutSessionRequired" class="ml-2 block text-sm text-gray-900">
+                  Include session ID in the back-channel logout token (sid claim)
+                </label>
+              </div>
+            </div>
+          </div>
+        </ui-card>
+      }
+
+      <!-- Claims & Properties Tab (Edit only) -->
+      @if (activeTab() === 'claims' && !isNew()) {
+        <div class="space-y-6">
+          <ui-card title="Client Claims">
+            <p class="text-sm text-gray-500 mb-4">
+              Claims that will be added to tokens issued for this client.
+            </p>
+            <div class="space-y-2 mb-4">
+              @for (claim of getCurrentValue('claims') || []; track $index) {
+                <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md">
+                  <div>
+                    <span class="text-sm font-medium text-gray-900">{{ claim.type }}:</span>
+                    <span class="text-sm text-gray-700 ml-2">{{ claim.value }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeClaim($index)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+              @if ((getCurrentValue('claims') || []).length === 0) {
+                <p class="text-sm text-gray-500 italic">No custom claims configured</p>
+              }
+            </div>
+            <div class="flex gap-2">
+              <ui-input
+                placeholder="Claim type"
+                [(ngModel)]="newClaimType"
+                class="w-1/3"
+              ></ui-input>
+              <ui-input
+                placeholder="Claim value"
+                [(ngModel)]="newClaimValue"
+                class="flex-1"
+              ></ui-input>
+              <ui-button variant="secondary" (clicked)="addClaim()" [disabled]="!newClaimType || !newClaimValue">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="Authorize Parameter Claims">
+            <p class="text-sm text-gray-500 mb-4">
+              Allowlist custom request parameters this client may pass — on <code>/authorize</code> or on the
+              <code>client_credentials</code> token request — and have emitted as token claims.
+              The claim type cannot be a reserved/system claim (sub, role, tenant_id, permissions, …).
+            </p>
+            <div class="space-y-2 mb-4">
+              @for (param of getCurrentValue('allowedAuthorizeParameters') || []; track $index) {
+                <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md">
+                  <div>
+                    <span class="text-sm font-medium text-gray-900">{{ param.parameter }}</span>
+                    <span class="text-sm text-gray-500 mx-1">→</span>
+                    <span class="text-sm text-gray-700">{{ param.claimType }}</span>
+                    @if (param.required) {
+                      <span class="text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded ml-2">required</span>
+                    }
+                  </div>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeAuthorizeParameter($index)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+              }
+              @if ((getCurrentValue('allowedAuthorizeParameters') || []).length === 0) {
+                <p class="text-sm text-gray-500 italic">No authorize parameters configured</p>
+              }
+            </div>
+            <div class="flex gap-2 items-center">
+              <ui-input
+                placeholder="Parameter name"
+                [(ngModel)]="newAuthParamName"
+                class="w-1/3"
+              ></ui-input>
+              <ui-input
+                placeholder="Claim type"
+                [(ngModel)]="newAuthParamClaim"
+                class="flex-1"
+              ></ui-input>
+              <label class="flex items-center text-sm text-gray-700 whitespace-nowrap">
+                <input type="checkbox" [(ngModel)]="newAuthParamRequired" class="mr-1" />
+                Required
+              </label>
+              <ui-button variant="secondary" (clicked)="addAuthorizeParameter()" [disabled]="!newAuthParamName || !newAuthParamClaim">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="Client Properties">
+            <p class="text-sm text-gray-500 mb-4">
+              Custom key-value properties for this client. Strict scope handling is set on the Scopes tab.
+            </p>
+            <div class="space-y-2 mb-4">
+              @for (prop of getCurrentValue('properties') || []; track $index) {
+                @if (!isStrictScopesProperty(prop)) {
+                <div class="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md">
+                  <div>
+                    <span class="text-sm font-medium text-gray-900">{{ prop.key }}:</span>
+                    <span class="text-sm text-gray-700 ml-2">{{ prop.value }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="text-red-600 hover:text-red-800"
+                    (click)="removeProperty($index)"
+                  >
+                    <ui-icon name="close" class="h-4 w-4" />
+                  </button>
+                </div>
+                }
+              }
+              @if (customProperties().length === 0) {
+                <p class="text-sm text-gray-500 italic">No custom properties configured</p>
+              }
+            </div>
+            <div class="flex gap-2">
+              <ui-input
+                placeholder="Property key"
+                [(ngModel)]="newPropertyKey"
+                class="w-1/3"
+              ></ui-input>
+              <ui-input
+                placeholder="Property value"
+                [(ngModel)]="newPropertyValue"
+                class="flex-1"
+              ></ui-input>
+              <ui-button variant="secondary" (clicked)="addProperty()" [disabled]="!newPropertyKey || !newPropertyValue">Add</ui-button>
+            </div>
+          </ui-card>
+
+          <ui-card title="Claims Settings">
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="alwaysSendClientClaims"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('alwaysSendClientClaims')"
+                  (change)="updateFormField('alwaysSendClientClaims', $any($event.target).checked)"
+                />
+                <label for="alwaysSendClientClaims" class="ml-2 block text-sm text-gray-900">
+                  Always Send Client Claims
+                </label>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <ui-input
+                  label="Client Claims Prefix"
+                  placeholder="client_"
+                  [ngModel]="getCurrentValue('clientClaimsPrefix') || ''"
+                  (ngModelChange)="updateFormField('clientClaimsPrefix', $event)"
+                ></ui-input>
+
+                <ui-input
+                  label="Pairwise Subject Salt"
+                  placeholder="Leave empty for global salt"
+                  [ngModel]="getCurrentValue('pairWiseSubjectSalt') || ''"
+                  (ngModelChange)="updateFormField('pairWiseSubjectSalt', $event)"
+                ></ui-input>
+              </div>
+            </div>
+          </ui-card>
+        </div>
+      }
+
+      <!-- Advanced Tab (Edit only) -->
+      @if (activeTab() === 'advanced' && !isNew()) {
+        <div class="space-y-6">
+          <ui-card title="SSO Settings">
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="enableLocalLogin"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('enableLocalLogin')"
+                  (change)="updateFormField('enableLocalLogin', $any($event.target).checked)"
+                />
+                <label for="enableLocalLogin" class="ml-2 block text-sm text-gray-900">
+                  Enable Local Login
+                </label>
+              </div>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="User SSO Lifetime (seconds)"
+                  placeholder="Leave empty for default"
+                  [ngModel]="getCurrentValue('userSsoLifetime') ?? ''"
+                  (ngModelChange)="updateFormField('userSsoLifetime', $event ? +$event : undefined)"
+                ></ui-input>
+                @if (getCurrentValue('userSsoLifetime')) {
+                  <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('userSsoLifetime')) }}</p>
+                }
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="UI Flow Settings">
+            <p class="text-sm text-gray-500 mb-4">
+              Configure the authentication UI flow for this client.
+            </p>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Authentication Flow</label>
+              <select
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                [ngModel]="getCurrentValue('useJourneyFlow') === null || getCurrentValue('useJourneyFlow') === undefined ? 'inherit' : getCurrentValue('useJourneyFlow') ? 'journey' : 'standalone'"
+                (ngModelChange)="onUseJourneyFlowChange($event)"
+              >
+                <option value="inherit">Inherit from tenant</option>
+                <option value="journey">Journey flow</option>
+                <option value="standalone">Standalone pages</option>
+              </select>
+              <p class="mt-2 text-sm text-amber-600">
+                Note: If the tenant has disabled journey flow, this setting cannot enable it.
+                Client can only opt-out of journey flow when tenant allows it.
+              </p>
+            </div>
+          </ui-card>
+
+          <ui-card title="Device Flow Settings">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <ui-input
+                label="User Code Type"
+                placeholder="e.g., Numeric"
+                [ngModel]="getCurrentValue('userCodeType') || ''"
+                (ngModelChange)="updateFormField('userCodeType', $event)"
+              ></ui-input>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="Device Code Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('deviceCodeLifetime') || 300"
+                  (ngModelChange)="updateFormField('deviceCodeLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('deviceCodeLifetime')) }}</p>
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="PAR Settings (Pushed Authorization Requests)">
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requirePushedAuthorization"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('requirePushedAuthorization')"
+                  (change)="updateFormField('requirePushedAuthorization', $any($event.target).checked)"
+                />
+                <label for="requirePushedAuthorization" class="ml-2 block text-sm text-gray-900">
+                  Require Pushed Authorization Requests (PAR)
+                </label>
+              </div>
+
+              <div class="max-w-xs">
+                <ui-input
+                  type="number"
+                  label="PAR Lifetime (seconds)"
+                  [ngModel]="getCurrentValue('pushedAuthorizationLifetime') || 60"
+                  (ngModelChange)="updateFormField('pushedAuthorizationLifetime', +$event)"
+                ></ui-input>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('pushedAuthorizationLifetime')) }}</p>
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="Additional Security Settings">
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requireRequestObject"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('requireRequestObject')"
+                  (change)="updateFormField('requireRequestObject', $any($event.target).checked)"
+                />
+                <label for="requireRequestObject" class="ml-2 block text-sm text-gray-900">
+                  Require Request Object (JAR)
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requireDPoP"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('requireDPoP')"
+                  (change)="updateFormField('requireDPoP', $any($event.target).checked)"
+                />
+                <label for="requireDPoP" class="ml-2 block text-sm text-gray-900">
+                  Require DPoP (Demonstrating Proof of Possession)
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="includeJwtId"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('includeJwtId')"
+                  (change)="updateFormField('includeJwtId', $any($event.target).checked)"
+                />
+                <label for="includeJwtId" class="ml-2 block text-sm text-gray-900">
+                  Include JWT ID (jti) claim
+                </label>
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="Consent">
+            <p class="text-sm text-gray-500 mb-4">
+              Controls whether end-users see the OAuth consent screen on first authorization.
+            </p>
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="requireConsent"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('requireConsent')"
+                  (change)="updateFormField('requireConsent', $any($event.target).checked)"
+                />
+                <label for="requireConsent" class="ml-2 block text-sm text-gray-900">
+                  Require user consent
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="allowRememberConsent"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('allowRememberConsent')"
+                  (change)="updateFormField('allowRememberConsent', $any($event.target).checked)"
+                />
+                <label for="allowRememberConsent" class="ml-2 block text-sm text-gray-900">
+                  Allow "remember my consent" checkbox
+                </label>
+              </div>
+
+              <div>
+                <ui-input
+                  type="number"
+                  label="Consent Lifetime (seconds)"
+                  placeholder="Leave empty for indefinite"
+                  [ngModel]="getCurrentValue('consentLifetime') ?? ''"
+                  (ngModelChange)="updateFormField('consentLifetime', $event ? +$event : undefined)"
+                ></ui-input>
+                @if (getCurrentValue('consentLifetime')) {
+                  <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('consentLifetime')) }}</p>
+                }
+              </div>
+            </div>
+          </ui-card>
+
+          <ui-card title="CIBA (Client-Initiated Backchannel Authentication)">
+            <p class="text-sm text-gray-500 mb-4">
+              Enables out-of-band authentication where the client requests user
+              auth via a separate channel. Required for poll / ping / push grants.
+            </p>
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="cibaEnabled"
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  [checked]="getCurrentValue('cibaEnabled')"
+                  (change)="updateFormField('cibaEnabled', $any($event.target).checked)"
+                />
+                <label for="cibaEnabled" class="ml-2 block text-sm text-gray-900">
+                  Enable CIBA for this client
+                </label>
+              </div>
+
+              @if (getCurrentValue('cibaEnabled')) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Token Delivery Mode</label>
+                  <select
+                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    [ngModel]="getCurrentValue('cibaTokenDeliveryMode') || 'poll'"
+                    (ngModelChange)="updateFormField('cibaTokenDeliveryMode', $event)"
+                  >
+                    <option value="poll">Poll — client polls token endpoint</option>
+                    <option value="ping">Ping — server notifies client, client polls</option>
+                    <option value="push">Push — server pushes token to client</option>
+                  </select>
+                </div>
+
+                <ui-input
+                  label="Client Notification Endpoint"
+                  placeholder="https://client.example.com/ciba-notify (required for ping / push)"
+                  [ngModel]="getCurrentValue('cibaClientNotificationEndpoint') || ''"
+                  (ngModelChange)="updateFormField('cibaClientNotificationEndpoint', $event || undefined)"
+                ></ui-input>
+
+                <div>
+                  <ui-input
+                    type="number"
+                    label="CIBA Request Lifetime (seconds)"
+                    [ngModel]="getCurrentValue('cibaRequestLifetime') || 120"
+                    (ngModelChange)="updateFormField('cibaRequestLifetime', +$event)"
+                  ></ui-input>
+                  <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('cibaRequestLifetime')) }}</p>
+                </div>
+
+                <div>
+                  <ui-input
+                    type="number"
+                    label="CIBA Polling Interval (seconds)"
+                    [ngModel]="getCurrentValue('cibaPollingInterval') || 5"
+                    (ngModelChange)="updateFormField('cibaPollingInterval', +$event)"
+                  ></ui-input>
+                </div>
+
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="cibaRequireUserCode"
+                    class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    [checked]="getCurrentValue('cibaRequireUserCode')"
+                    (change)="updateFormField('cibaRequireUserCode', $any($event.target).checked)"
+                  />
+                  <label for="cibaRequireUserCode" class="ml-2 block text-sm text-gray-900">
+                    Require user code on auth requests
+                  </label>
+                </div>
+              }
+            </div>
+          </ui-card>
+        </div>
+      }
+      @if (activeTab() === 'connection' && !isNew() && client(); as c) {
+        <div class="space-y-6">
+          <ui-card title="Integration / Connection">
+            <p class="text-sm text-gray-500 mb-4">
+              Everything an integrator needs to wire this client into their app. Issuer URI is
+              resolved per-tenant — any custom domain or token-settings override on this tenant
+              is reflected below, matching what
+              <code class="font-mono">/.well-known/openid-configuration</code> serves.
+            </p>
+            <admin-client-connection-panel
+              [clientId]="c.id"
+              [platform]="platformMode()"
+            />
+          </ui-card>
+        </div>
+      }
+    </div>
+
+    <!-- Plugin detail sections (only for existing clients) -->
+    @if (!isNew() && client()) {
+      <ui-detail-section-host
+        entityType="client"
+        [entityId]="client()!.clientId"
+        [data]="{ client: client() }"
+      />
+
+      <!-- Plugin slot: after content -->
+      <ui-page-slot-host
+        pageId="client-detail"
+        slotId="after-content"
+        [data]="{ client: client() }"
+      />
+    }
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <ui-modal
+    [open]="showDeleteModal()"
+    title="Delete Client"
+    (closed)="cancelDelete()"
+  >
+    <p class="text-sm text-gray-500">
+      Are you sure you want to delete this client? This action cannot be undone.
+    </p>
+    <div modal-footer class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+      <ui-button variant="secondary" (clicked)="cancelDelete()">Cancel</ui-button>
+      <ui-button variant="danger" (clicked)="confirmDelete()">Delete</ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- New Secret Modal -->
+  <ui-modal
+    [open]="showSecretModal()"
+    title="New Client Secret"
+    (closed)="closeSecretModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-600">
+        Your new client secret has been generated. Make sure to copy it now - you won't be able to see it again.
+      </p>
+      <div class="p-3 bg-gray-100 rounded font-mono text-sm break-all select-all">
+        {{ newSecretValue() }}
+      </div>
+    </div>
+    <div modal-footer class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+      <ui-button (clicked)="copyAndCloseSecret()">
+        Copy & Close
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Delete Secret Confirmation Modal -->
+  <ui-modal
+    [open]="showDeleteSecretModal()"
+    title="Delete Secret"
+    (closed)="cancelDeleteSecret()"
+  >
+    <p class="text-sm text-gray-500">
+      Are you sure you want to delete this secret? Applications using this secret will no longer be able to authenticate.
+    </p>
+    <div modal-footer class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+      <ui-button variant="secondary" (clicked)="cancelDeleteSecret()">Cancel</ui-button>
+      <ui-button variant="danger" [loading]="deletingSecretId() !== null" (clicked)="deleteSecret()">Delete Secret</ui-button>
+    </div>
+  </ui-modal>
+}

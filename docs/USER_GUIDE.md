@@ -11,33 +11,38 @@ This guide covers the configuration and usage of the Identity Server's features 
 3. [User Journeys](#user-journeys)
 4. [Journey Step Types Reference](#journey-step-types-reference)
 5. [FIDO2/WebAuthn (Passkeys)](#fido2webauthn-passkeys)
+   - [Business Verification (KYB)](#business-verification-kyb)
 6. [Multi-Factor Authentication (MFA)](#multi-factor-authentication-mfa)
 7. [Self-Service Registration](#self-service-registration)
 8. [External Identity Providers](#external-identity-providers)
-9. [WASM Plugins](#wasm-plugins)
-10. [Client Configuration](#client-configuration)
-11. [Signing Keys](#signing-keys)
-12. [Events and Webhooks](#events-and-webhooks)
-13. [Audit Logging](#audit-logging)
-14. [Custom Styling](#custom-styling)
-15. [Platform Billing](#platform-billing)
-16. [Subscription Plans](#subscription-plans)
-17. [OIDC Extensions](#oidc-extensions)
-18. [DPoP (Demonstrating Proof of Possession)](#dpop-demonstrating-proof-of-possession)
-19. [Pushed Authorization Requests (PAR)](#pushed-authorization-requests-par)
+9. [SAML, LDAP and SCIM](#saml-ldap-and-scim)
+10. [WASM Plugins](#wasm-plugins)
+11. [Client Configuration](#client-configuration)
+12. [Signing Keys](#signing-keys)
+13. [Events and Webhooks](#events-and-webhooks)
+14. [Audit Logging](#audit-logging)
+15. [Custom Styling](#custom-styling)
+16. [OIDC Extensions](#oidc-extensions)
+17. [DPoP (Demonstrating Proof of Possession)](#dpop-demonstrating-proof-of-possession)
+18. [Pushed Authorization Requests (PAR)](#pushed-authorization-requests-par)
+19. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Multi-Tenancy
 
-The Identity Server supports multi-tenant deployments where each tenant has isolated users, clients, and configuration.
+The Identity Server supports multi-tenant deployments where each tenant has isolated users, clients, and configuration. Enable it with `AddMultiTenancy()` on the Oluso builder (`builder.Services.AddOluso(configuration).AddMultiTenancy(...)`).
 
 ### Tenant Resolution
 
-Tenants are resolved via:
-- **Subdomain**: `tenant1.auth.example.com`
-- **Path**: `auth.example.com/tenant1`
-- **Header**: `X-Tenant-Id: tenant1`
+For browser and other unauthenticated requests the tenant is resolved, in order, from:
+
+1. **Subdomain**: `tenant1.auth.example.com`, when a base domain is known. `MultiTenancyOptions.BaseDomain` defaults to the host of `Oluso:IssuerUri`. Reserved subdomains (`www`, `api`, `admin`, `auth`, `login`, `mail`, `cdn`, `docs` and others in `ReservedSubdomains`) are never treated as tenants.
+2. **Custom domain**: the request host matched against an enabled tenant's custom domain.
+3. **Header**: `X-Tenant-Id: tenant1` (`TenantHeaderName`).
+4. **Query string**: `?tenant=tenant1` (`TenantQueryParameterName`).
+
+Authenticated API requests use the `X-Tenant-Id` header when present (access is checked against the token's allowed tenants) and otherwise the token's `tenant_id` claim. When nothing resolves, `DefaultTenantId` (the platform tenant) applies.
 
 ### Tenant Settings
 
@@ -45,17 +50,20 @@ Each tenant can configure:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `UseJourneyFlow` | Use journey-based authentication vs standalone pages | `true` |
+| `UseJourneyFlow` | Use journey-based authentication vs standalone pages | `false` |
+| `JourneyFallbackToStandard` | With journeys on, use the standard pages when a sign-in names no policy and no enabled policy applies (otherwise the sign-in stops with an error) | `false` |
 | `AllowSelfRegistration` | Allow users to register themselves | `true` |
 | `RequireTermsAcceptance` | Require ToS acceptance during registration | `false` |
 | `TermsOfServiceUrl` | URL to terms of service document | - |
 | `PrivacyPolicyUrl` | URL to privacy policy document | - |
 | `RequireEmailVerification` | Require email verification before sign-in | `true` |
 | `AllowedEmailDomains` | Comma-separated list of allowed email domains | - (all allowed) |
+| `EnableLocalLogin` | Offer username/password sign-in | `true` |
+| `EnablePasskey` | Offer passkey sign-in (also skips the passkey journey steps when off) | `true` |
 
 ### Admin UI Configuration
 
-Navigate to **Settings** > **User Registration Settings** to configure tenant-level registration options.
+Navigate to **Settings** > **General**. The **Authentication Flow Settings** card holds the journey settings and the **User Registration & Authentication** card holds the registration options.
 
 ---
 
@@ -63,25 +71,25 @@ Navigate to **Settings** > **User Registration Settings** to configure tenant-le
 
 The server supports two authentication flow modes:
 
-### Journey-Based Flow (Recommended)
+### Journey-Based Flow
 
-Step-by-step authentication with full control over the user experience. Journeys are defined as policies with ordered steps.
+Step-by-step authentication with full control over the user experience. Journeys are defined as policies with ordered steps. Requires `AddUserJourneyEngine()` on the Oluso builder.
 
-**Enable**: Set `UseJourneyFlow = true` at tenant or client level.
+**Enable**: Set `UseJourneyFlow = true` on the tenant. A client can opt out with its own `UseJourneyFlow = false`.
 
 ### Standalone Pages
 
-Traditional login/registration pages. Useful for simple deployments.
+Traditional login/registration pages. This is what a newly provisioned tenant uses until journeys are switched on.
 
 **Enable**: Set `UseJourneyFlow = false` at tenant or client level.
 
 ### Priority Order
 
 Flow selection follows this priority:
-1. Request `ui_mode` parameter (`journey` or `standalone`)
-2. Client `UseJourneyFlow` setting
-3. Tenant `UseJourneyFlow` setting
-4. Default: `true` (journey flow)
+1. Tenant `UseJourneyFlow`: when `false`, the standalone pages are used and nothing below can override it.
+2. Client `UseJourneyFlow`: `false` forces the standalone pages for that client; `true` or unset (inherit) allows journeys.
+3. Request `ui_mode` parameter (`journey` or `standalone`), only within what the tenant and client allow.
+4. Otherwise: journey flow.
 
 ---
 
@@ -91,65 +99,75 @@ User Journeys are customizable authentication flows composed of steps.
 
 ### Creating a Journey
 
-1. Navigate to **Journeys** in Admin UI
-2. Click **Create New Journey**
+1. Navigate to **Experience** > **User Journeys** in the Admin UI
+2. Click **Create Journey**
 3. Configure:
    - **Name**: Display name for the journey
-   - **Type**: `SignIn`, `SignUp`, `SignInSignUp`, `PasswordReset`, `ProfileEdit`, or `Custom`
-   - **Priority**: Higher priority journeys are selected first when multiple match
+   - **Slug**: The identifier clients pass as `?policy=` (unique per tenant)
+   - **Type**: `SignIn`, `SignUp`, `SignInSignUp`, `PasswordReset`, `PasswordChange`, `ProfileEdit`, `LinkAccount`, `Consent`, data collection types (`Waitlist`, `ContactForm`, `Survey`, `Feedback`, `DataCollection`) or `Custom`
+   - **Priority**: When a sign-in names no policy, the enabled policy of the requested type with the highest priority is used
 
 ### Available Step Types
+
+Step types are identified by the snake_case names below. Steps from optional modules (passkeys, LDAP, SAML, business verification) only appear when that module is registered.
 
 #### Authentication Steps
 | Step Type | Description |
 |-----------|-------------|
-| `LocalLogin` | Username/password authentication |
-| `ExternalIdp` | OAuth/OIDC external provider |
-| `Mfa` | Multi-factor authentication |
-| `PasswordlessEmail` | Email magic link |
-| `PasswordlessSms` | SMS OTP |
-| `WebAuthn` | FIDO2/Passkey authentication |
-| `Ldap` | LDAP directory authentication |
-| `Saml` | SAML federation |
+| `local_login` | Username/password authentication (plus optional passkey) |
+| `composite_login` | Password, passkey and external providers on one screen |
+| `external_login` | OAuth/OIDC external provider |
+| `mfa` | Multi-factor authentication (TOTP, SMS, email) |
+| `passwordless_email` | Email one-time code or magic link |
+| `passwordless_sms` | SMS one-time code |
+| `webauthn` | FIDO2/passkey authentication |
+| `fido2_login` | Passkey sign-in |
+| `ldap` | LDAP / Active Directory authentication |
+| `saml` | SAML 2.0 federation |
 
 #### User Interaction Steps
 | Step Type | Description |
 |-----------|-------------|
-| `Consent` | OAuth consent screen |
-| `ClaimsCollection` | Collect additional user information |
-| `TermsAcceptance` | Terms of service acceptance |
-| `CaptchaVerification` | Bot protection |
+| `consent` | OAuth consent screen |
+| `dynamic_form` | Collect additional user information |
+| `email_verification` | Prove ownership of an email address without signing in |
+| `terms_acceptance` | Terms of service / privacy policy acceptance |
+| `captcha` | Bot protection |
 
-#### Logic Steps
+#### Flow Control Steps
 | Step Type | Description |
 |-----------|-------------|
-| `Condition` | Conditional branching |
-| `Branch` | Multi-way branching |
-| `Transform` | Claim transformation |
-| `ApiCall` | Call external API |
-| `Webhook` | Send webhook notification |
+| `condition` | Conditional branching |
+| `branch` | Multi-way branching |
+| `transform` | Derive and transform journey values |
+| `api_call` | Call external API |
+| `webhook` | Send webhook notification |
 
-#### Account Management Steps
+#### User Management Steps
 | Step Type | Description |
 |-----------|-------------|
-| `CreateUser` | Create new user account |
-| `UpdateUser` | Update user profile |
-| `LinkAccount` | Link external identity |
-| `PasswordChange` | Change password |
-| `PasswordReset` | Reset forgotten password |
+| `signup` | Self-registration: collects email/password and creates a local user |
+| `create_user` | Alias of `signup` (same settings and handler) |
+| `update_user` | Update user profile |
+| `assign_roles` | Give the journey's user roles |
+| `link_account` | Link external identity |
+| `password_change` | Change password |
+| `password_reset` | Reset forgotten password |
+| `fido2_register` | Offer to create a passkey |
+| `business_verification` | Business (KYB) verification, see [Business Verification](#business-verification-kyb) |
 
-#### Custom Steps
+#### Plugin Steps
 | Step Type | Description |
 |-----------|-------------|
-| `CustomPlugin` | Execute WASM plugin |
-| `CustomPage` | Render custom HTML page |
+| `custom_plugin` | Execute WASM or managed plugin |
+| `custom_page` | Render a host-provided Razor template |
 
 ### Step Configuration Example
 
 ```json
 {
   "id": "login-step",
-  "type": "LocalLogin",
+  "type": "local_login",
   "displayName": "Sign In",
   "configuration": {
     "allowRememberMe": true,
@@ -165,31 +183,41 @@ User Journeys are customizable authentication flows composed of steps.
 Each step can specify:
 - `onSuccess`: Step ID to jump to on success (default: next step)
 - `onFailure`: Step ID to jump to on failure (default: fail journey)
+- `branches`: Named outcomes mapped to step IDs (for example `"mfa_required": "mfa-step"`). Each step type publishes the branch names it can take; the journey builder lists them.
 - `optional`: If true, continue journey even if step fails
-- `conditions`: Conditions that must be met to execute step
+- `conditions`: Conditions that must be met to execute step (`type` is the value source, `field`, `operator`, `value`, `logicalOperator`, `negate`)
+- `layout`: Width of this step's screen (`narrow`, `medium`, `wide`, `full`), overriding the policy's layout
+
+### Localizable Text
+
+Settings marked localizable in the builder (titles, labels, button text) take either a plain string or an object of translations keyed by culture, for example `{ "en": "Continue", "fr": "Continuer" }`.
 
 ---
 
 ## Journey Step Types Reference
 
-This section provides detailed configuration options for each step type available in the Admin UI Journey Builder.
+This section provides detailed configuration options for each step type available in the Admin UI Journey Builder. The builder renders each step's settings form from the schema the step type publishes, so the field names below are the keys stored in the step's `configuration`.
 
-### LocalLogin Step
+### Local Login (`local_login`)
 
 Authenticate users with username/email and password.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `allowRememberMe` | boolean | `true` | Show "Remember me" checkbox |
-| `allowSelfRegistration` | boolean | `false` | Show link to registration page |
-| `loginHintClaim` | string | - | Claim to use as login hint (pre-fill username) |
+| `allowSelfRegistration` | boolean | `false` | Show link to self-registration |
+| `allowForgotPassword` | boolean | `true` | Show "Forgot password?" link |
+| `showPasskey` | boolean | `true` | Show passkey/WebAuthn sign-in option |
+| `passkeyUsernameless` | boolean | `true` | Allow passkey sign-in without entering an email first |
+| `loginHintClaim` | string | - | Claim to pre-fill the username from when present in journey state |
+| `reauthenticateAfter` | number | `0` | When the policy runs for someone already signed in, their session counts as this sign-in only if it signed in within this many seconds. Otherwise they sign in again, pre-filled, and only as that same account. `0` accepts any live session. Composite Login takes the same setting. |
 
-**Admin UI Location**: Select "Local Login" from step types dropdown.
+Branches: `auth_local` (password), `auth_passkey` (passkey).
 
 **Example**:
 ```json
 {
-  "type": "LocalLogin",
+  "type": "local_login",
   "configuration": {
     "allowRememberMe": true,
     "allowSelfRegistration": true,
@@ -200,30 +228,53 @@ Authenticate users with username/email and password.
 
 ---
 
-### ExternalIdp Step
+### Composite Login (`composite_login`)
+
+One screen with password, passkey and external provider sign-in.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `showLocalLogin` | boolean | `true` | Display username/password form |
+| `showExternalLogin` | boolean | `true` | Display external provider buttons |
+| `showPasskey` | boolean | `true` | Display passkey sign-in option |
+| `passkeyUsernameless` | boolean | `true` | Allow passkey sign-in without entering an email first |
+| `allowRememberMe` | boolean | `true` | Show "Remember me" checkbox |
+| `allowRegistration` | boolean | `false` | Show link to registration |
+| `allowForgotPassword` | boolean | `true` | Show "Forgot password?" link |
+| `forgotPasswordUrl` / `registrationUrl` | string | - | Override URLs for those links |
+| `autoProvision` | boolean | `true` | Create the user on first external sign-in |
+| `externalProviders` | string[] | - | Allowed provider schemes (empty allows all) |
+| `primaryAction` | string | `"local"` | Which action to emphasise: `local`, `external`, `passkey` |
+| `loginLayout` | string | `"standard"` | Order of the methods: `standard`, `social-first`, `passkey-first`, `email-expandable` |
+| `reauthenticateAfter` | number | `0` | As for Local Login |
+
+Branches: `auth_local`, `auth_passkey`, `auth_external`, `mfa_required`.
+
+---
+
+### External Login (`external_login`)
 
 Authenticate via external identity providers (Google, Microsoft, etc.).
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `providers` | string[] | - | Allowed identity provider schemes |
+| `providers` | string[] | - | Allowed identity provider schemes (empty allows all) |
 | `autoProvision` | boolean | `true` | Auto-create user on first login |
-| `autoRedirect` | boolean | `false` | Auto-redirect if only one provider |
-| `claimMappings` | object | - | Map external claims to internal claims |
+| `autoRedirect` | boolean | `false` | Auto-redirect when only one provider matches |
+| `proxyMode` | boolean | `false` | Pass external claims through without creating a local user (federation broker) |
+| `claimMappings` | object | - | Provider claims to carry into the journey: external claim type to claim name. The account's own identity claims (`sub`, `email`, `name`) aren't replaced. |
 
-**Admin UI Location**: Select "External IdP" from step types dropdown.
+Branches: `auth_external`, `auth_proxy`.
 
 **Example**:
 ```json
 {
-  "type": "ExternalIdp",
+  "type": "external_login",
   "configuration": {
     "providers": ["Google", "Microsoft"],
     "autoProvision": true,
     "autoRedirect": false,
     "claimMappings": {
-      "email": "email",
-      "name": "name",
       "picture": "profile_picture"
     }
   }
@@ -232,27 +283,28 @@ Authenticate via external identity providers (Google, Microsoft, etc.).
 
 ---
 
-### Mfa Step
+### MFA (`mfa`)
 
-Require multi-factor authentication (TOTP, SMS, Email, WebAuthn).
+Require an additional verification factor.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `required` | boolean | `false` | Always require MFA (vs. only if enrolled) |
-| `methods` | string[] | `["totp", "phone", "email"]` | Allowed MFA methods |
-| `allowSetup` | boolean | `true` | Allow users to set up MFA during flow |
-| `rememberDevice` | boolean | `true` | Remember trusted devices |
-| `rememberDeviceDays` | number | `30` | Days to remember device |
+| `required` | boolean | `false` | Always require MFA. When false, MFA is only required for users who already have it enabled. |
+| `methods` | string[] | `["totp", "email"]` | Allowed methods: `totp`, `sms` (`phone` is accepted as an alias), `email` |
+| `allowSetup` | boolean | `true` | Let users set up MFA during the flow when they don't have it yet |
+| `rememberDevice` | boolean | `true` | Skip MFA on trusted devices |
+| `rememberDeviceDays` | number | `30` | Days to remember a trusted device |
+| `reuseSessionMfaSeconds` | number | `0` | When the policy runs for a signed-in user, accept MFA that session completed within this many seconds. `0` always asks again. |
 
-**Admin UI Location**: Select "MFA" from step types dropdown.
+Branches: `mfa_verified`, `mfa_recovery_used`, `mfa_not_required`, `mfa_setup_complete`, `mfa_trusted_device`, `mfa_session`.
 
 **Example**:
 ```json
 {
-  "type": "Mfa",
+  "type": "mfa",
   "configuration": {
     "required": true,
-    "methods": ["totp", "webauthn"],
+    "methods": ["totp", "email"],
     "rememberDevice": true,
     "rememberDeviceDays": 14
   }
@@ -261,7 +313,42 @@ Require multi-factor authentication (TOTP, SMS, Email, WebAuthn).
 
 ---
 
-### Consent Step
+### Passwordless Email (`passwordless_email`)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `mode` | string | `"otp"` | `otp` (one-time code) or `magic-link` |
+| `codeLength` | number | `6` | Digits in the code |
+| `expirationMinutes` | number | `15` | Minutes before the code or link expires |
+| `allowSignUp` | boolean | `false` | Allow new users to register when no account exists for the email |
+| `autoProvision` | boolean | `false` | With sign-up allowed, create the account inline (username = email, no password) |
+| `maxAttempts` | number | `3` | Invalid-code attempts before the journey fails (`0` = unlimited) |
+| `emailSubject` | string | - | Overrides the rendered template subject |
+| `emailTemplate` | string | - | Platform email template name to use instead of the default for the mode |
+
+### Passwordless SMS (`passwordless_sms`)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `codeLength` | number | `6` | Digits in the code |
+| `expirationMinutes` | number | `10` | Minutes before the code expires |
+| `allowSignUp` | boolean | `false` | Allow new users to register when no account exists for the number |
+| `maxAttempts` | number | `3` | Invalid-code attempts before the journey fails (`0` = unlimited) |
+| `messageTemplate` | string | - | Custom SMS text; supports `{code}` and `{expirationMinutes}` |
+| `toLinkRecipient` | boolean | `false` | Verify the phone a journey link was sent to, without signing anyone in |
+
+### Email Verification (`email_verification`)
+
+Proves ownership of an email address without authenticating, and writes `email` and `email_verified=true` into journey state. Takes `mode`, `codeLength`, `expirationMinutes`, `maxAttempts`, `emailSubject` and `emailTemplate` as for Passwordless Email, plus:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `completeSignUp` | boolean | `true` | After sign-up, verifying the new account's own address marks it verified and signs the user in |
+| `toLinkRecipient` | boolean | `false` | Verify the address a journey link was sent to; runs not opened from such a link skip the step |
+
+---
+
+### Consent (`consent`)
 
 Show OAuth consent screen for scope approval.
 
@@ -272,12 +359,12 @@ Show OAuth consent screen for scope approval.
 | `showResourceScopes` | boolean | `true` | Show API resource scopes |
 | `showIdentityScopes` | boolean | `true` | Show identity scopes |
 
-**Admin UI Location**: Select "Consent" from step types dropdown.
+Branches: `consent_granted`, `consent_not_required`, `consent_already_granted`.
 
 **Example**:
 ```json
 {
-  "type": "Consent",
+  "type": "consent",
   "configuration": {
     "allowRemember": true,
     "rememberDays": 90,
@@ -289,22 +376,20 @@ Show OAuth consent screen for scope approval.
 
 ---
 
-### ClaimsCollection Step
+### Dynamic Form (`dynamic_form`)
 
-Collect custom user information with configurable form fields.
+Collect custom user information with configurable form fields, optionally saving values to the user's profile.
 
 #### Basic Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `title` | string | - | Form title displayed to user |
-| `description` | string | - | Form description/instructions |
-| `submitButtonText` | string | `"Continue"` | Submit button label |
-| `cancelButtonText` | string | - | Cancel button label |
+| `title` | string | - | Form title displayed to user (localizable) |
+| `description` | string | - | Form description/instructions (localizable) |
+| `submitButtonText` | string | `"Continue"` | Submit button label (localizable) |
+| `cancelButtonText` | string | - | Cancel button label (localizable) |
 | `allowCancel` | boolean | `false` | Show cancel button |
-| `viewName` | string | `"Journey/_ClaimsCollection"` | Custom view name |
-| `localizedTitles` | object | - | Title translations by culture code |
-| `localizedDescriptions` | object | - | Description translations by culture code |
+| `viewName` | string | `"Journey/_DynamicForm"` | Custom view name |
 
 #### Field Configuration
 
@@ -313,7 +398,7 @@ Each field in the `fields` array supports:
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `name` | string | **required** | Field name (form input name) |
-| `type` | string | **required** | `text`, `email`, `password`, `number`, `date`, `tel`, `url`, `textarea`, `select`, `radio`, `checkbox` |
+| `type` | string | **required** | `text`, `email`, `password`, `number`, `date`, `tel`, `url`, `textarea`, `select`, `radio`, `checkbox`, `file` |
 | `label` | string | - | Field label displayed to user |
 | `placeholder` | string | - | Input placeholder text |
 | `description` | string | - | Help text below field |
@@ -327,10 +412,32 @@ Each field in the `fields` array supports:
 | `min` | string | - | Minimum value (for number/date) |
 | `max` | string | - | Maximum value (for number/date) |
 | `rows` | number | `3` | Rows for textarea |
+| `phoneFormat` | string | `"international"` | Phone fields: `international` (country picker, stored as E.164) or `local` |
+| `phoneDefaultCountry` | string | - | Phone fields: ISO 3166-1 alpha-2 country preselected (defaults to the journey culture's region) |
 | `readOnly` | boolean | `false` | Field is read-only |
 | `hidden` | boolean | `false` | Field is hidden |
 | `group` | string | - | Group name for fieldset grouping |
+| `persistToUser` | boolean | `false` | Save the value to the user's profile |
+| `userPropertyName` | string | - | User property to save to (e.g. `firstName`, `lastName`, `phoneNumber`, `picture`, or a custom property key) |
 | `options` | array | - | Options for select/radio fields |
+| `localizedLabels` / `localizedPlaceholders` / `localizedDescriptions` | object | - | Translations by culture |
+| `fileTypes` | array | `["pdf","jpeg","png"]` | File fields: kinds accepted (`pdf`, `jpeg`, `png`, `gif`, `webp`, `heic`) |
+| `maxFileSizeMb` | number | `10` | File fields: largest file, in MB |
+| `maxFiles` | number | `1` | File fields: most files |
+| `capture` | boolean | `false` | File fields: also offer "Take a photo" (opens the phone's rear camera) |
+
+**File fields.** The form posts as `multipart/form-data`. Each file is checked by its
+content (magic bytes), never by the name or type the browser sends, and its name must end
+in an extension matching that content, so `invoice.pdf` that is really an image is refused.
+SVG, HTML and other active formats are never accepted. Accepted files are stored through the
+attachment service under the organisation's storage path (local disk or blob storage),
+recorded as attachments of the journey (`journey_upload`), and the field's value is the
+comma-separated attachment ids. There is no public URL: the uploader (once the journey has
+signed them up or in) and administrators with `submissions.read` open them through
+`GET /api/workspace/file-attachments/{id}`. Files posted before the account exists are
+reassigned to the user when the journey signs them up or in. Request size: Kestrel's
+default 30 MB request limit applies to the whole form; keep `maxFileSizeMb × maxFiles`
+under it or raise `Kestrel:Limits:MaxRequestBodySize` on the host.
 
 #### Select/Radio Options
 
@@ -352,12 +459,12 @@ Use `showWhen` to conditionally show fields:
 | `operator` | string | `"equals"` | `equals`, `notEquals`, `contains`, `notEmpty`, `empty` |
 | `value` | string | - | Value to compare |
 
-**Admin UI Location**: Select "Claims Collection" from step types dropdown. The Admin UI provides a visual field builder.
+**Admin UI Location**: Select "Dynamic Form" in the journey builder. The builder provides a visual field editor.
 
 **Example**:
 ```json
 {
-  "type": "ClaimsCollection",
+  "type": "dynamic_form",
   "configuration": {
     "title": "Additional Information",
     "description": "Please provide the following details",
@@ -371,7 +478,7 @@ Use `showWhen` to conditionally show fields:
         "options": [
           { "value": "engineering", "label": "Engineering" },
           { "value": "sales", "label": "Sales" },
-          { "value": "hr", "label": "Human Resources" }
+          { "value": "support", "label": "Customer Support" }
         ]
       },
       {
@@ -388,8 +495,8 @@ Use `showWhen` to conditionally show fields:
         "name": "phone",
         "type": "tel",
         "label": "Phone Number",
-        "pattern": "^\\+?[0-9]{10,14}$",
-        "patternError": "Please enter a valid phone number"
+        "persistToUser": true,
+        "userPropertyName": "phoneNumber"
       }
     ]
   }
@@ -398,7 +505,7 @@ Use `showWhen` to conditionally show fields:
 
 ---
 
-### CaptchaVerification Step
+### CAPTCHA (`captcha`)
 
 Verify user is human via CAPTCHA. Supports reCAPTCHA, hCaptcha, and Cloudflare Turnstile.
 
@@ -408,16 +515,15 @@ Verify user is human via CAPTCHA. Supports reCAPTCHA, hCaptcha, and Cloudflare T
 | `siteKey` | string | **required** | CAPTCHA site key from provider |
 | `secretKey` | string | **required** | CAPTCHA secret key from provider |
 | `scoreThreshold` | number | `0.5` | Minimum score for reCAPTCHA v3 (0.0-1.0) |
+| `action` | string | `"submit"` | Action label sent with the challenge (reCAPTCHA v3) |
 | `theme` | string | `"light"` | `light` or `dark` |
 | `size` | string | `"normal"` | `normal`, `compact`, or `invisible` |
-| `language` | string | - | Language code (e.g., `en`, `es`, `fr`) |
-
-**Admin UI Location**: Select "CAPTCHA" from step types dropdown.
+| `language` | string | `"en"` | Widget language (e.g., `en`, `es`, `fr`) |
 
 **Example**:
 ```json
 {
-  "type": "CaptchaVerification",
+  "type": "captcha",
   "configuration": {
     "provider": "recaptcha",
     "siteKey": "6LcX...",
@@ -430,9 +536,9 @@ Verify user is human via CAPTCHA. Supports reCAPTCHA, hCaptcha, and Cloudflare T
 
 ---
 
-### ApiCall Step
+### API Call (`api_call`)
 
-Call external APIs for validation, enrichment, or integration. The Admin UI provides a comprehensive editor with collapsible sections.
+Call external APIs for validation, enrichment, or integration. The builder groups the settings into collapsible sections.
 
 #### Basic Settings
 
@@ -454,19 +560,26 @@ Call external APIs for validation, enrichment, or integration. The Admin UI prov
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `authentication.type` | string | `none`, `bearer`, `basic`, `apikey` |
+| `authentication.type` | string | `none`, `bearer`, `basic`, `apikey`, `client_credentials` |
 | `authentication.token` | string | Bearer token (supports `{claim:access_token}`) |
 | `authentication.username` | string | Basic auth username |
 | `authentication.password` | string | Basic auth password |
 | `authentication.apiKey` | string | API key value |
 | `authentication.headerName` | string | Header name for API key (default: `X-API-Key`) |
+| `authentication.tokenEndpoint` | string | OAuth 2.0 token endpoint (client_credentials) |
+| `authentication.clientId` / `clientSecret` | string | OAuth 2.0 client credentials |
+| `authentication.scope` | string | Space-separated scopes (optional) |
+| `authentication.resource` | string | Resource indicator(s) (RFC 8707) the token is for |
+| `authentication.audience` | string | `audience` parameter, for providers that read it instead of `resource` |
+
+Client-credentials tokens are cached and refreshed shortly before they expire.
 
 #### Retry & Error Handling
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `retryCount` | number | `0` | Number of retry attempts |
-| `retryDelay` | number | `1000` | Delay between retries (ms) |
+| `retryDelayMs` | number | `1000` | Delay between retries (ms) |
 | `failOnError` | boolean | `true` | Fail journey on API error |
 | `continueOnStatus` | number[] | - | HTTP status codes to continue on (e.g., `[404, 409]`) |
 
@@ -488,17 +601,19 @@ Map claims/state/input to request body fields with transforms:
 | `inputMapping[field].value` | string | Constant value (when source=constant) |
 | `inputMapping[field].transform` | string | `uppercase`, `lowercase`, `trim`, `base64encode`, `base64decode`, `urlencode`, `urldecode` |
 | `inputMapping[field].defaultValue` | string | Default if source empty |
+| `inputMapping[field].required` | boolean | Include even if empty |
 
-#### Output Mapping
+#### Response Handling
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `outputMapping` | object | Map JSON paths to claim types (e.g., `{"user.id": "external_id"}`) |
+| `outputMappingAdvanced` | object | Per-claim `path`, `transform`, `defaultValue`, `required` |
 | `includeResponseMeta` | boolean | Add `_api_status` and `_api_success` claims |
 
 #### Response Validation
 
-Array of validation rules:
+Array of validation rules (`responseValidation`):
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -511,7 +626,7 @@ Array of validation rules:
 
 #### Branch on Response
 
-Array of branching rules:
+Array of branching rules (`branchOnResponse`):
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -521,12 +636,10 @@ Array of branching rules:
 | `value` | string | Value to compare |
 | `branchTo` | string | Step ID to branch to |
 
-**Admin UI Location**: Select "API Call" from step types dropdown. The specialized editor provides sections for Basic Settings, Headers, Authentication, Retry & Error Handling, Request Body, and Output Mapping.
-
 **Example**:
 ```json
 {
-  "type": "ApiCall",
+  "type": "api_call",
   "configuration": {
     "url": "https://api.example.com/users/{claim:sub}/profile",
     "method": "POST",
@@ -540,7 +653,7 @@ Array of branching rules:
       "token": "{claim:access_token}"
     },
     "retryCount": 2,
-    "retryDelay": 1000,
+    "retryDelayMs": 1000,
     "failOnError": false,
     "continueOnStatus": [404],
     "bodyTemplate": "{ \"email\": \"{claim:email}\", \"action\": \"login\" }",
@@ -569,243 +682,303 @@ Array of branching rules:
 
 ---
 
-### Condition Step
+### Webhook (`webhook`)
 
-Evaluate conditions and branch flow based on claims, context, or previous step results.
-
-#### Conditions Array
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `source` | string | `claim`, `context`, `previous_step` |
-| `key` | string | Key/claim name to check |
-| `operator` | string | `equals`, `notEquals`, `contains`, `exists`, `notExists`, `greaterThan`, `lessThan`, `regex` |
-| `value` | string | Value to compare |
-| `negate` | boolean | Negate the result |
-
-#### Flow Control
+POST a payload to an external service during the journey.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `combineWith` | string | `"and"` | `and` or `or` |
-| `onTrue` | string | - | Step ID when conditions are true |
-| `onFalse` | string | - | Step ID when conditions are false |
-
-**Admin UI Location**: Select "Condition" from step types dropdown.
+| `url` | string | **required** | Endpoint URL (supports `{claim:name}` / `{state:key}`) |
+| `timeout` | number | `30` | Request timeout in seconds |
+| `waitForResponse` | boolean | `false` | Block the journey until the webhook returns (false = fire-and-forget) |
+| `failOnError` | boolean | `false` | Fail the journey on a non-2xx response (only with `waitForResponse`) |
+| `headers` | object | - | Custom HTTP headers |
+| `payload` | object | - | JSON payload template; text values may use placeholders such as `{claim:email}`. Empty sends the default payload with user and journey context. |
+| `responseMapping` | object | - | Map response JSON paths to claim types (only with `waitForResponse`) |
+| `includeUserData` | boolean | `true` | Include user data in the default payload |
+| `includeJourneyData` | boolean | `false` | Include journey values in the default payload |
+| `journeyDataKeys` | string[] | - | Journey values to include; empty sends the standard identity claims (`Oluso:UserJourneys:DefaultOutputClaims`) |
+| `signPayload` | boolean | `false` | Sign the body with HMAC-SHA256 and add an `X-Oluso-Signature` header |
+| `secretKey` | string | - | HMAC secret (used with `signPayload`) |
 
 **Example**:
 ```json
 {
-  "type": "Condition",
+  "id": "notify-signup",
+  "type": "webhook",
+  "displayName": "Notify onboarding service",
   "configuration": {
-    "conditions": [
-      {
-        "source": "claim",
-        "key": "email_verified",
-        "operator": "equals",
-        "value": "true"
-      },
-      {
-        "source": "claim",
-        "key": "role",
-        "operator": "contains",
-        "value": "admin"
-      }
-    ],
-    "combineWith": "and",
-    "onTrue": "admin-dashboard",
-    "onFalse": "verify-email"
+    "url": "https://onboarding.example.com/api/new-user",
+    "headers": { "X-Source": "identity-server" },
+    "payload": {
+      "email": "{claim:email}",
+      "name": "{claim:name}"
+    },
+    "timeout": 10,
+    "waitForResponse": false,
+    "signPayload": true,
+    "secretKey": "your-shared-secret"
   }
 }
 ```
 
 ---
 
-### Transform Step
+### Condition (`condition`)
 
-Transform or map claims between formats.
+Evaluate conditions and continue to a different step depending on the result.
+
+#### Conditions Array
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `type` | string | Where the value is read from: `data`, `claim`, `context`, `user`, `input`, `config`, `path`, `previous_step` |
+| `field` | string | Key/claim name to check |
+| `operator` | string | `equals`, `notEquals`, `gt`, `gte`, `lt`, `lte`, `greaterThan`, `lessThan`, `contains`, `notContains`, `startsWith`, `endsWith`, `matches`, `regex`, `exists`, `notExists`, `empty`, `notEmpty`, `in`, `notIn`, `true`, `false` |
+| `value` | string | Value to compare |
+| `logicalOperator` | string | How the next condition joins this one: `and` (default) or `or` |
+| `negate` | boolean | Negate the result |
+
+Conditions are evaluated left to right.
+
+#### Flow Control
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `onTrue` | string | Step ID when conditions are true (blank = the next step) |
+| `onFalse` | string | Step ID when conditions are false (blank = skip to the next step) |
+
+**Example**:
+```json
+{
+  "type": "condition",
+  "configuration": {
+    "conditions": [
+      {
+        "type": "claim",
+        "field": "email_verified",
+        "operator": "equals",
+        "value": "true"
+      },
+      {
+        "type": "claim",
+        "field": "role",
+        "operator": "contains",
+        "value": "admin"
+      }
+    ],
+    "onTrue": "admin-consent",
+    "onFalse": "verify-email"
+  }
+}
+```
+
+### Branch (`branch`)
+
+Multi-way branching. Each entry in `branches` has `targetStepId`, optional `name`, `description`, `priority`, `logicOperator` (`and`/`or`) and `conditions` (`source`, `field`, `operator`, `value`, `values`, `negate`). `evaluationMode` is `first-match` (default) or `highest-priority`; `defaultBranch` is the step used when nothing matches.
+
+---
+
+### Transform (`transform`)
+
+Derive journey values. Each entry in `mappings` reads a source, applies a transform and writes the target.
 
 #### Mappings Array
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `source` | string | **required** | Source claim type |
-| `target` | string | **required** | Target claim type |
-| `transform` | string | `"copy"` | `copy`, `uppercase`, `lowercase`, `hash`, `split`, `join`, `regex`, `template` |
-| `transformArg` | string | - | Argument for transform (regex pattern, delimiter, template) |
+| `source` | string | - | Key to read (the text itself for `literal`) |
+| `sourceType` | string | `"journeyData"` | `journeyData`, `claim`, `context`, `user`, `input`, `literal` |
+| `target` | string | **required** | Journey key to write |
+| `transform` | string | `"copy"` | See below |
+| `transformConfig` | object | - | The transform's options |
+| `defaultValue` | string | - | Used when no value is produced |
+| `required` | boolean | `false` | Fail the journey when no value is produced |
 
-#### Options
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `removeSourceClaims` | boolean | `false` | Remove source claims after mapping |
-
-**Admin UI Location**: Select "Transform Claims" from step types dropdown.
+Transforms and their `transformConfig` options: `copy`, `lowercase`, `uppercase`, `trim`, `split` (`delimiter`, `index`), `join` (`separator`), `replace` (`find`, `replaceWith`), `regex_replace` (`pattern`, `replaceWith`), `regex_match` (`pattern`), `substring` (`start`, `length`), `prefix` (`value`), `suffix` (`value`), `template` (`template`, with placeholders such as `{data:given_name}`), `map` (`pairs`, one `from=to` per line, and `otherwise`), `hash` (`algorithm`: `sha256`, `sha384`, `sha512`), `base64encode`, `base64decode`, `urlencode`, `urldecode`.
 
 **Example**:
 ```json
 {
-  "type": "Transform",
+  "type": "transform",
   "configuration": {
     "mappings": [
       {
         "source": "given_name",
+        "sourceType": "claim",
         "target": "first_name",
         "transform": "copy"
       },
       {
         "source": "email",
         "target": "email_domain",
-        "transform": "regex",
-        "transformArg": "@(.+)$"
+        "transform": "regex_match",
+        "transformConfig": { "pattern": "@(.+)$" }
       },
       {
-        "source": "name",
         "target": "display_name",
         "transform": "template",
-        "transformArg": "User: {value}"
+        "transformConfig": { "template": "User: {data:name}" }
       }
-    ],
-    "removeSourceClaims": false
+    ]
   }
 }
 ```
 
 ---
 
-### CreateUser Step
+### Sign Up / Create User (`signup`, `create_user`)
 
-Create a new user account in the system.
+Self-registration: collects email and password and creates a local user. `create_user` is an alias with the same settings.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `emailClaim` | string | `"email"` | Claim containing email |
-| `usernameClaim` | string | - | Claim containing username (defaults to email) |
-| `passwordClaim` | string | `"password"` | Claim containing password |
-| `requireEmailVerification` | boolean | `true` | Require email verification |
+| `allowSelfRegistration` | boolean | `true` | When false, the step skips (or takes `registration_disabled`) |
+| `requireEmailVerification` | boolean | `true` | Require the user to verify their email before continuing |
+| `verificationStepId` | string | - | Step to go to after the user is created to verify the email (a `passwordless_email` step in OTP mode) |
+| `requirePassword` | boolean | `true` | Collect a password (false for passwordless or external-only) |
+| `requireTermsAcceptance` | boolean | `false` | Require terms acceptance before account creation |
+| `termsUrl` / `privacyUrl` | string | - | Links shown alongside the form |
+| `allowedEmailDomains` | string[] | - | Restrict sign-up to these email domains |
+| `emailClaim` | string | `"email"` | Claim/input carrying the email |
+| `usernameMode` | string | `"email"` | `email` uses the email as username; `ask` adds a username field |
+| `usernameClaim` | string | - | Claim carrying the username from an earlier step |
+| `passwordClaim` | string | `"password"` | Claim/input carrying the password |
 | `defaultRoles` | string[] | - | Roles to assign to new user |
-| `claimMappings` | object | - | Map collected claims to user properties |
+| `claimMappings` | object | - | Map collected claims onto user properties |
 
-**Admin UI Location**: Select "Create User" from step types dropdown.
+Branches (`signup`): `login` ("Already have an account"), `registration_disabled`.
 
 **Example**:
 ```json
 {
-  "type": "CreateUser",
+  "type": "signup",
   "configuration": {
-    "emailClaim": "email",
-    "passwordClaim": "new_password",
     "requireEmailVerification": true,
-    "defaultRoles": ["user", "beta-tester"],
+    "verificationStepId": "verify-email",
+    "defaultRoles": ["user"],
     "claimMappings": {
       "given_name": "FirstName",
-      "family_name": "LastName",
-      "phone_number": "PhoneNumber"
+      "family_name": "LastName"
     }
   }
 }
 ```
 
+### Assign Roles (`assign_roles`)
+
+Gives the journey's user the roles in `roles` (role IDs). Place it after the step that creates or signs in the account.
+
+### Update User (`update_user`)
+
+Profile form bound to user properties: `title`, `description`, `submitButtonText`, `fields` or the shorthand `editableFields`, `requireCurrentPassword` (default `false`) and `requireEmailVerification` (default `true`: a changed email is applied only once a code sent to the new address is entered).
+
+### Link Account (`link_account`)
+
+`allowedProviders` (empty allows all configured), `allowUnlink` (default `true`), `requireConfirmation` (default `true`).
+
+### Password Change (`password_change`)
+
+`requireCurrentPassword` (default `true`), `minPasswordLength` (`8`), `requireUppercase`, `requireLowercase`, `requireDigit` (all `true`), `requireSpecialChar` (`false`).
+
 ---
 
-### TermsAcceptance Step
+### Terms Acceptance (`terms_acceptance`)
 
 Require user to accept terms of service and/or privacy policy.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `termsUrl` | string | **required** | URL to terms of service |
-| `privacyUrl` | string | - | URL to privacy policy |
-| `requireCheckbox` | boolean | `true` | Require checkbox acceptance |
-| `version` | string | - | Terms version for tracking acceptance |
-
-**Admin UI Location**: Select "Terms Acceptance" from step types dropdown.
+| `termsTitle` / `privacyTitle` | string | `"Terms of Service"` / `"Privacy Policy"` | Section headings |
+| `termsUrl` / `privacyUrl` | string | - | Links used when no inline content is given |
+| `termsContent` / `privacyContent` | string | - | Inline HTML/Markdown; overrides the URL |
+| `showTermsInline` / `showPrivacyInline` | boolean | `false` | Render inline instead of linking out |
+| `termsVersion` / `privacyVersion` | string | `"1.0"` | Version recorded with the acceptance |
+| `requireBoth` | boolean | `true` | Require both (false = either is enough) |
+| `requireCheckbox` | boolean | `true` | Render an explicit acceptance checkbox |
+| `canDecline` | boolean | `false` | Show a "Decline" button that ends the journey |
+| `acceptButtonText` / `declineButtonText` | string | `"I Accept"` / `"Decline"` | Button labels |
+| `version` | string | - | Legacy combined version; prefer the separate versions |
 
 **Example**:
 ```json
 {
-  "type": "TermsAcceptance",
+  "type": "terms_acceptance",
   "configuration": {
     "termsUrl": "https://example.com/terms",
     "privacyUrl": "https://example.com/privacy",
     "requireCheckbox": true,
-    "version": "2.0"
+    "termsVersion": "2.0",
+    "privacyVersion": "2.0"
   }
 }
 ```
 
 ---
 
-### PasswordReset Step
+### Password Reset (`password_reset`)
 
-Reset user password via email verification.
+Reset a forgotten password and enforce the new-password policy.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `tokenLifetimeMinutes` | number | `60` | Reset token lifetime |
+| `tokenExpirationMinutes` | number | `60` | Minutes before the reset token expires |
+| `minLength` | number | `8` | Minimum password length |
+| `requireUppercase` / `requireLowercase` / `requireDigit` | boolean | `true` | Character requirements |
+| `requireNonAlphanumeric` | boolean | `false` | Require a special character |
 | `requireCurrentPassword` | boolean | `false` | Require current password |
 
-**Admin UI Location**: Select "Password Reset" from step types dropdown.
-
 **Example**:
 ```json
 {
-  "type": "PasswordReset",
+  "type": "password_reset",
   "configuration": {
-    "tokenLifetimeMinutes": 30,
-    "requireCurrentPassword": false
+    "tokenExpirationMinutes": 30,
+    "minLength": 10
   }
 }
 ```
 
 ---
 
-### CustomPlugin Step
+### Custom Plugin (`custom_plugin`)
 
-Execute custom WASM or managed plugin.
+Execute a WASM or managed (.NET) plugin. See [WASM Plugins](#wasm-plugins).
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `pluginName` | string | **required** | Plugin assembly or WASM file name |
-| `entryPoint` | string | `"execute"` | Plugin entry point function |
-| `config` | object | - | Custom configuration passed to plugin |
-
-**Admin UI Location**: Select "Custom Plugin" from step types dropdown.
+| `pluginName` | string | **required** | Plugin to execute (chosen from the uploaded or registered plugins) |
+| `entryPoint` | string | `"execute"` | Plugin function to call |
+| `config` | object | - | Settings passed to managed plugins |
 
 **Example**:
 ```json
 {
-  "type": "CustomPlugin",
+  "type": "custom_plugin",
   "configuration": {
-    "pluginName": "risk-assessment.wasm",
-    "entryPoint": "evaluate_risk",
-    "config": {
-      "threshold": 0.8,
-      "blockHighRisk": true
-    }
+    "pluginName": "risk-assessment",
+    "entryPoint": "evaluate_risk"
   }
 }
 ```
 
 ---
 
-### CustomPage Step
+### Custom Page (`custom_page`)
 
-Display custom HTML page or Razor template.
+Render a host-authored Razor partial as a journey screen.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `templatePath` | string | **required** | Path to custom Razor template |
-| `model` | object | - | Data to pass to template |
-
-**Admin UI Location**: Select "Custom Page" from step types dropdown.
+| `templatePath` | string | **required** | Template name; maps to `Views/Shared/Journey/Templates/_{name}.cshtml` shipped by the host app or a referenced Razor Class Library |
+| `model` | object | - | Static data exposed to the template as `CustomPageViewModel.Config` |
 
 **Example**:
 ```json
 {
-  "type": "CustomPage",
+  "type": "custom_page",
   "configuration": {
-    "templatePath": "~/Views/Custom/Welcome.cshtml",
+    "templatePath": "Welcome",
     "model": {
       "welcomeMessage": "Welcome to our platform!",
       "showFeatures": true
@@ -820,7 +993,7 @@ Display custom HTML page or Razor template.
 
 > **License Required:** Professional+ license or `fido2` add-on
 
-Enable passwordless authentication using FIDO2/WebAuthn (passkeys). This feature uses the [Fido2NetLib](https://github.com/passwordless-lib/fido2-net-lib) library for full WebAuthn specification compliance.
+Enable passwordless authentication using FIDO2/WebAuthn (passkeys). This feature, in `Oluso.Enterprise.Fido2`, uses the [Fido2NetLib](https://github.com/passwordless-lib/fido2-net-lib) library for full WebAuthn specification compliance.
 
 ### Prerequisites
 
@@ -830,11 +1003,31 @@ Enable passwordless authentication using FIDO2/WebAuthn (passkeys). This feature
 
 ### Installation
 
-Add the FIDO2 package to your Identity Server project:
+Add passkey support to the Oluso builder, register the credential store, and enable sessions (registration and assertion state is kept in the session):
 
 ```csharp
 // Program.cs
-builder.Services.AddFido2(builder.Configuration);
+builder.Services.AddOluso(builder.Configuration)
+    .AddMultiTenancy()
+    .AddUserJourneyEngine()
+    .AddFido2();                       // reads the Oluso:Fido2 section
+
+// Credential storage: "Sqlite", "SqlServer" or "PostgreSQL"
+builder.Services.AddFido2ForProvider(provider, connectionString);
+
+var app = builder.Build();
+// ...
+app.UseSession();
+```
+
+`AddFido2` also accepts an `Action<Fido2Options>` or a fluent builder:
+
+```csharp
+.AddFido2(fido2 => fido2
+    .WithRelyingParty("auth.example.com", "My Identity Server")
+    .WithOrigins("https://auth.example.com")
+    .RequireUserVerification()
+    .PreferPlatformAuthenticator());
 ```
 
 ### Configuration
@@ -843,22 +1036,24 @@ In `appsettings.json`:
 
 ```json
 {
-  "Fido2": {
-    "RelyingPartyId": "auth.example.com",
-    "RelyingPartyName": "My Identity Server",
-    "RelyingPartyIcon": "https://auth.example.com/logo.png",
-    "Origins": ["https://auth.example.com"],
-    "Timeout": 60000,
-    "AttestationConveyancePreference": "none",
-    "UserVerificationRequirement": "preferred",
-    "AuthenticatorAttachment": null,
-    "ResidentKeyRequirement": "preferred",
-    "MaxCredentialsPerUser": 10,
-    "StoreAttestationData": false,
-    "MetadataService": {
-      "Enabled": false,
-      "CachePath": "/data/fido2-mds-cache.json",
-      "RefreshIntervalHours": 24
+  "Oluso": {
+    "Fido2": {
+      "RelyingPartyId": "auth.example.com",
+      "RelyingPartyName": "My Identity Server",
+      "RelyingPartyIcon": "https://auth.example.com/logo.png",
+      "Origins": ["https://auth.example.com"],
+      "Timeout": 60000,
+      "AttestationConveyancePreference": "none",
+      "UserVerificationRequirement": "preferred",
+      "AuthenticatorAttachment": null,
+      "ResidentKeyRequirement": "preferred",
+      "MaxCredentialsPerUser": 10,
+      "StoreAttestationData": false,
+      "MetadataService": {
+        "Enabled": false,
+        "CachePath": "/data/fido2-mds-cache.json",
+        "RefreshIntervalHours": 24
+      }
     }
   }
 }
@@ -879,15 +1074,24 @@ In `appsettings.json`:
 | `ResidentKeyRequirement` | string | `"preferred"` | `required`, `preferred`, `discouraged` |
 | `MaxCredentialsPerUser` | int | `10` | Maximum passkeys per user |
 | `StoreAttestationData` | bool | `false` | Store attestation for enterprise scenarios |
+| `MetadataService` | object | - | FIDO Metadata Service: `Enabled`, `CachePath`, `RefreshIntervalHours` (default `24`) |
 
-### Adding WebAuthn to a Journey
+A tenant can switch passkeys off with its `EnablePasskey` setting; the passkey steps then skip.
 
-Add a `WebAuthn` step to your journey:
+### Adding Passkeys to a Journey
+
+The module adds three step types:
+
+| Step Type | Purpose |
+|-----------|---------|
+| `webauthn` | Sign in with an existing passkey |
+| `fido2_login` | Passkey sign-in page, optionally offered next to other methods |
+| `fido2_register` | Offer a signed-in user to create a passkey |
 
 ```json
 {
   "id": "webauthn-login",
-  "type": "WebAuthn",
+  "type": "webauthn",
   "displayName": "Sign in with Passkey",
   "configuration": {
     "passkeyOnly": false,
@@ -896,20 +1100,43 @@ Add a `WebAuthn` step to your journey:
 }
 ```
 
-#### WebAuthn Step Configuration
+#### `webauthn` Configuration
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `passkeyOnly` | boolean | `false` | Skip username entry, use discoverable credentials only |
-| `allowFallback` | boolean | `true` | Allow falling back to password authentication |
+| `passkeyOnly` | boolean | `false` | Sign in with a passkey only, without asking for a username first |
+| `allowFallback` | boolean | `true` | Let the user continue another way when they have no passkey or it fails |
+
+#### `fido2_login` Configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `allowUsernameless` | boolean | `true` | Sign in with a passkey without typing a username |
+| `showAsOption` | boolean | `true` | Offer passkey sign-in next to other sign-in methods |
+| `title` / `description` | string | - | Page heading and text (localizable) |
+
+#### `fido2_register` Configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `promptNewUsers` | boolean | `true` | Offer to users who just signed up |
+| `promptExistingUsers` | boolean | `false` | Offer to existing users |
+| `skipIfHasPasskey` | boolean | `true` | Skip for users who already have a passkey |
+| `maxPasskeys` | number | `10` | Skip once a user has this many |
+| `allowSkip` | boolean | `true` | Let users skip creating a passkey |
+| `authenticatorType` | string | `""` | `platform`, `cross-platform`, or blank for both |
+| `requireResidentKey` | boolean | `false` | Require a discoverable credential |
+| `showSuccessMessage` | boolean | `true` | Confirm the new passkey before continuing |
+| `title` / `description` | string | - | Page heading and text (localizable) |
+
+The `local_login` and `composite_login` steps also offer passkey sign-in (`showPasskey`, `passkeyUsernameless`).
 
 ### User Registration Flow
 
 1. User signs in with password (or other method)
-2. Navigate to account settings or registration step
-3. Click "Register Passkey" to start WebAuthn ceremony
-4. Browser prompts for biometric/PIN verification
-5. Credential is stored and linked to user
+2. A `fido2_register` step offers to create a passkey, or the user goes to the account portal's security page
+3. Browser prompts for biometric/PIN verification
+4. Credential is stored and linked to user
 
 ### User Authentication Flow
 
@@ -929,7 +1156,7 @@ Enable passkey-only flow:
 
 ```json
 {
-  "type": "WebAuthn",
+  "type": "webauthn",
   "configuration": {
     "passkeyOnly": true,
     "allowFallback": true
@@ -946,8 +1173,6 @@ Enable passkey-only flow:
 
 ### API Endpoints
 
-The FIDO2 module exposes these endpoints:
-
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/fido2/register/options` | POST | Get registration options |
@@ -956,7 +1181,17 @@ The FIDO2 module exposes these endpoints:
 | `/api/fido2/assert/complete` | POST | Verify assertion |
 | `/api/fido2/credentials` | GET | List user's credentials |
 | `/api/fido2/credentials/{id}` | DELETE | Remove a credential |
-| `/api/fido2/credentials/{id}/name` | PATCH | Rename a credential |
+| `/api/account/passkeys` | GET | List the signed-in user's passkeys (account portal) |
+| `/api/account/passkeys/register/start` | POST | Start passkey registration (account portal) |
+| `/api/account/passkeys/register/complete` | POST | Complete passkey registration (account portal) |
+| `/api/account/passkeys/{passkeyId}` | PATCH | Rename a passkey |
+| `/api/account/passkeys/{passkeyId}` | DELETE | Remove a passkey |
+| `/api/admin/fido2/stats` | GET | Passkey statistics (admin) |
+| `/api/admin/fido2/users` | GET | Users with passkeys (admin) |
+| `/api/admin/fido2/users/{userId}/credentials` | GET / DELETE | List or remove a user's passkeys (admin) |
+| `/api/admin/fido2/users/{userId}/credentials/{credentialId}` | DELETE | Remove one passkey (admin) |
+
+Admin permissions: `fido2.read`, `fido2.write`, `fido2.delete`.
 
 ### Browser Support
 
@@ -991,7 +1226,122 @@ FIDO2/WebAuthn is supported in all modern browsers:
 #### Passkeys not showing
 - Check `RelyingPartyId` matches your domain exactly
 - Ensure credentials were registered on same RP ID
+- Check the tenant's `EnablePasskey` setting
 - Verify browser supports WebAuthn
+
+---
+
+## Business Verification (KYB)
+
+The `Oluso.Enterprise.Verification` module checks that a business is real and that the
+person signing up may act for it: a `business_verification` journey step, Dojah and
+Youverify providers, provider-hosted sessions with webhooks, document uploads, an admin
+review queue and the `business.verification_completed` event.
+
+### Installation
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddEntityFrameworkStoresForProvider(provider, connectionString)
+    .AddOlusoVerification();
+
+// The module's tables (businesses, applicants, checks) in its own context and
+// migrations history table (__EFMigrationsHistory_Verification). Pending migrations
+// apply at startup with the other contexts.
+builder.Services.AddOlusoVerificationForProvider(provider, connectionString); // Sqlite, SqlServer or PostgreSQL
+```
+
+The step only appears in the journey builder when the module is added. The host also needs
+file storage (`AddLocalFileStorage(...)` or blob storage) for documents, and an email sender
+(`AddMessaging(...)`) for the "email me the outcome" option; without one the option isn't
+offered. The admin pages ship as the `@syndew/oluso-plugin-verification` admin plugin
+(`pluginService.registerAdminPlugin(VERIFICATION_PLUGIN)`).
+
+Permissions: `business_verification.read` (businesses, applicants, documents),
+`business_verification.review` (decide businesses and applicants),
+`business_verification.manage` (providers and routing).
+
+### Provider setup
+
+Configure under **Settings → Business verification** (credentials are stored encrypted in
+the organisation's `IdentityVerification` configuration section, never returned).
+
+| Provider | Credentials | Sandbox |
+|---|---|---|
+| Dojah | App ID, secret key (Dojah dashboard → Developers → Configuration). Hosted mode also needs the public key, the EasyOnboard widget ID of a KYB flow, and the webhook secret (Developers → Webhooks) | `https://sandbox.dojah.io` with sandbox keys: test data, not billed |
+| Youverify | API secret key (workspace → Settings → API Keys) | `https://api.sandbox.youverify.co` with the sandbox key |
+
+Choose **Sandbox** while testing; switching to **Live** clears the stored secrets so live
+keys must be entered. **Test saved credentials** uses a free endpoint (Dojah wallet balance,
+Youverify supported countries). Route each country to one provider; a country without a
+route can't be verified (no fallback). **Reuse registry results** reuses a business's
+registry snapshot for that many days instead of buying a new lookup.
+
+### Webhooks
+
+Hosted (asynchronous) results arrive by webhook at
+
+```
+https://{organisation host}/api/verification/webhooks/{provider}
+```
+
+on the organisation's own subdomain or custom domain (the host identifies the organisation;
+there is no tenant id in the URL). The settings page shows the exact URL per provider. For
+Dojah, subscribe the `kyc_widget` service to it (dashboard → Developers → Webhooks, or
+`POST /api/v1/webhook/subscribe`). Requests must carry `x-dojah-signature`, the hex
+HMAC-SHA256 of the raw body keyed with the webhook secret; anything else gets 401. The
+webhook only identifies the session: the outcome is read from Dojah's
+`GET /api/v1/kyc/verification?reference_id=` and never taken from the browser.
+
+Youverify documents no hosted KYB flow and no webhook signature scheme yet, so it serves the
+synchronous lookup only.
+
+### The journey step
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `allowedCountries` | required | Countries offered; each needs a routed provider |
+| `mode` | `lookup` | `lookup`: instant registry check. `hosted`: the provider's flow opens in the page (Dojah EasyOnboard widget); the applicant waits on a status page |
+| `requireNameMatch` | `true` | The typed name must match the registered name (legal-form words ignored) |
+| `requireActive` | `true` | A business the registry lists as not trading is rejected |
+| `applicantEvidence` | `none` | `none`, `director_match`, `documents`, `director_or_documents` |
+| `directorRoles` | director, proprietor, partner, trustee | Registry roles that count as a director |
+| `documentTypes` / `maxDocumentSizeMb` / `maxDocuments` | pdf, jpeg, png / 10 / 3 | Upload limits for supporting documents |
+| `allowRetry` | `true` | After a rejection, let the applicant correct details and try again |
+| `pendingWaitSeconds` | 180 | How long the waiting page polls before offering to email the outcome |
+| `*Claim` settings | - | Read inputs from journey data an earlier step wrote instead of showing the form |
+
+Branches: `verified`, `not_verified`, `pending` (waiting on the provider or a reviewer;
+use it to finish sign-up now and provision later), `provider_unavailable`. Outputs:
+`kyb_status`, `kyb_business_id`, `kyb_applicant_id`, `kyb_business_name`,
+`kyb_registration_number`, `kyb_country`, `kyb_relationship`.
+
+**Resuming.** A business is stored once per registration number; each person acting for it
+is a separate link with its own status. On entry the step looks up the user's link (or,
+before sign-up, the link this journey made): verified links continue straight away,
+pending/in-review links show the waiting page (or take `pending`), rejected links show the
+reason and a retry. A link made before the account exists is tied to the user when the same
+journey signs them up or in, and `business.applicant_linked` is raised.
+
+**Waiting.** The waiting page polls `/journey/{id}/status`. When a webhook or a reviewer
+decides the check, the journey's status revision changes and the page reloads into the
+outcome. After `pendingWaitSeconds` it offers to email the outcome instead.
+
+**Events.** `business.verification_completed` is raised once per final outcome (verified,
+rejected, failed) with the deciding origin: the journey, the provider webhook
+(`integration`, `verification:dojah`) or the reviewer (`admin`). A webhook subscription or event sink on it can
+provision the business's account when a review completes later.
+
+### Documents and cameras
+
+Supporting documents (certificate of incorporation, letter of authority) are checked by
+content and size, stored privately as attachments of the applicant link, and opened by
+reviewers through the admin API or by people linked to the same business through
+`/api/account/businesses/{id}/documents/{documentId}`. The upload offers "Take a photo",
+which opens the phone's camera. Journeys embedded in another site need the host iframe to
+allow the camera: `<iframe src="…" allow="camera; microphone">`. The SDK's modal and
+`JourneyEmbed` set it already. Liveness and selfie capture are left to the provider's SDK.
 
 ---
 
@@ -1001,94 +1351,133 @@ FIDO2/WebAuthn is supported in all modern browsers:
 
 | Method | Description |
 |--------|-------------|
-| `totp` | Time-based One-Time Password (Google Authenticator, etc.) |
-| `phone` | SMS verification code |
+| `totp` | Time-based One-Time Password (authenticator apps) |
+| `sms` | SMS verification code (`phone` is accepted as an alias) |
 | `email` | Email verification code |
-| `webauthn` | FIDO2 security key |
+
+Recovery codes are accepted in place of a code. Passkeys are a separate first factor (see [FIDO2/WebAuthn](#fido2webauthn-passkeys)).
 
 ### Configuring MFA Step
 
 ```json
 {
   "id": "mfa-step",
-  "type": "Mfa",
+  "type": "mfa",
   "displayName": "Verify Your Identity",
   "configuration": {
     "required": false,
-    "methods": ["totp", "phone", "email", "webauthn"],
+    "methods": ["totp", "sms", "email"],
     "rememberDevice": true,
-    "rememberDuration": 30
+    "rememberDeviceDays": 30
   }
 }
 ```
 
-### Requiring MFA per Client
+### Requiring MFA
 
-In Admin UI, edit the client and set **Require MFA** to **Yes**.
+MFA is set per journey, not per client: set `required: true` on the policy's `mfa` step to make every user of that policy complete MFA. A client that needs MFA names that policy with `?policy=` (see [OIDC Extensions](#oidc-extensions)).
 
-Or via API:
+### MFA Setup
 
-```json
-{
-  "requireMfa": true
-}
-```
-
-### MFA Setup Journey
-
-Create a `ProfileEdit` journey with MFA setup:
-
-```json
-{
-  "id": "mfa-setup",
-  "type": "MfaSetup",
-  "displayName": "Set Up Two-Factor Authentication",
-  "configuration": {
-    "allowedMethods": ["totp", "webauthn"],
-    "requireAtLeastOne": true
-  }
-}
-```
+With `allowSetup` (default `true`), a user without MFA who reaches a step with `required: true` sets up one of the allowed methods there and then continues (branch `mfa_setup_complete`). With `allowSetup: false`, such a user cannot continue (`mfa_setup_required`) until an administrator enables MFA for them.
 
 ### SMS and Email Messaging
 
-The MFA system uses `ISmsSender` and `IEmailSender` interfaces to send verification codes. By default, no-op implementations are registered that log messages instead of sending them.
+The MFA system and the passwordless steps send codes through the `ISmsSender` and `IEmailSender` interfaces (namespace `Oluso.Core.Services`).
 
-#### Configuring SMS Provider
+#### Built-in Providers
 
-Implement `ISmsSender` to integrate with your SMS provider (Twilio, AWS SNS, etc.):
+`AddMessaging(configuration)` registers the email and SMS senders from configuration:
 
 ```csharp
-public class TwilioSmsSender : ISmsSender
+builder.Services.AddMessaging(builder.Configuration);
+```
+
+```json
 {
-    private readonly string _accountSid;
-    private readonly string _authToken;
-    private readonly string _fromNumber;
-
-    public TwilioSmsSender(IConfiguration config)
-    {
-        _accountSid = config["Twilio:AccountSid"];
-        _authToken = config["Twilio:AuthToken"];
-        _fromNumber = config["Twilio:FromNumber"];
+  "Oluso": {
+    "Messaging": {
+      "Email": {
+        "Provider": "SendGrid",
+        "FromAddress": "noreply@example.com",
+        "FromName": "My App",
+        "SendGrid": { "ApiKey": "SG.xxxxx" }
+      },
+      "Sms": {
+        "Provider": "Twilio",
+        "Twilio": {
+          "AccountSid": "ACxxxx",
+          "AuthToken": "xxxx",
+          "FromNumber": "+15550100"
+        }
+      }
     }
+  }
+}
+```
 
-    public async Task<SmsResult> SendAsync(string phoneNumber, string message, CancellationToken ct = default)
+| Channel | Providers | Settings |
+|---------|-----------|----------|
+| Email | `SendGrid` (default), `Smtp`, `Cloudflare` (Brevo is also available in tenant sender profiles) | `FromAddress`, `FromName`, `ReplyToAddress`, plus `SendGrid:ApiKey`, `Smtp:Host/Port/Username/Password/UseSsl` or `Cloudflare:AccountId/ApiToken` |
+| SMS | `Infobip` (default), `Twilio` | `Infobip:ApiKey/BaseUrl/SenderId` or `Twilio:AccountSid/AuthToken/FromNumber` |
+
+The email sender is tenant-aware: a tenant's default sender profile (configured under **Settings** > **Email** in the Admin UI) is used when it has one, and the `Oluso:Messaging:Email` settings otherwise. `AddEmailSender(configuration)` and `AddSmsSender(configuration)` register one channel only.
+
+#### Custom SMS Provider
+
+Implement `ISmsSender` to integrate another SMS provider:
+
+```csharp
+public class MySmsSender : ISmsSender
+{
+    private readonly HttpClient _http;
+
+    public MySmsSender(HttpClient http) => _http = http;
+
+    public async Task<SmsResult> SendAsync(string phoneNumber, string message, CancellationToken cancellationToken = default)
     {
-        TwilioClient.Init(_accountSid, _authToken);
+        var response = await _http.PostAsJsonAsync(
+            "https://sms.example.com/v1/messages",
+            new { to = phoneNumber, text = message },
+            cancellationToken);
 
-        try
-        {
-            var twilioMessage = await MessageResource.CreateAsync(
-                to: new PhoneNumber(phoneNumber),
-                from: new PhoneNumber(_fromNumber),
-                body: message);
+        return response.IsSuccessStatusCode
+            ? SmsResult.Succeeded(response.Headers.TryGetValues("X-Message-Id", out var ids) ? ids.FirstOrDefault() : null)
+            : SmsResult.Failed($"SMS provider returned {(int)response.StatusCode}");
+    }
+}
+```
 
-            return SmsResult.Succeeded(twilioMessage.Sid);
-        }
-        catch (Exception ex)
-        {
-            return SmsResult.Failed(ex.Message);
-        }
+Register in `Program.cs` (the sender gets a typed `HttpClient`):
+
+```csharp
+builder.Services.AddSmsSender<MySmsSender>();
+```
+
+#### Custom Email Provider
+
+Implement `IEmailSender`. Besides the ambient-tenant send and the template send, it has a tenant-explicit overload used by background work; the attachment and multi-recipient overloads have default implementations.
+
+```csharp
+public class MyEmailSender : IEmailSender
+{
+    public Task<EmailResult> SendAsync(string email, string subject, string htmlMessage,
+        CancellationToken cancellationToken = default)
+        => SendCoreAsync(email, subject, htmlMessage, cancellationToken);
+
+    public Task<EmailResult> SendAsync(string tenantId, string email, string subject, string htmlMessage,
+        CancellationToken cancellationToken = default)
+        => SendCoreAsync(email, subject, htmlMessage, cancellationToken);
+
+    public Task<EmailResult> SendTemplateAsync(string email, string templateName,
+        IDictionary<string, object> templateData, CancellationToken cancellationToken = default)
+        => Task.FromResult(EmailResult.Failed("Templates are not supported by this sender"));
+
+    private async Task<EmailResult> SendCoreAsync(string email, string subject, string html, CancellationToken ct)
+    {
+        // Call your provider here and return EmailResult.Succeeded(messageId) or EmailResult.Failed(error)
+        await Task.CompletedTask;
+        return EmailResult.Succeeded();
     }
 }
 ```
@@ -1096,74 +1485,10 @@ public class TwilioSmsSender : ISmsSender
 Register in `Program.cs`:
 
 ```csharp
-builder.Services.AddSmsSender<TwilioSmsSender>();
+builder.Services.AddEmailSender<MyEmailSender>();
 ```
 
-#### Configuring Email Provider
-
-Implement `IEmailSender` to integrate with your email provider (SendGrid, AWS SES, SMTP, etc.):
-
-```csharp
-public class SendGridEmailSender : IEmailSender
-{
-    private readonly string _apiKey;
-    private readonly string _fromEmail;
-    private readonly string _fromName;
-
-    public SendGridEmailSender(IConfiguration config)
-    {
-        _apiKey = config["SendGrid:ApiKey"];
-        _fromEmail = config["SendGrid:FromEmail"];
-        _fromName = config["SendGrid:FromName"];
-    }
-
-    public async Task<EmailResult> SendAsync(
-        string email,
-        string subject,
-        string htmlMessage,
-        CancellationToken ct = default)
-    {
-        var client = new SendGridClient(_apiKey);
-        var from = new EmailAddress(_fromEmail, _fromName);
-        var to = new EmailAddress(email);
-        var msg = MailHelper.CreateSingleEmail(from, to, subject, null, htmlMessage);
-
-        var response = await client.SendEmailAsync(msg, ct);
-
-        return response.IsSuccessStatusCode
-            ? EmailResult.Succeeded(response.Headers.GetValues("X-Message-Id").FirstOrDefault())
-            : EmailResult.Failed($"SendGrid error: {response.StatusCode}");
-    }
-
-    public async Task<EmailResult> SendTemplateAsync(
-        string email,
-        string templateName,
-        IDictionary<string, object> templateData,
-        CancellationToken ct = default)
-    {
-        // Use SendGrid dynamic templates
-        var client = new SendGridClient(_apiKey);
-        var msg = new SendGridMessage
-        {
-            From = new EmailAddress(_fromEmail, _fromName),
-            TemplateId = templateName
-        };
-        msg.AddTo(email);
-        msg.SetTemplateData(templateData);
-
-        var response = await client.SendEmailAsync(msg, ct);
-        return response.IsSuccessStatusCode
-            ? EmailResult.Succeeded()
-            : EmailResult.Failed($"SendGrid error: {response.StatusCode}");
-    }
-}
-```
-
-Register in `Program.cs`:
-
-```csharp
-builder.Services.AddEmailSender<SendGridEmailSender>();
-```
+With `AddMessaging` also in place, register the custom sender after it: each registration adds a typed `HttpClient` client for the interface, and the last one wins.
 
 #### Interfaces Reference
 
@@ -1173,50 +1498,24 @@ builder.Services.AddEmailSender<SendGridEmailSender>();
 |--------|-------------|
 | `SendAsync(phoneNumber, message, ct)` | Sends an SMS to the specified phone number |
 
-**SmsResult**
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `Success` | bool | Whether the send succeeded |
-| `Error` | string? | Error message if failed |
-| `MessageId` | string? | Provider message ID if available |
-
 **IEmailSender**
 
 | Method | Description |
 |--------|-------------|
-| `SendAsync(email, subject, htmlMessage, ct)` | Sends an email with HTML content |
+| `SendAsync(email, subject, htmlMessage, ct)` | Sends an email in the current tenant's context |
+| `SendAsync(tenantId, email, subject, htmlMessage, ct)` | Sends an email for an explicit tenant |
+| `SendAsync(tenantId, email, subject, htmlMessage, attachments, ct)` | With attachments (default implementation refuses attachments) |
+| `SendAsync(tenantId, EmailMessage, ct)` | Several recipients, CC, BCC, reply-to, headers (default implementation covers one recipient) |
 | `SendTemplateAsync(email, templateName, data, ct)` | Sends using a provider template |
 
-**EmailResult**
+**SmsResult / EmailResult**
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `Success` | bool | Whether the send succeeded |
 | `Error` | string? | Error message if failed |
 | `MessageId` | string? | Provider message ID if available |
-
-#### MFA Message Content
-
-The MFA step sends the following messages:
-
-| Flow | SMS Message | Email Subject |
-|------|-------------|---------------|
-| Verification | `Your verification code is: {code}` | Your verification code |
-| Setup | `Your verification code is: {code}` | Set up two-factor authentication |
-
-To customize message content, create a custom sender that wraps the default implementation.
-
-#### Development Mode
-
-By default, `NoOpSmsSender` and `NoOpEmailSender` are registered. These log messages instead of sending:
-
-```
-warn: IdentityServer.Core.Services.Messaging.NoOpSmsSender
-      SMS sending not configured. Would send to +1234567890: Your verification code is: 123456
-```
-
-This is useful for development and testing without incurring SMS/email costs.
+| `Skipped` | bool | Email only: nothing was sent because no recipient can receive mail (reserved test domains such as `example.com` or `.local`); counts as success |
 
 ---
 
@@ -1225,31 +1524,22 @@ This is useful for development and testing without incurring SMS/email costs.
 ### Enabling Registration
 
 1. Set `AllowSelfRegistration = true` on the tenant
-2. Create a `SignUp` or `SignInSignUp` journey
+2. Create a `SignUp` or `SignInSignUp` journey (the platform seeds default `signup` and `signup-signin` policies), or let the `local_login` step link to registration with `allowSelfRegistration`
+
+Clients can open the sign-up journey with `prompt=create` (see [OIDC Extensions](#oidc-extensions)).
 
 ### Registration Journey Example
 
 ```json
 {
   "name": "User Registration",
+  "slug": "register",
   "type": "SignUp",
   "steps": [
     {
-      "id": "collect-info",
-      "type": "ClaimsCollection",
-      "configuration": {
-        "title": "Create Account",
-        "fields": [
-          { "name": "email", "type": "email", "label": "Email", "required": true },
-          { "name": "given_name", "type": "text", "label": "First Name", "required": true },
-          { "name": "family_name", "type": "text", "label": "Last Name", "required": true },
-          { "name": "password", "type": "password", "label": "Password", "required": true }
-        ]
-      }
-    },
-    {
       "id": "terms",
-      "type": "TermsAcceptance",
+      "type": "terms_acceptance",
+      "order": 1,
       "configuration": {
         "termsUrl": "https://example.com/terms",
         "privacyUrl": "https://example.com/privacy",
@@ -1258,23 +1548,49 @@ This is useful for development and testing without incurring SMS/email costs.
     },
     {
       "id": "create-user",
-      "type": "CreateUser",
+      "type": "signup",
+      "order": 2,
       "configuration": {
         "requireEmailVerification": true,
+        "verificationStepId": "verify-email",
         "defaultRoles": ["user"]
+      }
+    },
+    {
+      "id": "verify-email",
+      "type": "passwordless_email",
+      "order": 3,
+      "configuration": {
+        "mode": "otp"
+      }
+    },
+    {
+      "id": "profile",
+      "type": "dynamic_form",
+      "order": 4,
+      "configuration": {
+        "title": "Tell us about yourself",
+        "fields": [
+          { "name": "given_name", "type": "text", "label": "First Name", "required": true, "persistToUser": true, "userPropertyName": "firstName" },
+          { "name": "family_name", "type": "text", "label": "Last Name", "required": true, "persistToUser": true, "userPropertyName": "lastName" }
+        ]
       }
     }
   ]
 }
 ```
 
+The `signup` step collects the email and password itself; collect further profile data in a `dynamic_form` step.
+
 ### Email Domain Restrictions
 
-Restrict registration to specific email domains:
+Restrict registration to specific email domains with the tenant setting:
 
 ```
 AllowedEmailDomains = "company.com, partner.com"
 ```
+
+or per journey with the `signup` step's `allowedEmailDomains` list.
 
 ---
 
@@ -1283,78 +1599,133 @@ AllowedEmailDomains = "company.com, partner.com"
 ### Supported Providers
 
 - Google
-- Microsoft (Azure AD, Microsoft Account)
+- Microsoft (work, school and personal accounts)
 - Facebook
 - Apple
 - GitHub
+- LinkedIn
+- Twitter
 - Generic OIDC
 - Generic OAuth 2.0
 - SAML 2.0
+- LDAP
 
 ### Adding an External Provider
 
-1. Navigate to **Identity Providers** in Admin UI
-2. Click **Add Provider**
-3. Select provider type
-4. Configure credentials and settings
+1. Navigate to **Federation** > **Identity Providers** in Admin UI
+2. Add a provider and select its type
+3. Configure credentials and settings
+4. Register the callback URL `https://{your host}/signin-{scheme}` with the provider
 
 ### Provider Configuration Example (Google)
 
+`POST /api/admin/identity-providers`:
+
 ```json
 {
-  "name": "Google",
-  "type": "Google",
+  "scheme": "google",
+  "displayName": "Google",
   "enabled": true,
-  "clientId": "your-client-id.apps.googleusercontent.com",
-  "clientSecret": "your-client-secret",
-  "scopes": ["openid", "profile", "email"],
-  "autoProvision": true,
-  "mapClaims": {
-    "email": "email",
-    "given_name": "given_name",
-    "family_name": "family_name",
-    "picture": "picture"
+  "providerType": "Google",
+  "configuration": {
+    "clientId": "your-client-id.apps.googleusercontent.com",
+    "clientSecret": "your-client-secret",
+    "hostedDomain": "example.com"
   }
 }
 ```
+
+`clientId` and `clientSecret` are required for Google; `hostedDomain` and `accessType` are optional. `GET /api/admin/identity-providers/types` lists the required and optional fields of each type. `allowedClientIds` limits which clients may use the provider.
 
 ### Using External IdP in Journey
 
 ```json
 {
   "id": "social-login",
-  "type": "ExternalIdp",
+  "type": "external_login",
   "displayName": "Sign in with Google",
   "configuration": {
-    "providerId": "google",
+    "providers": ["google"],
     "autoProvision": true,
-    "linkIfExists": true
+    "autoRedirect": true
   }
 }
 ```
 
 ---
 
+## SAML, LDAP and SCIM
+
+These enterprise modules live in `Oluso.Enterprise` and are registered by the host. SAML and LDAP check for their licensed features (`saml`, `ldap`).
+
+### SAML 2.0
+
+```csharp
+builder.Services
+    .AddSaml(builder.Configuration)                     // Oluso:Saml:ServiceProvider and Oluso:Saml:IdentityProvider
+    .AddSamlForProvider(provider, connectionString);    // service-provider registrations
+```
+
+- **As a service provider**: add a SAML 2.0 identity provider under **Identity Providers** and sign in with the `saml` journey step (`idpName`, `autoRedirect`, `forceAuthn`, `isPassive`, `autoProvision`, `proxyMode`).
+- **As an identity provider**: register the applications that trust Oluso through `/api/admin/saml/service-providers`. The IdP endpoints are `/saml/idp/metadata`, `/saml/idp/sso` and `/saml/idp/slo`.
+
+### LDAP / Active Directory
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddLdap();                                         // Oluso:Ldap
+```
+
+Add an LDAP identity provider and use the `ldap` journey step (see its settings in the journey builder: `ldapProvider`, server and bind overrides, `autoProvision`, `allowPasswordChange`, `syncGroups`).
+
+### SCIM 2.0 Provisioning
+
+```csharp
+builder.Services
+    .AddScim(options => options.BasePath = "/scim/v2")
+    .AddScimForProvider(provider, connectionString);
+
+app.UseScim();
+```
+
+Inbound provisioning is served at `/scim/v2/Users`, `/scim/v2/Groups` and `/scim/v2/Bulk`, with discovery at `/scim/v2`. Each provisioning system authenticates with a bearer token issued to a SCIM client (`/api/admin/scim/clients`, which can also rotate the token). Outbound provisioning to other systems is configured through `/api/admin/scim/providers`.
+
+---
+
 ## WASM Plugins
 
-Extend the Identity Server with WebAssembly plugins using Extism.
+Extend the Identity Server with WebAssembly plugins using Extism. A plugin runs in a `custom_plugin` journey step; .NET code can instead be registered as a managed plugin with `AddPlugin<TPlugin>()` on the Oluso builder (`TPlugin : IManagedPlugin`), which the step tries first.
 
 ### Plugin Capabilities
 
 Plugins can:
 - Execute custom logic in journey steps
-- Transform claims
-- Call external APIs
+- Derive values and write them into the journey
 - Validate user input
-- Implement custom authentication methods
+- Ask the user for more input with a form
+- Choose the branch the journey takes
+- Call external APIs, only on hosts the plugin's network policy allows
+
+### Plugin Storage
+
+The host chooses where uploaded plugins are kept, for example on disk:
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddUserJourneyEngine()
+    .AddFileSystemPluginStore(Path.Combine(builder.Environment.ContentRootPath, "plugins"));
+```
 
 ### Creating a Plugin
+
+A complete example is in `samples/plugins/hello-plugin`.
 
 #### 1. Set Up Project
 
 ```bash
-# Using Rust
 cargo new my-plugin --lib
+rustup target add wasm32-unknown-unknown
 ```
 
 #### 2. Add Dependencies
@@ -1362,7 +1733,7 @@ cargo new my-plugin --lib
 ```toml
 # Cargo.toml
 [dependencies]
-extism-pdk = "1.0"
+extism-pdk = "1.1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
@@ -1375,45 +1746,45 @@ crate-type = ["cdylib"]
 ```rust
 use extism_pdk::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PluginInput {
-    claims: std::collections::HashMap<String, String>,
-    configuration: serde_json::Value,
-    context: ExecutionContext,
-}
-
-#[derive(Deserialize)]
-struct ExecutionContext {
-    tenant_id: Option<String>,
-    client_id: String,
+    function: String,
     user_id: Option<String>,
+    tenant_id: Option<String>,
+    input: HashMap<String, serde_json::Value>,
+    journey_data: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PluginOutput {
     success: bool,
-    claims: Option<std::collections::HashMap<String, String>>,
-    error_code: Option<String>,
-    error_message: Option<String>,
-    redirect_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[plugin_fn]
-pub fn execute(input: Json<PluginInput>) -> FnResult<Json<PluginOutput>> {
-    let input = input.into_inner();
+pub fn execute(input_json: String) -> FnResult<String> {
+    let input: PluginInput = serde_json::from_str(&input_json)
+        .map_err(|e| Error::msg(format!("Failed to parse input: {}", e)))?;
 
-    // Your custom logic here
-    let mut output_claims = input.claims.clone();
-    output_claims.insert("custom_claim".to_string(), "custom_value".to_string());
+    let mut data = HashMap::new();
+    data.insert("custom_claim".to_string(), serde_json::json!("custom_value"));
 
-    Ok(Json(PluginOutput {
+    let output = PluginOutput {
         success: true,
-        claims: Some(output_claims),
-        error_code: None,
-        error_message: None,
-        redirect_url: None,
-    }))
+        error: None,
+        action: "continue".to_string(),
+        data: Some(data),
+    };
+
+    Ok(serde_json::to_string(&output)?)
 }
 ```
 
@@ -1425,42 +1796,38 @@ cargo build --release --target wasm32-unknown-unknown
 
 #### 5. Deploy Plugin
 
-1. Navigate to **Plugins** in Admin UI
-2. Click **Upload Plugin**
-3. Select your `.wasm` file
-4. Configure plugin metadata
+1. Navigate to **Experience** > **Plugins** in Admin UI
+2. Upload your `.wasm` file
+3. Configure plugin metadata and, if it calls out, its network access
+
+Or upload with `POST /api/admin/plugins` (multipart form with the `.wasm` file).
 
 ### Using Plugin in Journey
 
 ```json
 {
   "id": "custom-validation",
-  "type": "CustomPlugin",
+  "type": "custom_plugin",
   "displayName": "Custom Validation",
-  "pluginName": "my-validation-plugin",
   "configuration": {
-    "setting1": "value1",
-    "setting2": "value2"
+    "pluginName": "my-validation-plugin",
+    "entryPoint": "execute"
   }
 }
 ```
 
 ### Plugin Input/Output Schema
 
+The plugin function receives one JSON string and returns one. Credential-bearing values (passwords, codes) are removed before the plugin sees them.
+
 #### Input
 ```typescript
 interface PluginInput {
-  claims: Record<string, string>;      // Current claims bag
-  configuration: Record<string, any>;  // Step configuration
-  context: {
-    tenantId?: string;
-    clientId: string;
-    userId?: string;
-    sessionId: string;
-    stepId: string;
-    journeyId: string;
-  };
-  userInput?: Record<string, string>;  // Form submission data
+  function: string;                     // the entry point being called
+  userId?: string;
+  tenantId?: string;
+  input: Record<string, unknown>;       // the step's form submission
+  journeyData: Record<string, unknown>; // values collected so far
 }
 ```
 
@@ -1468,37 +1835,45 @@ interface PluginInput {
 ```typescript
 interface PluginOutput {
   success: boolean;
-  claims?: Record<string, string>;     // Claims to add/update
-  errorCode?: string;
-  errorMessage?: string;
-  redirectUrl?: string;                // External redirect
-  uiSchema?: DynamicFormSchema;        // Render custom form
+  error?: string;
+  action?: 'continue' | 'complete' | 'require_input' | 'branch' | 'fail';
+  data?: Record<string, unknown>;       // values to write into the journey
 }
 ```
 
-### Dynamic Form Schema
+| Action | Effect |
+|--------|--------|
+| `continue` / `complete` | Step succeeds; `data` is written into the journey |
+| `require_input` | Shows a form described by `data`, in the same shape as a `dynamic_form` step's settings (`title`, `description`, `fields`, ...) |
+| `branch` | Takes the branch named by `data.branchId` |
+| `fail` | Step fails with `error` |
 
-Plugins can return a UI schema to render custom forms:
+A missing or unknown `action` counts as `continue`; `success: false` fails the step.
+
+### Dynamic Form Example
 
 ```rust
-#[derive(Serialize)]
-struct DynamicFormSchema {
-    title: String,
-    description: Option<String>,
-    fields: Vec<FormField>,
-    submit_button_text: Option<String>,
-}
+#[plugin_fn]
+pub fn collect_data(_input_json: String) -> FnResult<String> {
+    let mut form = HashMap::new();
+    form.insert("title".to_string(), serde_json::json!("Additional Information"));
+    form.insert("fields".to_string(), serde_json::json!([
+        { "name": "company", "type": "text", "label": "Company Name", "required": true }
+    ]));
 
-#[derive(Serialize)]
-struct FormField {
-    name: String,
-    field_type: String, // text, email, password, select, checkbox, etc.
-    label: String,
-    required: bool,
-    placeholder: Option<String>,
-    options: Option<Vec<SelectOption>>, // For select/radio fields
+    let output = PluginOutput {
+        success: true,
+        error: None,
+        action: "require_input".to_string(),
+        data: Some(form),
+    };
+    Ok(serde_json::to_string(&output)?)
 }
 ```
+
+### Network Access
+
+WASM plugins have no network access by default. A plugin's network policy (`/api/admin/plugins/{pluginName}/network`) can allow `Self` (the server's own issuer host) or `Whitelist` (a list of hosts). Unrestricted access is refused; code that needs it should be a managed plugin.
 
 ---
 
@@ -1506,60 +1881,45 @@ struct FormField {
 
 ### Journey Settings per Client
 
-Each client can override tenant-level journey settings:
+Each client can override the tenant's flow setting:
 
 | Setting | Description |
 |---------|-------------|
-| `UseJourneyFlow` | Override tenant's flow setting |
-| `SignInPolicyId` | Specific sign-in journey |
-| `SignUpPolicyId` | Specific sign-up journey |
-| `SignInSignUpPolicyId` | Combined sign-in/sign-up journey |
-| `PasswordResetPolicyId` | Password reset journey |
-| `ProfileEditPolicyId` | Profile edit journey |
-| `RequireMfa` | Force MFA for this client |
-| `AllowedPolicies` | Restrict which policies can be used |
+| `UseJourneyFlow` | Unset inherits the tenant; `false` forces the standalone pages for this client; `true` allows journeys |
 
-### Restricting Policies
-
-To restrict which journey policies a client can use:
-
-1. Edit the client in Admin UI
-2. Go to **User Journey Settings**
-3. Add policies to **Allowed Policies**
-
-When restricted, only listed policies can be requested via the `policy` parameter.
+The client chooses a journey per request with `?policy={slug}`; without one, the tenant's highest-priority enabled policy of the requested type runs (see [OIDC Extensions](#oidc-extensions)).
 
 ### Admin UI Configuration
 
-1. Navigate to **Clients** > select client
-2. Click **Edit**
-3. Scroll to **User Journey Settings** card
-4. Configure settings as needed
+1. Navigate to **Applications** > **Clients** > select client
+2. In the **UI Flow Settings** card, set **Authentication Flow** to **Inherit from tenant**, **Journey flow** or **Standalone pages**
+3. Save
 
 ### User and Role Restrictions
 
-Restrict which users can access a client application using AllowedUsers and AllowedRoles.
+Restrict which users can obtain tokens for a client using Allowed Users, Allowed Roles and Required Permission.
 
 #### How Restrictions Work
 
-- **No restrictions**: If neither AllowedUsers nor AllowedRoles are configured, all authenticated users can access the client
-- **With restrictions**: User must satisfy at least ONE of the conditions:
-  - User ID is in the AllowedUsers list, OR
-  - User has at least one role from the AllowedRoles list
+- **No restrictions**: If none are configured, all authenticated users can access the client
+- **Allowed Users**: subject IDs allowed to use the client
+- **Allowed Roles**: role names; the user must hold at least one
+- **Required Permission**: a permission the user must have through their roles (exact match, no wildcards)
+
+When several are configured, the authorization code exchange requires each configured restriction to pass, while the refresh token and password grants accept a user who passes any one of them.
 
 #### Configuring via Admin UI
 
-1. Navigate to **Clients** > select client
-2. Click **Edit**
-3. Scroll to **Access Control** section
-4. Add users to **Allowed Users** (by subject ID and display name)
-5. Add roles to **Allowed Roles**
-6. Save changes
+1. Navigate to **Applications** > **Clients** > select client
+2. Add users in the **Allowed Users** card (by subject ID and display name)
+3. Add roles in the **Allowed Roles** card
+4. Optionally set **Required Permission**
+5. Save changes
 
 #### Configuring via API
 
 ```http
-PUT /api/clients/{clientId}
+PUT /api/admin/clients/{id}
 Content-Type: application/json
 
 {
@@ -1567,36 +1927,34 @@ Content-Type: application/json
     { "subjectId": "user-123", "displayName": "John Doe" },
     { "subjectId": "user-456", "displayName": "Jane Smith" }
   ],
-  "allowedRoles": [
-    { "role": "admin" },
-    { "role": "premium-user" }
-  ]
+  "allowedRoles": ["admin", "premium-user"]
 }
 ```
+
+`{id}` is the client's numeric ID.
 
 #### Use Cases
 
 | Scenario | Configuration |
 |----------|--------------|
-| Admin-only application | Add `admin` role to AllowedRoles |
-| Specific users only | Add user IDs to AllowedUsers |
-| Department access | Add department role (e.g., `hr`, `engineering`) to AllowedRoles |
-| Beta testers | Add `beta-tester` role or specific user IDs |
-| Mixed access | Combine specific users AND roles |
+| Admin-only application | Add `admin` role to Allowed Roles |
+| Specific users only | Add user IDs to Allowed Users |
+| Department access | Add a department role (e.g., `engineering`) to Allowed Roles |
+| Beta testers | Add a `beta-tester` role or specific user IDs |
+| Custom roles | Set Required Permission and grant it through any role |
 
 #### Error Handling
 
 When a user is denied access:
-- Authorization endpoint returns `access_denied` error
-- Error is logged with user ID and client ID
-- User sees a clear error message
+- The token endpoint returns an `access_denied` error with the reason
+- A warning is logged with the user ID and client ID
 
 #### Enforcement Points
 
-Restrictions are enforced at:
-1. **Authorization endpoint** - When user is already authenticated
-2. **Journey completion** - After user completes authentication journey
-3. **Password grant** - For Resource Owner Password Credentials flow
+Restrictions are enforced at the token endpoint for:
+1. **Authorization code** exchange
+2. **Refresh token** grant
+3. **Password grant** (Resource Owner Password Credentials)
 
 #### Example: Internal Admin Tool
 
@@ -1604,38 +1962,18 @@ Restrictions are enforced at:
 {
   "clientId": "admin-dashboard",
   "clientName": "Admin Dashboard",
-  "allowedRoles": [
-    { "role": "admin" },
-    { "role": "super-admin" }
-  ],
+  "allowedRoles": ["admin", "super-admin"],
   "allowedUsers": []
 }
 ```
 
 Only users with `admin` or `super-admin` roles can access this client.
 
-#### Example: Beta Application
-
-```json
-{
-  "clientId": "new-feature-beta",
-  "clientName": "New Feature Beta",
-  "allowedRoles": [
-    { "role": "beta-tester" }
-  ],
-  "allowedUsers": [
-    { "subjectId": "ceo-user-id", "displayName": "CEO" }
-  ]
-}
-```
-
-Users with the `beta-tester` role OR the CEO (by user ID) can access this client.
-
 ---
 
 ## Signing Keys
 
-Manage cryptographic keys used for signing tokens and other security operations.
+Manage cryptographic keys used for signing tokens and other security operations. Enable managed keys with `AddSigningKeys()` on the Oluso builder; without it a development signing credential is used.
 
 ### Key Types
 
@@ -1657,9 +1995,11 @@ Keys have the following statuses:
 | `Revoked` | Manually disabled |
 | `Archived` | Retained for historical verification |
 
+Keys that encrypt stored data (data-protection keys) cannot be rotated, revoked, changed or deleted; the API refuses those requests.
+
 ### Managing Keys via Admin UI
 
-1. Navigate to **Settings** > **Signing Keys**
+1. Navigate to **Signing Keys** in the Admin UI
 2. View all keys with their status, algorithm, and usage statistics
 
 #### Generate New Key
@@ -1689,66 +2029,45 @@ Keys have the following statuses:
 
 ### Key Rotation Configuration
 
-Configure automatic key rotation:
+Automatic rotation is configured per tenant (and optionally per client) through `GET` / `PUT /api/admin/signing-keys/rotation-config`:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `Enabled` | Enable automatic rotation | `false` |
-| `KeyType` | Type for new keys | `RSA` |
-| `Algorithm` | Algorithm for new keys | `RS256` |
-| `KeySize` | Size for new keys | `2048` |
-| `KeyLifetimeDays` | How long keys remain valid | `90` |
-| `RotationLeadTimeDays` | Days before expiration to rotate | `14` |
-| `GracePeriodDays` | Days expired keys can still verify | `30` |
-| `MaxKeys` | Maximum keys to retain | `5` |
+| `enabled` | Enable automatic rotation | `true` |
+| `keyType` | Type for new keys | `RSA` |
+| `algorithm` | Algorithm for new keys | `RS256` |
+| `keySize` | Size for new keys | `2048` |
+| `keyLifetimeDays` | How long keys remain valid | `90` |
+| `rotationLeadDays` | Days before expiration to rotate | `14` |
+| `gracePeriodDays` | Days expired keys can still verify | `30` |
+| `maxKeys` | Maximum keys to retain | `5` |
+
+Host-wide defaults are set with `AddSigningKeys(options => ...)` (`SigningKeyOptions`: `DefaultStorageProvider`, `DefaultKeyType`, `DefaultRsaAlgorithm`, `DefaultEcAlgorithm`, `DefaultRsaKeySize`, `DefaultKeyLifetimeDays`, `RotationLeadDays`, `GracePeriodDays`, `MaxKeysPerContext`, `EnableAutoRotation`, `AutoRotationIntervalHours`).
 
 ### Storage Providers
 
-Keys can be stored in different backends:
-
 #### Local Storage (Default)
-```json
-{
-  "storageProvider": "Local"
-}
-```
-- Keys encrypted at rest in database
+
+- Keys encrypted at rest in the database with ASP.NET Core Data Protection
 - Private key material never exposed via API
 
 #### Azure Key Vault
-```json
-{
-  "storageProvider": "AzureKeyVault",
-  "keyVaultUri": "https://myvault.vault.azure.net/keys/my-signing-key"
-}
+
+Add the `Oluso.Enterprise.AzureKeyVault` module (licensed feature `keyvault`):
+
+```csharp
+builder.Services.AddOluso(builder.Configuration)
+    .AddSigningKeys(opts => opts.DefaultStorageProvider = KeyStorageProvider.AzureKeyVault)
+    .AddOlusoAzureKeyVault(options =>
+    {
+        options.VaultUri = "https://myvault.vault.azure.net/";
+        options.UseHsmKeys = true;
+    });
 ```
+
 - Private keys never leave Azure Key Vault
 - Signing operations happen inside Key Vault
 - Uses DefaultAzureCredential (Managed Identity, CLI, environment)
-
-#### AWS KMS
-```json
-{
-  "storageProvider": "AwsKms",
-  "keyVaultUri": "arn:aws:kms:us-east-1:123456789:key/abc-123"
-}
-```
-
-#### HashiCorp Vault
-```json
-{
-  "storageProvider": "HashiCorpVault",
-  "keyVaultUri": "transit/keys/my-signing-key"
-}
-```
-
-#### Google Cloud KMS
-```json
-{
-  "storageProvider": "GoogleCloudKms",
-  "keyVaultUri": "projects/my-project/locations/global/keyRings/my-ring/cryptoKeys/my-key"
-}
-```
 
 ### Admin API
 
@@ -1763,7 +2082,7 @@ POST /api/admin/signing-keys
 Content-Type: application/json
 
 {
-  "name": "Production Key 2025",
+  "name": "Production Key 2026",
   "keyType": "RSA",
   "algorithm": "RS256",
   "keySize": 2048,
@@ -1783,10 +2102,13 @@ PATCH /api/admin/signing-keys/{id}/status
 Content-Type: application/json
 
 {
+  "status": "Active",
   "priority": 100,
   "includeInJwks": true
 }
 ```
+
+All fields are optional; `expiresAt` can also be set.
 
 #### Revoke Key
 ```http
@@ -1798,16 +2120,21 @@ Content-Type: application/json
 }
 ```
 
+#### Delete Key
+```http
+DELETE /api/admin/signing-keys/{id}
+```
+
 #### Get Expiring Keys
 ```http
-GET /api/admin/signing-keys/expiring?daysThreshold=14
+GET /api/admin/signing-keys/expiring?daysUntilExpiration=14
 ```
 
 ### JWKS Endpoint
 
-Public keys are exposed at the standard JWKS endpoint:
+Public keys are exposed at the JWKS endpoint advertised as `jwks_uri` in discovery:
 ```
-/.well-known/openid-configuration/jwks
+/.well-known/jwks
 ```
 
 Only keys with `includeInJwks = true` and valid status are included.
@@ -1816,147 +2143,113 @@ Only keys with `includeInJwks = true` and valid status are included.
 
 ## Events and Webhooks
 
-The Identity Server publishes events for authentication, token, and system activities. These events can be consumed via webhooks or custom event sinks.
+The Identity Server publishes events for authentication, token, user, administrative and system activities. Every event is an `OlusoEvent`; it is handed to every registered `IOlusoEventSink` (the audit log, webhooks, your own sinks). `AddOluso` registers the event service.
 
 ### Event Categories
 
 | Category | Description |
 |----------|-------------|
-| `Authentication` | Login, logout, MFA, registration |
-| `Token` | Token issued, revoked, refreshed |
-| `Authorization` | Authorization requests, consent |
-| `Client` | Client authentication |
-| `Session` | Session lifecycle |
-| `Device` | Device authorization flow |
-| `ExternalIdp` | External provider authentication |
-| `System` | Errors, configuration issues |
+| `Authentication` | Sign-in, sign-out, MFA |
+| `User` | Registration, profile, role and password changes |
+| `Token` | Token issued, revoked, refreshed, introspected |
+| `Client` | Client administration |
+| `Security` | Consent, feature and module-admin changes |
+| `Role`, `Resource`, `Settings`, `Admin` | Administrative changes |
+| `Team`, `Conversation` | Team membership and conversation activity |
+| `System` | System-level events |
 
-### Event Types
+### Webhook Event Types
 
-#### Authentication Events
+Webhook subscriptions use dotted event names. Core ones include:
 
-| Event | Description |
-|-------|-------------|
-| `UserLoginSuccess` | User successfully authenticated |
-| `UserLoginFailure` | Authentication failed (bad password, locked, etc.) |
-| `UserLogoutSuccess` | User logged out |
-| `MfaChallenge` | MFA challenge initiated |
-| `MfaSuccess` | MFA verification passed |
-| `MfaFailure` | MFA verification failed |
-| `UserRegistrationSuccess` | New user registered |
-| `UserRegistrationFailure` | Registration failed |
-| `EmailVerificationSuccess` | Email verified |
-| `EmailVerificationFailure` | Email verification failed |
+| Group | Events |
+|-------|--------|
+| Authentication | `auth.login_success`, `auth.login_failed`, `auth.logout`, `auth.token_issued`, `auth.token_revoked` |
+| OIDC | `oidc.authorization_request`, `oidc.authorization_code_issued`, `oidc.authorization_failed`, `oidc.refresh_token_used`, `oidc.token_failed` |
+| Users | `user.created`, `user.updated`, `user.deleted`, `user.deactivated`, `user.reactivated`, `user.email_verified`, `user.password_changed`, `user.locked_out`, `user.role_assigned`, `user.role_removed` |
+| Security | `security.consent_granted`, `security.consent_revoked`, `security.feature_enabled`, `security.feature_disabled`, `security.module_admin_assigned`, `security.module_admin_removed` |
+| Teams | `team.created`, `team.updated`, `team.archived`, `team.restored`, `team.deleted`, `team.member_added`, `team.member_removed`, `team.member_role_changed` |
+| Journeys | `journey.submission_created` |
+| Admin (platform) | `admin.client_created`, `admin.client_updated`, `admin.client_deleted`, `admin.role_*`, `admin.idp_*`, `admin.journey_policy_*`, `admin.signing_key_changed`, `admin.tenant_*`, `admin.webhook_*`, `admin.api_resource_*`, `admin.api_scope_*`, `admin.resource_*` |
+| Modules | `saml.*`, `ldap.*`, `business.*`, `whatsapp.*` when those modules are registered |
 
-#### FIDO2/WebAuthn Events
-
-| Event | Description |
-|-------|-------------|
-| `Fido2CredentialRegistered` | Passkey registered |
-| `Fido2AuthenticationSuccess` | Passkey authentication succeeded |
-| `Fido2AuthenticationFailure` | Passkey authentication failed |
-| `Fido2CredentialRemoved` | Passkey removed |
-
-#### Token Events
-
-| Event | Description |
-|-------|-------------|
-| `TokenIssuedSuccess` | Token successfully issued |
-| `TokenIssuedFailure` | Token issuance failed |
-| `TokenRevokedSuccess` | Token revoked |
-| `TokenIntrospectionSuccess` | Token introspection completed |
-| `RefreshTokenUsed` | Refresh token exchanged |
-
-#### External IdP Events
-
-| Event | Description |
-|-------|-------------|
-| `ExternalLoginSuccess` | External provider login succeeded |
-| `ExternalLoginFailure` | External provider login failed |
-
-### Event Structure
-
-All events include:
-
-```json
-{
-  "eventId": "550e8400-e29b-41d4-a716-446655440000",
-  "eventType": "UserLoginSuccess",
-  "category": "Authentication",
-  "timestamp": "2025-01-15T10:30:00Z",
-  "activityId": "trace-correlation-id",
-  "tenantId": "tenant-1",
-  "remoteIpAddress": "192.168.1.100",
-  "data": {
-    "subjectId": "user-123",
-    "clientId": "my-app",
-    "authenticationMethod": "pwd"
-  }
-}
-```
+`GET /api/admin/webhooks/events` (or `events/grouped`) returns the full list available on your deployment, with descriptions. Admin events are platform-scoped and only platform endpoints can subscribe to them.
 
 ### Configuring Webhooks
 
-#### In Application Startup
+Register webhook delivery and retries in `Program.cs`:
 
 ```csharp
-services.AddIdentityServerEvents()
-    .AddWebhookEventSink("https://my-service.com/webhooks/identity");
+builder.Services.AddOlusoWebhooks(options =>
+{
+    options.TimeoutSeconds = 30;
+    options.MaxRetries = 5;
+    options.RequireHttps = true;
+});
+builder.Services.AddWebhookRetryProcessing();   // in-process retries of failed deliveries
 ```
 
-#### Multiple Webhooks
+Then create endpoints on the **Webhooks** page of the Admin UI (`/webhooks`) or through the API:
 
-```csharp
-services.AddIdentityServerEvents()
-    .AddWebhookEventSink("https://audit.example.com/events")
-    .AddWebhookEventSink("https://analytics.example.com/events");
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/webhooks/endpoints` | GET / POST | List or create endpoints (URL, subscribed events, auth type) |
+| `/api/admin/webhooks/endpoints/{endpointId}` | GET / PUT / DELETE | Read, update or delete an endpoint |
+| `/api/admin/webhooks/endpoints/{endpointId}/rotate-secret` | POST | Issue a new signing secret |
+| `/api/admin/webhooks/endpoints/{endpointId}/test` | POST | Send a test delivery |
+| `/api/admin/webhooks/endpoints/{endpointId}/deliveries` | GET | Delivery history |
+| `/api/admin/webhooks/deliveries/{deliveryId}/retry` | POST | Retry a delivery |
 
-#### Filtered Webhooks
-
-```csharp
-services.AddIdentityServerEvents()
-    .AddFilteredEventSink<WebhookEventSink>(
-        filter: e => e.Category == "Authentication",
-        configure: sink => sink.WebhookUrl = "https://auth-monitor.example.com/events"
-    );
-```
+Endpoint authentication (`authType`): `None` (HMAC signature only), `BearerToken`, `BasicAuth`, `ApiKeyHeader` (`X-API-Key`), or `IssuerSigned`: a short-lived `Authorization: Bearer` JWT (`typ` `webhook+jwt`) signed with the tenant's signing key, verifiable against its `jwks_uri` with no shared secret. Its claims include `aud` (the endpoint URL), `jti` (the delivery ID), `webhook_event` and `body_sha256`.
 
 ### Webhook Payload
 
-Webhooks receive HTTP POST requests with JSON payload:
+Webhooks receive HTTP POST requests with a snake_case JSON payload:
 
 ```http
 POST /webhooks/identity HTTP/1.1
 Content-Type: application/json
+X-Webhook-ID: 3f6c...
+X-Webhook-Event: auth.login_success
+X-Webhook-Retry: 1
+X-Webhook-Timestamp: 2026-01-15T10:30:00.0000000Z
+X-Webhook-Signature: v1=5d41402abc4b2a76b9719d911017c592...
 
 {
-  "eventId": "550e8400-e29b-41d4-a716-446655440000",
-  "eventType": "UserLoginSuccess",
-  "category": "Authentication",
-  "timestamp": "2025-01-15T10:30:00Z",
-  "tenantId": "tenant-1",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "event_type": "auth.login_success",
+  "tenant_id": "tenant-1",
+  "timestamp": "2026-01-15T10:30:00Z",
+  "api_version": "2026-01-01",
+  "origin": { ... },
   "data": { ... }
 }
 ```
 
+When the endpoint has a secret, `X-Webhook-Signature` is `v1=` followed by the lowercase hex HMAC-SHA256 of `{X-Webhook-Timestamp}.{raw body}` keyed with the secret. Events whose data is marked sensitive are delivered with those fields redacted (listed in `redacted_fields`) until an administrator authorises sensitive data for the endpoint.
+
 ### Custom Event Sinks
 
-Implement `IEventSink` for custom event handling:
+Implement `IOlusoEventSink` for custom event handling:
 
 ```csharp
-public class MyCustomEventSink : IEventSink
+public class MyCustomEventSink : IOlusoEventSink
 {
-    public async Task PersistAsync(IdentityServerEvent evt)
+    private readonly IMonitoringClient _monitoring;
+
+    public MyCustomEventSink(IMonitoringClient monitoring) => _monitoring = monitoring;
+
+    public async Task HandleAsync(OlusoEvent evt, CancellationToken cancellationToken = default)
     {
-        // Send to your monitoring system
-        await _monitoring.TrackEventAsync(new {
-            Type = evt.EventType,
-            Category = evt.Category,
-            Timestamp = evt.Timestamp,
-            TenantId = evt.TenantId,
-            Data = evt.Data
-        });
+        switch (evt)
+        {
+            case UserSignInFailedEvent failed:
+                await _monitoring.AlertAsync(failed, cancellationToken);
+                break;
+            default:
+                await _monitoring.TrackAsync(evt.EventType, evt.Category, evt.TenantId, evt.Timestamp, cancellationToken);
+                break;
+        }
     }
 }
 ```
@@ -1964,81 +2257,55 @@ public class MyCustomEventSink : IEventSink
 Register in startup:
 
 ```csharp
-services.AddIdentityServerEvents()
-    .AddEventSink<MyCustomEventSink>();
+builder.Services.AddEventSink<MyCustomEventSink>();
+
+// or a callback
+builder.Services.AddEventSink(evt => { Console.WriteLine(evt.EventType); return Task.CompletedTask; }, "console");
+
+// or log every event (development)
+builder.Services.AddLoggerEventSink();
 ```
+
+`FilteredEventSink.ForCategories(inner, ...)`, `FilteredEventSink.ExcludeCategories(inner, ...)` and `FilteredEventSink.FailuresOnly(inner)` wrap a sink to receive only some events.
 
 ### Batching Events
 
-For high-throughput scenarios, use batching:
+For high-throughput scenarios, `BatchingEventSink` collects events and hands them to a callback in batches:
 
 ```csharp
-services.AddIdentityServerEvents()
-    .AddBatchingEventSink(
-        processEvents: async events => {
-            await _bulkWriter.WriteAsync(events);
-        },
+builder.Services.AddSingleton<IOlusoEventSink>(sp =>
+{
+    var writer = sp.GetRequiredService<IBulkEventWriter>();
+    return new BatchingEventSink(
+        (events, ct) => writer.WriteAsync(events, ct),
         batchSize: 100,
-        flushInterval: TimeSpan.FromSeconds(5)
-    );
+        flushInterval: TimeSpan.FromSeconds(5));
+});
 ```
 
 ### Event Configuration
 
-Control which events are raised:
+Configure the event service with `OlusoEventOptions`:
 
 ```csharp
-services.AddIdentityServerEvents(options =>
+builder.Services.Configure<OlusoEventOptions>(options =>
 {
-    options.RaiseAuthenticationEvents = true;
-    options.RaiseTokenEvents = true;
-    options.RaiseAuthorizationEvents = true;
-    options.RaiseClientEvents = true;
-    options.RaiseSessionEvents = true;
-    options.RaiseErrorEvents = true;
-    options.RaiseDeviceEvents = true;
-    options.RaiseExternalIdpEvents = true;
-
-    // Only emit failure events (reduce noise)
-    options.RaiseFailureEventsOnly = false;
+    options.ContinueOnSinkError = true;           // one failing sink doesn't stop the others
+    options.IncludeCategories.Add("Authentication"); // empty means all categories
+    options.ExcludeCategories.Add("Conversation");
+    options.CaptureActivityId = true;             // record the trace ID on each event
 });
 ```
 
-> **Note:** Events are raised but not persisted by default. For persistent audit logs with querying capabilities, see the [Audit Logging](#audit-logging) section (requires Professional+ license or add-on).
-
 ### Using Webhooks in User Journeys
 
-Add a Webhook step to your journey:
-
-```json
-{
-  "id": "notify-signup",
-  "type": "Webhook",
-  "displayName": "Notify CRM",
-  "configuration": {
-    "url": "https://crm.example.com/api/new-user",
-    "method": "POST",
-    "headers": {
-      "Authorization": "Bearer ${env:CRM_API_KEY}"
-    },
-    "body": {
-      "email": "${claims:email}",
-      "name": "${claims:name}",
-      "source": "identity-server"
-    },
-    "timeoutSeconds": 10,
-    "continueOnError": true
-  }
-}
-```
+To call an external service from inside a journey, use the `webhook` step (see [Webhook](#webhook-webhook)) or the `api_call` step when the response should feed the journey.
 
 ---
 
 ## Audit Logging
 
-> **License Required:** Professional+ license or `audit-logging` add-on
-
-Audit Logging provides persistent, queryable records of security events for compliance, forensics, and monitoring. Unlike events (which are fire-and-forget), audit logs are stored in the database and can be searched, filtered, and exported.
+Audit Logging provides persistent, queryable records of security events for compliance, forensics, and monitoring. With the Entity Framework stores (`AddEntityFrameworkStores...`), every auditable event raised through the event service is written to the `AuditLogs` table by the built-in audit sink.
 
 ### What's Captured
 
@@ -2046,89 +2313,21 @@ Audit logs capture the **who, what, when, where, and how** of security-relevant 
 
 | Field | Description |
 |-------|-------------|
-| **Who** | Subject ID, name, and email of the actor |
-| **What** | Action performed, resource type, and resource ID |
+| **Who** | Subject ID, name, and email of the user the entry is about |
+| **Origin** | What caused it: `admin`, `service_client`, `scim`, `journey`, `user`, `anonymous` or `system`, with the actor's ID and name |
+| **What** | Event type, category, action, resource type, and resource ID |
 | **When** | Timestamp (UTC) of the event |
-| **Where** | IP address, user agent, tenant ID |
-| **How** | Authentication method, changed fields, details |
+| **Where** | IP address, user agent, tenant ID, client ID |
+| **How** | Details and changed fields |
 | **Result** | Success/failure status, error messages |
 
-### Event Categories
+### Event Types
 
-#### Authentication Events
-
-| Event Type | Description |
-|------------|-------------|
-| `UserLoginSuccess` | Successful user authentication |
-| `UserLoginFailure` | Failed authentication attempt |
-| `UserLogout` | User logged out |
-| `MfaSuccess` | MFA verification passed |
-| `MfaFailure` | MFA verification failed |
-| `MfaSetupComplete` | User completed MFA setup |
-
-#### Admin Events
-
-| Event Type | Description |
-|------------|-------------|
-| `UserCreated` | New user account created |
-| `UserUpdated` | User profile modified |
-| `UserDeleted` | User account deleted |
-| `UserLocked` | User account locked |
-| `UserUnlocked` | User account unlocked |
-| `UserRolesChanged` | User role assignments changed |
-| `RoleCreated` | New role created |
-| `RoleUpdated` | Role modified |
-| `RoleDeleted` | Role deleted |
-| `RolePermissionsChanged` | Role permissions modified |
-| `ClientCreated` | New OAuth client created |
-| `ClientUpdated` | Client configuration changed |
-| `ClientDeleted` | Client deleted |
-| `ClientSecretRegenerated` | Client secret rotated |
-
-#### Configuration Events
-
-| Event Type | Description |
-|------------|-------------|
-| `TenantSettingsChanged` | Tenant configuration modified |
-| `SigningKeyRotated` | Signing keys rotated |
-| `IdentityProviderCreated` | External IdP added |
-| `IdentityProviderUpdated` | External IdP modified |
-| `IdentityProviderDeleted` | External IdP removed |
-| `JourneyPolicyCreated` | Journey policy created |
-| `JourneyPolicyUpdated` | Journey policy modified |
-| `JourneyPolicyDeleted` | Journey policy deleted |
-
-#### Access Events
-
-| Event Type | Description |
-|------------|-------------|
-| `AccessDenied` | User denied access to resource |
-| `AdminLogin` | Admin user logged in |
-| `AdminLoginFailure` | Admin login attempt failed |
-
-### Enabling Audit Logging
-
-#### 1. Register Services
-
-```csharp
-// Program.cs
-builder.Services.AddIdentityServerEvents(options => options.EnableAuditEvents());
-builder.Services.AddAuditLogging();
-builder.Services.AddAuditLoggingEventSink(); // Only registers if licensed
-```
-
-#### 2. Run Database Migration
-
-After enabling audit logging, create and apply the migration:
-
-```bash
-dotnet ef migrations add AddAuditLogs
-dotnet ef database update
-```
+The event type is the event's class name, for example `UserSignedInEvent`, `UserSignInFailedEvent`, `UserSignedOutEvent`, `MfaCompletedEvent`, `UserRegisteredEvent`, `UserUpdatedEvent`, `UserDeletedEvent`, `UserLockedOutEvent`, `UserRoleAssignedEvent`, `TokenIssuedEvent`, `TokenRevokedEvent`, `ConsentGrantedEvent`, and the admin events `AdminClientCreatedEvent`, `AdminRoleUpdatedEvent`, `AdminIdpDeletedEvent`, `AdminJourneyPolicyUpdatedEvent`, `AdminSigningKeyChangedEvent`, `AdminTenantSettingsUpdatedEvent` and so on. Events that are only mechanisms (cancellable pre-hooks such as `UserSigningInEvent`, scheduler ticks) are not recorded.
 
 ### Admin UI
 
-Navigate to **Audit Logs** in the Admin UI to:
+Navigate to **Activity Logs** in the Admin UI to:
 
 - View all audit log entries with filtering
 - Search by user, action, resource, or date range
@@ -2136,12 +2335,14 @@ Navigate to **Audit Logs** in the Admin UI to:
 - Export logs to JSON or CSV
 - View detailed event information
 
+Requires the `audit_logs.read` permission.
+
 ### API Endpoints
 
 #### Check Status
 
 ```http
-GET /api/auditlogs/status
+GET /api/admin/auditlogs/status
 ```
 
 Response:
@@ -2152,18 +2353,10 @@ Response:
 }
 ```
 
-If not licensed:
-```json
-{
-  "enabled": false,
-  "message": "Audit logging requires Professional license or AuditLogging add-on"
-}
-```
-
 #### Query Audit Logs
 
 ```http
-GET /api/auditlogs?category=Admin&action=Create&from=2025-01-01&pageSize=50
+GET /api/admin/auditlogs?category=Admin&action=Create&from=2026-01-01&pageSize=50
 ```
 
 Query Parameters:
@@ -2173,7 +2366,9 @@ Query Parameters:
 | `action` | string | Filter by action (Create, Update, Delete, Login, etc.) |
 | `category` | string | Filter by category (Authentication, Admin, Token, etc.) |
 | `eventType` | string | Filter by specific event type |
-| `subjectId` | string | Filter by user who performed action |
+| `subjectId` | string | Filter by the user the entry is about |
+| `originKind` | string | Filter by what caused it: `admin`, `service_client`, `scim`, `journey`, `user`, `anonymous`, `system` |
+| `originId` | string | Filter by the causing actor's id (admin user id, client id, SCIM client id, journey policy id) |
 | `resourceType` | string | Filter by resource type (User, Role, Client, etc.) |
 | `resourceId` | string | Filter by specific resource ID |
 | `clientId` | string | Filter by OAuth client |
@@ -2192,18 +2387,20 @@ Response:
   "items": [
     {
       "id": 12345,
-      "timestamp": "2025-01-15T10:30:00Z",
-      "eventType": "UserCreated",
-      "category": "Admin",
-      "action": "Create",
-      "subjectId": "admin-user-id",
-      "subjectName": "Admin User",
+      "timestamp": "2026-01-15T10:30:00Z",
+      "eventType": "UserRegisteredEvent",
+      "category": "User",
+      "action": "CreateUser",
+      "subjectId": "new-user-id",
+      "subjectEmail": "john@example.com",
+      "subjectName": "john",
       "resourceType": "User",
       "resourceId": "new-user-id",
-      "resourceName": "john@example.com",
+      "originKind": "admin",
+      "originId": "admin-user-id",
+      "originName": "Admin User",
       "ipAddress": "192.168.1.100",
-      "success": true,
-      "details": "{\"email\":\"john@example.com\",\"username\":\"john\"}"
+      "success": true
     }
   ],
   "totalCount": 1523,
@@ -2216,25 +2413,25 @@ Response:
 #### Get Single Entry
 
 ```http
-GET /api/auditlogs/12345
+GET /api/admin/auditlogs/12345
 ```
 
 #### Get Logs for a Resource
 
 ```http
-GET /api/auditlogs/resource/User/user-123?limit=100
+GET /api/admin/auditlogs/resource/User/user-123?limit=100
 ```
 
 #### Get Logs for a User
 
 ```http
-GET /api/auditlogs/user/user-123?limit=100
+GET /api/admin/auditlogs/user/user-123?limit=100
 ```
 
 #### Export Logs
 
 ```http
-GET /api/auditlogs/export?from=2025-01-01&to=2025-01-31&format=csv
+GET /api/admin/auditlogs/export?from=2026-01-01&to=2026-01-31&format=csv
 ```
 
 Formats: `json`, `csv`
@@ -2242,85 +2439,52 @@ Formats: `json`, `csv`
 #### Purge Old Logs
 
 ```http
-DELETE /api/auditlogs/purge?olderThanDays=90
+DELETE /api/admin/auditlogs/purge?olderThanDays=90
 ```
 
-Minimum retention: 30 days
+Minimum retention: 30 days.
 
-### Instrumenting Custom Code
+### Recording Custom Events
 
-Use `AdminAuditHelper` to raise audit events from your own controllers or services:
+Raise your own events through `IOlusoEventService`; they reach the audit log, webhooks and every other sink. Administrative actions derive from `AdminActionEvent`:
 
 ```csharp
-public class MyController : ControllerBase
+public class AdminWidgetCreatedEvent : AdminActionEvent
 {
-    private readonly AdminAuditHelper _audit;
+    public override string ResourceType => "Widget";
+    public override string? WebhookEventType => "admin.widget_created";   // null: no webhook
 
-    public MyController(AdminAuditHelper audit)
-    {
-        _audit = audit;
-    }
+    public required string WidgetName { get; init; }
+}
+
+public class WidgetsController : ControllerBase
+{
+    private readonly IOlusoEventService _events;
+
+    public WidgetsController(IOlusoEventService events) => _events = events;
 
     [HttpPost]
-    public async Task<IActionResult> CreateSomething(CreateRequest request)
+    public async Task<IActionResult> Create(CreateWidgetRequest request, CancellationToken ct)
     {
-        // ... create logic ...
+        var widget = await CreateWidgetAsync(request, ct);
 
-        // Raise audit event
-        await _audit.RaiseAsync(new MyCustomEvent
+        await _events.RaiseAsync(new AdminWidgetCreatedEvent
         {
-            ResourceId = newItem.Id,
-            ResourceName = newItem.Name,
-            Details = new Dictionary<string, object>
-            {
-                ["field1"] = request.Field1,
-                ["field2"] = request.Field2
-            }
-        });
+            AdminUserId = User.FindFirst("sub")!.Value,
+            ResourceId = widget.Id,
+            WidgetName = widget.Name
+        }, ct);
 
-        return Ok(newItem);
+        return Ok(widget);
     }
 }
 ```
 
-### Creating Custom Events
-
-Extend `AdminEvent` for custom audit events:
-
-```csharp
-public class MyCustomEvent : AdminEvent
-{
-    public override string EventType => "MyCustomAction";
-    public override string ResourceType => "MyResource";
-    public override string Action => "CustomAction";
-
-    public string? CustomField { get; set; }
-}
-```
-
-### License Behavior
-
-| License Tier | Behavior |
-|--------------|----------|
-| **Community** | API returns `402 Payment Required` |
-| **Starter** | API returns `402 Payment Required` |
-| **Professional** | Full functionality |
-| **Enterprise** | Full functionality |
-| **Development** | Full functionality (for testing) |
-
-Users without the required license can purchase the `audit-logging` add-on separately.
+Other events derive from `OlusoEvent` and override `Category` (and `WebhookEventType` to offer them as webhooks).
 
 ### Database Schema
 
-Audit logs are stored in the `AuditLogs` table with indexes on:
-
-- `(TenantId, Timestamp)` - Time-based queries
-- `(TenantId, Category, Timestamp)` - Category filtering
-- `(TenantId, SubjectId, Timestamp)` - User activity
-- `(TenantId, ResourceType, ResourceId)` - Resource history
-- `(TenantId, EventType, Timestamp)` - Event type filtering
-- `(TenantId, Success, Timestamp)` - Success/failure filtering
-- `(ActivityId)` - Request correlation
+Audit logs are stored in the `AuditLogs` table, indexed on `TenantId`, `(TenantId, Timestamp)`, `Timestamp`, `Category`, `EventType`, `SubjectId`, `(ResourceType, ResourceId)`, `ClientId`, `ActivityId` and `(OriginKind, OriginId)`.
 
 ### Retention Policy
 
@@ -2328,7 +2492,7 @@ Implement a retention policy by scheduling the purge endpoint:
 
 ```bash
 # Cron job to purge logs older than 90 days
-0 2 * * * curl -X DELETE "https://your-server/api/auditlogs/purge?olderThanDays=90" \
+0 2 * * * curl -X DELETE "https://your-server/api/admin/auditlogs/purge?olderThanDays=90" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -2339,6 +2503,8 @@ public class AuditLogRetentionService : BackgroundService
 {
     private readonly IServiceProvider _services;
 
+    public AuditLogRetentionService(IServiceProvider services) => _services = services;
+
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -2347,7 +2513,7 @@ public class AuditLogRetentionService : BackgroundService
             var auditService = scope.ServiceProvider.GetRequiredService<IAuditLogService>();
 
             var cutoff = DateTime.UtcNow.AddDays(-90);
-            var deleted = await auditService.PurgeOldLogsAsync(cutoff, ct);
+            await auditService.PurgeOldLogsAsync(tenantId: null, cutoff, ct);
 
             await Task.Delay(TimeSpan.FromHours(24), ct);
         }
@@ -2371,95 +2537,104 @@ Ensure your retention policy aligns with regulatory requirements (typically 1-7 
 
 ## Custom Styling
 
-Customize the look and feel of authentication pages at the tenant or journey level.
+Customize the look and feel of journey pages at the tenant or journey level.
 
 ### Styling Hierarchy
 
-Styles are applied in this order (later overrides earlier):
-
-1. **Default Theme** - Built-in styles
+1. **Default Theme** - Built-in styles (`journey.css`)
 2. **Tenant Branding** - Applied to all journeys in a tenant
-3. **Journey/Policy UI** - Policy-specific customization
-4. **Theme Selection** - Predefined theme variants
+3. **Journey Policy UI** - Policy-specific customization
+
+For the logo, primary color, background color and custom CSS, a value set on the journey policy replaces the tenant's value for that setting; settings the policy leaves empty use the tenant branding.
 
 ### Per-Policy Styling
 
-Each journey policy can have custom UI configuration:
+Each journey policy has a `ui` configuration:
 
 | Setting | Description |
 |---------|-------------|
-| `Theme` | Predefined theme (light, dark, minimal) |
-| `LogoUrl` | Custom logo image URL |
-| `PrimaryColor` | Primary brand color (hex) |
-| `BackgroundColor` | Background color (hex) |
-| `CustomCss` | Arbitrary CSS rules |
+| `theme` | Predefined theme: `light`, `dark`, `minimal`, or empty for the default |
+| `title` | Page title |
+| `logoUrl` | Custom logo image URL |
+| `primaryColor` | Primary brand color (hex) |
+| `backgroundColor` | Background color (hex) |
+| `customCss` | Arbitrary CSS rules |
+| `progressStyle` | Step indicator: `horizontal` (default), `vertical`, `none` |
+| `layout` | Card width: `narrow` (default, 460px), `medium` (600px), `wide` (900px), `full` |
+| `localeOverrides` | Per-locale text overrides, layered over the tenant's overrides |
 
 ### Configuring in Admin UI
 
-1. Navigate to **Journeys** > select journey
-2. Scroll to **UI Customization** section
-3. Configure colors, logo, and custom CSS
+1. Navigate to **Experience** > **User Journeys** > select journey
+2. Open the **UI Customization** section
+3. Configure theme, step indicator, layout width, logo, title, colors, and custom CSS
 
 ### Available CSS Variables
 
-The following CSS variables are available for customization:
+The journey pages read these variables; `primaryColor` sets `--primary-color` (with derived `--primary-hover`, `--primary-light` and `--primary-glow`) and `backgroundColor` sets `--background-start` and `--background-end`:
 
 ```css
 :root {
-  /* Colors */
-  --primary-color: #3b82f6;
-  --secondary-color: #64748b;
-  --journey-primary-color: #3b82f6;
-  --journey-background-color: #ffffff;
+  /* Brand */
+  --primary-color: #f97316;
+  --primary-hover: #ea580c;
+  --primary-dark: #c2410c;
+  --primary-light: rgba(249, 115, 22, 0.1);
+  --primary-glow: rgba(249, 115, 22, 0.35);
+  --accent-color: #14b8a6;
 
-  /* Text */
-  --text-primary: #1f2937;
-  --text-secondary: #6b7280;
+  /* Page background (gradient) */
+  --background-start: #0f172a;
+  --background-end: #1e293b;
+
+  /* Text and lines */
+  --text-primary: #1a1a2e;
+  --text-secondary: #6c757d;
   --text-muted: #9ca3af;
-
-  /* Backgrounds */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f3f4f6;
-  --bg-card: #ffffff;
-
-  /* Borders */
   --border-color: #e5e7eb;
-  --border-radius: 8px;
-  --border-radius-lg: 12px;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  /* Status */
+  --error-color: #dc2626;
+  --success-color: #16a34a;
+  --warning-color: #f59e0b;
 
-  /* Spacing */
-  --spacing-xs: 0.25rem;
-  --spacing-sm: 0.5rem;
-  --spacing-md: 1rem;
-  --spacing-lg: 1.5rem;
-  --spacing-xl: 2rem;
+  /* Text that sits directly on the page background */
+  --on-bg: #ffffff;
+  --on-bg-muted: rgba(255, 255, 255, 0.72);
+  --on-bg-subtle: rgba(255, 255, 255, 0.4);
 }
 ```
+
+Themes also set `--card-bg`.
 
 ### CSS Classes
 
 #### Container Classes
 ```css
-.journey-container    /* Main journey wrapper */
-.journey-logo         /* Logo container */
-.journey-content      /* Content area */
+body.journey-page     /* Page body (also carries theme-{name}) */
+.journey-wrapper      /* Outer wrapper */
+.journey-container    /* Main journey container */
+.journey-brand        /* Brand name/logo row */
+.journey-logo         /* Logo container (image has class .logo) */
+.journey-card         /* The card holding the step */
+.journey-body         /* Card content */
 .journey-footer       /* Footer area */
+.journey-progress     /* Horizontal step indicator */
+.journey-steps-vertical /* Vertical step indicator */
 ```
 
 #### Form Classes
 ```css
 .form-group          /* Form field wrapper */
-.form-label          /* Field label */
-.form-input          /* Input fields */
+.form-row            /* Fields side by side */
+.form-control        /* Input fields */
 .form-select         /* Select dropdowns */
-.form-checkbox       /* Checkboxes */
-.form-error          /* Error messages */
-.form-helper         /* Helper text */
+.form-check          /* Checkbox/radio wrapper */
+.form-check-input    /* Checkbox/radio input */
+.form-check-label    /* Checkbox/radio label */
+.form-text           /* Helper text */
+.otp-input-group     /* One-time code inputs */
+.phone-input         /* Phone number with country picker */
 ```
 
 #### Button Classes
@@ -2467,47 +2642,44 @@ The following CSS variables are available for customization:
 .btn                 /* Base button */
 .btn-primary         /* Primary action */
 .btn-secondary       /* Secondary action */
-.btn-danger          /* Destructive action */
+.btn-outline         /* Outlined button */
 .btn-link            /* Link-style button */
-.btn-social          /* Social login buttons */
+.btn-external        /* External provider buttons */
+.btn-passkey         /* Passkey button */
+.btn-block           /* Full-width button */
 ```
 
 #### Alert Classes
 ```css
 .alert               /* Base alert */
 .alert-success       /* Success message */
-.alert-error         /* Error message */
+.alert-danger        /* Error message */
 .alert-warning       /* Warning message */
-.alert-info          /* Info message */
 ```
 
 ### Custom CSS Examples
 
 #### Modern Card Style
 ```css
-.journey-container {
-  max-width: 420px;
-  margin: 2rem auto;
-  padding: 2rem;
+.journey-card {
   border-radius: 16px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
   background: #ffffff;
 }
 
-.journey-logo img {
-  max-height: 48px;
-  margin-bottom: 1.5rem;
+.journey-logo .logo {
+  max-height: 40px;
 }
 ```
 
 #### Gradient Background
 ```css
-body {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  min-height: 100vh;
+:root {
+  --background-start: #667eea;
+  --background-end: #764ba2;
 }
 
-.journey-container {
+.journey-card {
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
 }
@@ -2530,9 +2702,9 @@ body {
 }
 ```
 
-#### Social Login Buttons
+#### External Provider Buttons
 ```css
-.btn-social {
+.btn-external {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2545,46 +2717,37 @@ body {
   transition: background 0.2s;
 }
 
-.btn-social:hover {
-  background: var(--bg-secondary);
+.btn-external:hover {
+  background: #f3f4f6;
 }
 
-.btn-social img {
+.btn-external img {
   width: 20px;
   height: 20px;
 }
 ```
 
-#### Dark Mode Theme
+#### Dark Card
 ```css
 :root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-card: #1e293b;
+  --card-bg: #1e293b;
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --border-color: #334155;
 }
 
-body {
-  background: var(--bg-primary);
-}
-
-.journey-container {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-}
-
-.form-input {
-  background: var(--bg-secondary);
+.form-control {
+  background: #0f172a;
   border-color: var(--border-color);
   color: var(--text-primary);
 }
 ```
 
+The `dark` theme applies a complete dark palette without custom CSS.
+
 #### Custom Form Inputs
 ```css
-.form-input {
+.form-control {
   width: 100%;
   padding: 12px 16px;
   border: 2px solid var(--border-color);
@@ -2593,72 +2756,48 @@ body {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.form-input:focus {
+.form-control:focus {
   outline: none;
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px var(--primary-light);
 }
 
-.form-input::placeholder {
+.form-control::placeholder {
   color: var(--text-muted);
-}
-
-.form-input.error {
-  border-color: #ef4444;
 }
 ```
 
-#### Animated Loader
+#### Loader Color
 ```css
 .loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--border-color);
   border-top-color: var(--primary-color);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 ```
 
 ### Per-Tenant Branding
 
-Configure tenant-wide branding in tenant settings:
+Configure tenant-wide branding under **Settings** > **Branding** in the Admin UI. The tenant branding settings are `primaryColor`, `secondaryColor`, `backgroundColor`, `logoUrl`, `faviconUrl`, `companyName`, `supportEmail`, `privacyPolicyUrl`, `termsOfServiceUrl`, `footerText` and `customCss`:
 
 ```json
 {
-  "branding": {
-    "primaryColor": "#3b82f6",
-    "secondaryColor": "#64748b",
-    "logoUrl": "https://cdn.example.com/logo.png",
-    "faviconUrl": "https://cdn.example.com/favicon.ico",
-    "customCss": ".journey-container { max-width: 400px; }"
-  }
+  "primaryColor": "#3b82f6",
+  "backgroundColor": "#0f172a",
+  "logoUrl": "https://cdn.example.com/logo.png",
+  "faviconUrl": "https://cdn.example.com/favicon.ico",
+  "customCss": ".journey-card { border-radius: 4px; }"
 }
 ```
-
-### Branding Priority
-
-When multiple styling sources exist:
-
-1. Journey policy `CustomCss` (highest priority)
-2. Journey policy `PrimaryColor`/`BackgroundColor`
-3. Journey policy `Theme`
-4. Tenant `Branding.CustomCss`
-5. Tenant `Branding.PrimaryColor`/`SecondaryColor`
-6. Default theme (lowest priority)
 
 ### Theme Options
 
 | Theme | Description |
 |-------|-------------|
-| `default` | Standard light theme |
-| `light` | Clean, minimal light theme |
-| `dark` | Dark mode theme |
-| `minimal` | Ultra-minimal, reduced chrome |
+| (default) | Dark gradient page with a light card |
+| `light` | Soft neutral page, white card, dark text |
+| `dark` | Dark page and dark card with light text |
+| `minimal` | Flat: no gradient, glow, blur or heavy shadow |
+
+Themes only change the shell variables, so an explicit primary color still applies.
 
 ### Responsive Design
 
@@ -2666,22 +2805,14 @@ Built-in styles are mobile-responsive. Custom CSS should follow:
 
 ```css
 /* Mobile-first approach */
-.journey-container {
+.journey-card {
   padding: 1rem;
 }
 
 /* Tablet and up */
 @media (min-width: 640px) {
-  .journey-container {
+  .journey-card {
     padding: 2rem;
-  }
-}
-
-/* Desktop */
-@media (min-width: 1024px) {
-  .journey-container {
-    max-width: 480px;
-    margin: 4rem auto;
   }
 }
 ```
@@ -2695,502 +2826,76 @@ Built-in styles are mobile-responsive. Custom CSS should follow:
 
 ---
 
-## Platform Billing
-
-Platform Billing enables you to bill your tenants for using the identity platform. This is a two-tier billing model where you (the platform operator) bill tenants, and optionally tenants can bill their end users.
-
-### Architecture Overview
-
-```
-Platform Operator
-       │
-       ▼
-┌─────────────────┐
-│ Platform Plans  │ ← Plans you offer to tenants (Starter, Pro, Enterprise)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│    Tenants      │ ← Each tenant subscribes to a platform plan
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  End Users      │ ← Tenants can optionally bill their users
-└─────────────────┘
-```
-
-### Platform Plans
-
-Platform plans define what you charge tenants for using the identity service.
-
-#### Creating a Platform Plan
-
-Navigate to **Platform Billing** in the Admin UI (SuperAdmin only):
-
-1. Click **Add Plan**
-2. Configure basic settings:
-   - **Plan ID**: Unique identifier (e.g., `starter`, `pro`, `enterprise`)
-   - **Name**: Internal name
-   - **Display Name**: Shown to tenants
-   - **Description**: Plan benefits description
-   - **Price**: Base price in cents (e.g., 9900 = $99.00)
-   - **Currency**: USD, EUR, GBP
-   - **Billing Interval**: Monthly or Yearly
-   - **Trial Days**: Free trial period
-
-#### Plan Features
-
-Configure which features are included in each plan:
-
-| Feature Key | Description |
-|-------------|-------------|
-| `custom_domain` | Allow custom authentication domains |
-| `custom_branding` | Full UI customization |
-| `advanced_mfa` | Hardware keys, biometrics |
-| `sso_connections` | Enterprise SSO (SAML, OIDC) |
-| `audit_logs` | Extended audit log retention |
-| `api_access` | Management API access |
-| `webhooks` | Webhook integrations |
-| `user_subscriptions` | Tenant can bill their end users |
-
-#### Plan Limits
-
-Set usage limits per plan:
-
-| Limit | Description |
-|-------|-------------|
-| `maxMonthlyActiveUsers` | MAU limit (-1 = unlimited) |
-| `maxTotalUsers` | Total user limit |
-| `maxClients` | OAuth client limit |
-| `maxApiRequestsPerMonth` | API rate limit |
-| `maxAuthRequestsPerMonth` | Auth request limit |
-| `auditLogRetentionDays` | Log retention period |
-
-#### Metered Billing
-
-Configure usage-based pricing for overages:
-
-```json
-{
-  "meteredPricing": [
-    {
-      "usageType": "mau",
-      "includedQuantity": 1000,
-      "pricePerUnitInCents": 10,
-      "unitName": "user",
-      "billingIncrement": 1
-    }
-  ]
-}
-```
-
-### Stripe Integration
-
-Platform billing integrates with Stripe for payment processing.
-
-#### Configuration
-
-```json
-{
-  "Stripe": {
-    "SecretKey": "sk_live_xxx",
-    "PublishableKey": "pk_live_xxx",
-    "WebhookSecret": "whsec_xxx"
-  }
-}
-```
-
-#### Syncing Plans with Stripe
-
-When you create a platform plan with an external price ID, it syncs with Stripe:
-
-```csharp
-// In Admin UI, set the External Plan ID to your Stripe Price ID
-ExternalPlanId = "price_1234567890"
-```
-
-#### Webhook Events
-
-Configure your Stripe webhook to send events to:
-```
-POST /api/payments/webhook
-```
-
-Required events:
-- `customer.subscription.created`
-- `customer.subscription.updated`
-- `customer.subscription.deleted`
-- `invoice.paid`
-- `invoice.payment_failed`
-- `checkout.session.completed`
-
-### API Endpoints
-
-#### List Platform Plans
-
-```http
-GET /api/tenant-billing/plans
-Authorization: Bearer {token}
-```
-
-#### Get Tenant Subscription
-
-```http
-GET /api/tenant-billing/subscription
-Authorization: Bearer {token}
-X-Tenant-Id: {tenantId}
-```
-
-#### Subscribe to Plan
-
-```http
-POST /api/tenant-billing/subscribe
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{
-  "planId": "pro",
-  "paymentMethodId": "pm_xxx"
-}
-```
-
-#### Record Usage (for metered billing)
-
-```http
-POST /api/tenant-billing/usage
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{
-  "usageType": "mau",
-  "quantity": 150,
-  "timestamp": "2025-01-15T00:00:00Z"
-}
-```
-
----
-
-## Subscription Plans
-
-Subscription Plans allow tenants to monetize their applications by billing their end users. This is the second tier of the billing model.
-
-### Overview
-
-Tenants can create subscription plans for their users, enabling SaaS business models:
-
-- **Free tier** with limited features
-- **Paid tiers** with premium features
-- **Usage-based billing** for API calls, storage, etc.
-
-### Enabling User Subscriptions
-
-User subscriptions must be enabled at the platform level:
-
-1. Create a platform plan with `allowUserSubscriptions: true`
-2. Tenant subscribes to that plan
-3. Tenant can now create subscription plans for their users
-
-### Creating Subscription Plans
-
-Tenants create plans via Admin UI or API:
-
-#### Admin UI
-
-Navigate to **Subscriptions** > **Plans**:
-
-1. Click **Create Plan**
-2. Configure:
-   - **Name**: Plan name (e.g., "Pro")
-   - **Display Name**: Shown to users
-   - **Description**: Benefits description
-   - **Price**: Amount in cents
-   - **Billing Interval**: Monthly, Yearly, Lifetime, OneTime
-   - **Trial Days**: Free trial period
-   - **Features**: Key-value feature flags
-
-#### API
-
-```http
-POST /api/subscriptions/plans
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{
-  "name": "pro",
-  "displayName": "Pro Plan",
-  "description": "For power users",
-  "priceInCents": 1999,
-  "currency": "USD",
-  "billingInterval": "monthly",
-  "trialDays": 14,
-  "features": [
-    { "key": "api_calls", "value": "10000" },
-    { "key": "storage_gb", "value": "50" },
-    { "key": "priority_support", "value": "true" }
-  ],
-  "externalPlanId": "price_stripe_xxx"
-}
-```
-
-### Plan Features
-
-Features are key-value pairs that your application checks:
-
-```json
-{
-  "features": [
-    { "key": "max_projects", "value": "10" },
-    { "key": "api_rate_limit", "value": "1000" },
-    { "key": "advanced_analytics", "value": "true" },
-    { "key": "white_label", "value": "false" }
-  ]
-}
-```
-
-### User Subscription Flow
-
-#### 1. User Views Plans
-
-```http
-GET /api/subscriptions/plans
-```
-
-Returns active plans for the tenant.
-
-#### 2. User Subscribes
-
-**Option A: Direct subscription (payment method on file)**
-```http
-POST /api/subscriptions/subscribe
-{
-  "planId": "pro",
-  "paymentMethodId": "pm_xxx"
-}
-```
-
-**Option B: Hosted checkout (Stripe Checkout)**
-```http
-POST /api/subscriptions/checkout
-{
-  "planId": "pro",
-  "successUrl": "https://app.example.com/success",
-  "cancelUrl": "https://app.example.com/cancel"
-}
-```
-
-Returns a checkout URL to redirect the user.
-
-#### 3. Check Subscription Status
-
-```http
-GET /api/subscriptions/current
-```
-
-```json
-{
-  "id": "sub_xxx",
-  "planId": "pro",
-  "planName": "Pro Plan",
-  "status": "active",
-  "currentPeriodEnd": "2025-02-15T00:00:00Z",
-  "cancelAtPeriodEnd": false,
-  "features": {
-    "max_projects": "10",
-    "api_rate_limit": "1000"
-  }
-}
-```
-
-### Subscription Statuses
-
-| Status | Description |
-|--------|-------------|
-| `active` | Subscription is active and paid |
-| `trialing` | In free trial period |
-| `past_due` | Payment failed, in grace period |
-| `canceled` | Subscription canceled |
-| `incomplete` | Initial payment pending |
-| `expired` | Trial or subscription expired |
-
-### Managing Subscriptions
-
-#### Cancel Subscription
-
-```http
-POST /api/subscriptions/cancel
-```
-
-By default, cancels at period end. User retains access until then.
-
-#### Reactivate Subscription
-
-```http
-POST /api/subscriptions/reactivate
-```
-
-Removes the cancellation if still within the billing period.
-
-#### Change Plan
-
-```http
-POST /api/subscriptions/change-plan
-{
-  "newPlanId": "enterprise"
-}
-```
-
-Prorates the change automatically.
-
-### Billing Page
-
-Users can manage their subscription at:
-```
-/Account/Billing
-```
-
-This page shows:
-- Current plan and status
-- Available plans to upgrade/downgrade
-- Payment method management
-- Billing history
-
-### Checking Features in Your Application
-
-#### Server-Side (C#)
-
-```csharp
-public class MyService
-{
-    private readonly ISubscriptionService _subscriptions;
-
-    public async Task<bool> CanAccessFeatureAsync(string userId, string feature)
-    {
-        var subscription = await _subscriptions.GetUserSubscriptionAsync(userId);
-        if (subscription == null) return false;
-
-        return subscription.HasFeature(feature);
-    }
-
-    public async Task<int> GetFeatureLimitAsync(string userId, string feature)
-    {
-        var subscription = await _subscriptions.GetUserSubscriptionAsync(userId);
-        return subscription?.GetFeatureValue<int>(feature) ?? 0;
-    }
-}
-```
-
-#### Client-Side (JavaScript)
-
-```javascript
-// Fetch current subscription
-const response = await fetch('/api/subscriptions/current', {
-  headers: { 'Authorization': `Bearer ${token}` }
-});
-const subscription = await response.json();
-
-// Check feature
-if (subscription.features.advanced_analytics === 'true') {
-  showAnalyticsDashboard();
-}
-
-// Check limit
-const maxProjects = parseInt(subscription.features.max_projects) || 3;
-if (userProjects.length >= maxProjects) {
-  showUpgradePrompt();
-}
-```
-
-### Webhooks for Subscription Events
-
-Subscribe to these webhook events in your application:
-
-| Event | Description |
-|-------|-------------|
-| `subscription.created` | New subscription started |
-| `subscription.updated` | Plan changed, renewed |
-| `subscription.canceled` | Subscription canceled |
-| `subscription.trial_ending` | Trial ends in 3 days |
-| `payment.succeeded` | Payment processed |
-| `payment.failed` | Payment failed |
-
-Example webhook payload:
-```json
-{
-  "event": "subscription.created",
-  "timestamp": "2025-01-15T10:30:00Z",
-  "data": {
-    "subscriptionId": "sub_xxx",
-    "userId": "user_123",
-    "planId": "pro",
-    "status": "trialing",
-    "trialEnd": "2025-01-29T10:30:00Z"
-  }
-}
-```
-
-### Best Practices
-
-1. **Always validate server-side**: Don't trust client-side feature checks alone
-2. **Handle grace periods**: Give users time to fix payment issues
-3. **Provide clear upgrade paths**: Show users what they're missing
-4. **Send trial ending notifications**: Email users before trial expires
-5. **Offer annual discounts**: Incentivize longer commitments
-6. **Monitor churn**: Track cancellation reasons
-
----
-
 ## OIDC Extensions
 
 ### Custom Parameters
 
 #### `ui_mode`
-Override flow type per request:
+Choose the flow type per request, within what the tenant and client allow (see [Priority Order](#priority-order)):
 ```
 /connect/authorize?...&ui_mode=standalone
 ```
 Values: `journey`, `standalone`
 
-#### `policy` or `p`
-Specify exact journey policy (Azure AD B2C compatible):
+#### `policy`
+Run a specific journey policy, named by its slug:
 ```
-/connect/authorize?...&policy=B2C_1_signup
-/connect/authorize?...&p=B2C_1_signin
+/connect/authorize?...&policy=signup
+/connect/authorize?...&policy=register-business
 ```
+A named policy that doesn't exist or is disabled ends with an `invalid_request` error; it never falls back to another policy.
 
 #### `prompt=create`
-Force registration flow (OIDC standard):
+Start the sign-up journey (OIDC standard). Without `policy`, the tenant's highest-priority enabled `SignUp` policy runs:
 ```
 /connect/authorize?...&prompt=create
 ```
 
+#### Journeys for someone already signed in
+An app can start a journey such as registering a business, editing a profile or changing a password for someone who is already signed in. Name the journey with `policy` and say who you expect with `id_token_hint`. Leave out `prompt=login`:
+```
+/connect/authorize?...&policy=register-business&id_token_hint=<the ID token you hold>
+```
+- **Signed in as that person:** the journey runs on their session. Its sign-in step (Local Login, Composite Login, External Login and the other first-factor steps) is met by the session, so they aren't asked for their password. The journey carries on with its other steps, and the tokens you get back are for the same person and the same session.
+- **Hints:** `id_token_hint` must be an ID token this server issued to your client. It may have expired. `login_hint` must be the person's email, username or phone number. If a hint you send names someone else, or the ID token can't be verified, the journey shows the normal sign-in instead.
+- **Fresh sign-in:** `max_age` works as the standard says. If the session signed in longer ago than that, the person signs in again. For a sensitive journey, set `reauthenticateAfter` on its sign-in step (see Local Login). A Password Change step asks for the current password itself unless `requireCurrentPassword` is off. An MFA step asks again unless `reuseSessionMfaSeconds` allows the session's MFA.
+- **`prompt=login`** still ends the session and asks for a fresh sign-in, as the standard requires, so clients that send it behave as before.
+- **`prompt=none`** never shows a journey. It answers silently, as before.
+- **No `policy`:** a request without one is a plain sign-in. With a live session it is answered at once, as before.
+
+### Policy Selection
+
+When a request names no policy, the policy type is `SignUp` for `prompt=create` and `SignIn` otherwise. The tenant's enabled policy of that type with the highest priority runs (falling back to its `SignIn` policy). With none, the tenant's `JourneyFallbackToStandard` setting decides between the standard pages and an error.
+
 ### ACR Values
 
-Use ACR values to select policy type:
-```
-/connect/authorize?...&acr_values=signup
-/connect/authorize?...&acr_values=password_reset
-```
+`acr_values` from the authorization request is passed into the journey as the `acrValues` value, so a `condition` or `branch` step can route on it:
 
-Supported values:
-- `signup` - Sign-up flow
-- `signin_signup` - Combined flow
-- `password_reset` - Password reset
-- `profile_edit` - Profile editing
+```json
+{
+  "type": "condition",
+  "configuration": {
+    "conditions": [
+      { "type": "data", "field": "acrValues", "operator": "contains", "value": "mfa" }
+    ],
+    "onTrue": "mfa-step"
+  }
+}
+```
 
 ---
 
 ## DPoP (Demonstrating Proof of Possession)
 
-DPoP binds tokens to a client's key pair, preventing token theft.
+DPoP (RFC 9449) binds tokens to a client's key pair, preventing token theft.
 
 ### Enabling DPoP
 
 Per-client in Admin UI:
 1. Edit client
-2. Enable **Require DPoP**
+2. Enable **Require DPoP (Demonstrating Proof of Possession)**
 
-Or via configuration:
+Or via the client API:
 ```json
 {
   "requireDPoP": true
@@ -3227,21 +2932,24 @@ POST /connect/token
 DPoP: eyJhbGciOiJFUzI1NiIsInR5cCI6ImRwb3Arand0IiwiandrIjp7Li4ufX0...
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=authorization_code&code=...&dpop_jkt=thumbprint
+grant_type=authorization_code&code=...&code_verifier=...
 ```
+
+To bind the authorization code itself to the key, send `dpop_jkt` (the base64url SHA-256 JWK thumbprint of the public key) on the authorization request; the token request must then prove that key.
 
 ---
 
 ## Pushed Authorization Requests (PAR)
 
-PAR improves security by pushing authorization parameters server-side.
+PAR (RFC 9126) improves security by pushing authorization parameters server-side.
 
 ### Enabling PAR
 
-Per-client:
+Per-client, enable **Require Pushed Authorization Requests (PAR)** in the Admin UI, or via the client API:
 ```json
 {
-  "requirePushedAuthorization": true
+  "requirePushedAuthorization": true,
+  "pushedAuthorizationLifetime": 60
 }
 ```
 
@@ -3281,24 +2989,26 @@ GET /connect/authorize?client_id=my-client&request_uri=urn:ietf:params:oauth:req
 ### Common Issues
 
 #### Journey not starting
-- Check `UseJourneyFlow` is enabled
-- Verify policy exists and is enabled
+- Check `UseJourneyFlow` is enabled on the tenant and not turned off on the client
+- Verify the policy exists, is enabled, and that `?policy=` uses its slug
 - Check policy type matches request (SignIn vs SignUp)
+- Without a matching policy, check the tenant's `JourneyFallbackToStandard` setting
 
 #### Custom CSS not applying
 - Ensure CSS is valid
 - Check browser developer tools for errors
-- Verify policy is correctly loaded
+- A policy's `customCss` replaces the tenant branding CSS rather than adding to it
 
 #### FIDO2 not working
 - Ensure HTTPS is configured
-- Verify `ServerDomain` matches your domain
+- Verify `Oluso:Fido2:RelyingPartyId` and `Origins` match your domain
+- Check that `app.UseSession()` is in the pipeline and the tenant's `EnablePasskey` is on
 - Check browser WebAuthn support
 
 #### Plugin not executing
 - Verify plugin is uploaded and enabled
-- Check plugin logs for errors
-- Ensure plugin exports required functions
+- Check the plugin's execution history (`/api/admin/plugins/{pluginName}/executions`)
+- Ensure plugin exports the function named in `entryPoint`
 
 ### Logging
 
@@ -3308,22 +3018,10 @@ Enable detailed logging in `appsettings.json`:
 {
   "Logging": {
     "LogLevel": {
-      "IdentityServer": "Debug",
-      "IdentityServer.UserJourneys": "Debug",
-      "IdentityServer.Plugins": "Debug"
+      "Default": "Information",
+      "Oluso": "Debug",
+      "Oluso.UserJourneys": "Debug"
     }
   }
 }
 ```
-
----
-
-## API Reference
-
-See [API Documentation](./API_REFERENCE.md) for complete endpoint documentation.
-
----
-
-## Changelog
-
-See [CHANGELOG.md](../CHANGELOG.md) for version history and updates.

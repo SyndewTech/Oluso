@@ -1,0 +1,518 @@
+@if (loading()) {
+  <div class="flex items-center justify-center h-64">
+    <div class="text-gray-500">Loading...</div>
+  </div>
+} @else if (isNew()) {
+  <!-- Create New API Scope -->
+  <div class="space-y-6">
+    <div class="flex items-center gap-4">
+      <ui-button variant="ghost" (clicked)="onBack()">
+        <ui-icon name="arrow-left" class="h-4 w-4 mr-2" />
+        Back
+      </ui-button>
+      <h1 class="text-2xl font-bold text-gray-900">Create API Scope</h1>
+    </div>
+
+    <ui-card>
+      <div class="px-4 py-5 sm:p-6 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Name *</label>
+          <input
+            type="text"
+            [(ngModel)]="formData.name"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+            placeholder="e.g., read:orders"
+          />
+          <p class="mt-1 text-xs text-gray-500">
+            Unique identifier for this scope (permission). A prefix scope's name usually ends with a separator such
+            as <code>:</code> or <code>/</code>, e.g. <code>device:</code>
+          </p>
+        </div>
+
+        <div>
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.isPrefix"
+              data-testid="prefix-scope-checkbox"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Prefix scope</span>
+          </label>
+          <p class="mt-1 ml-6 text-xs text-gray-500">
+            Matches any scope that starts with this name, e.g. <code>device:</code> matches <code>device:abc123</code>.
+            The client chooses the rest (the suffix).
+          </p>
+          @if (formData.isPrefix) {
+            <ng-container *ngTemplateOutlet="prefixFields; context: { $implicit: formData, idPrefix: 'create' }" />
+          }
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Display Name</label>
+          <input
+            type="text"
+            [(ngModel)]="formData.displayName"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+            placeholder="e.g., Read Orders"
+          />
+          <p class="mt-1 text-xs text-gray-500">Shown to users on consent screen</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Description</label>
+          <textarea
+            [(ngModel)]="formData.description"
+            rows="3"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+            placeholder="Describe what this scope allows"
+          ></textarea>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.enabled"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Enabled</span>
+          </label>
+
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.required"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Required</span>
+          </label>
+
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.emphasize"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Emphasize on consent</span>
+          </label>
+
+          <label class="flex items-center">
+            <input
+              type="checkbox"
+              [(ngModel)]="formData.showInDiscoveryDocument"
+              class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Show in Discovery</span>
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-4">
+          <ui-button variant="secondary" (clicked)="onBack()">
+            Cancel
+          </ui-button>
+          <ui-button
+            [disabled]="!formData.name || saving() || (!!formData.isPrefix && !!suffixMaxLengthError(formData.suffixMaxLength))"
+            (clicked)="onCreate()"
+          >
+            {{ saving() ? 'Creating...' : 'Create API Scope' }}
+          </ui-button>
+        </div>
+      </div>
+    </ui-card>
+  </div>
+} @else if (!scope()) {
+  <div class="text-center py-8 text-gray-500">API Scope not found</div>
+} @else {
+  <!-- View/Edit API Scope -->
+  <div class="space-y-6">
+    <!-- Plugin slot: before header -->
+    <ui-page-slot-host
+      pageId="api-scope-detail"
+      slotId="before-header"
+      [data]="{ scope: scope() }"
+    />
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <ui-button variant="ghost" (clicked)="onBack()">
+          <ui-icon name="arrow-left" class="h-4 w-4 mr-2" />
+          Back
+        </ui-button>
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">{{ scope()!.displayName || scope()!.name }}</h1>
+          <p class="text-sm text-gray-500">{{ scope()!.name }}</p>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <ui-button variant="secondary" (clicked)="openEditModal()">
+          <ui-icon name="pencil" class="h-4 w-4 mr-2" />
+          Edit
+        </ui-button>
+        <ui-button variant="danger" (clicked)="openDeleteModal()">
+          Delete
+        </ui-button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <!-- Basic Information -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Basic Information</h3>
+          <dl class="space-y-4">
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Name</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ scope()!.name }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Display Name</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ scope()!.displayName || '-' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Description</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ scope()!.description || '-' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Status</dt>
+              <dd class="mt-1">
+                <ui-badge [variant]="scope()!.enabled ? 'success' : 'danger'">
+                  {{ scope()!.enabled ? 'Enabled' : 'Disabled' }}
+                </ui-badge>
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </ui-card>
+
+      <!-- Settings -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Settings</h3>
+          <dl class="space-y-4">
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Required</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ scope()!.required ? 'Yes' : 'No' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Emphasize on Consent</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ scope()!.emphasize ? 'Yes' : 'No' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Prefix Scope</dt>
+              <dd class="mt-1 text-sm text-gray-900">
+                {{ scope()!.isPrefix ? 'Yes: matches any scope that starts with this name' : 'No' }}
+              </dd>
+            </div>
+            @if (scope()!.isPrefix) {
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Allowed Suffix Pattern</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                  @if (scope()!.suffixPattern) {
+                    <code>{{ scope()!.suffixPattern }}</code>
+                  } @else {
+                    Any characters a scope can contain
+                  }
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Maximum Suffix Length</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                  {{ scope()!.suffixMaxLength ?? defaultSuffixMaxLength() + ' (default)' }}
+                </dd>
+              </div>
+            }
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Show in Discovery Document</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ scope()!.showInDiscoveryDocument ? 'Yes' : 'No' }}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-gray-500">Created</dt>
+              <dd class="mt-1 text-sm text-gray-900">{{ formatDate(scope()!.created) }}</dd>
+            </div>
+          </dl>
+        </div>
+      </ui-card>
+
+      <!-- User Claims -->
+      <ui-card class="lg:col-span-2">
+        <div class="px-4 py-5 sm:p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-medium text-gray-900">User Claims</h3>
+            <ui-button variant="secondary" size="sm" (clicked)="openClaimsModal()">
+              <ui-icon name="pencil" class="h-4 w-4 mr-2" />
+              Edit Claims
+            </ui-button>
+          </div>
+          <p class="text-sm text-gray-500 mb-4">
+            Claims that will be included in access tokens when this scope is requested.
+          </p>
+          <div class="flex flex-wrap gap-2">
+            @if (scope()!.userClaims && scope()!.userClaims.length > 0) {
+              @for (claim of scope()!.userClaims; track claim) {
+                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-800">
+                  {{ claim }}
+                </span>
+              }
+            } @else {
+              <span class="text-sm text-gray-500">No claims configured</span>
+            }
+          </div>
+        </div>
+      </ui-card>
+    </div>
+
+    <!-- Plugin detail sections -->
+    <ui-detail-section-host
+      entityType="api-scope"
+      [entityId]="scope()!.id.toString()"
+      [data]="{ scope: scope() }"
+    />
+
+    <!-- Plugin slot: after content -->
+    <ui-page-slot-host
+      pageId="api-scope-detail"
+      slotId="after-content"
+      [data]="{ scope: scope() }"
+    />
+  </div>
+
+  <!-- Delete Modal -->
+  <ui-modal
+    [open]="showDeleteModal()"
+    title="Delete API Scope"
+    (closed)="closeDeleteModal()"
+  >
+    <p class="text-gray-600">
+      Are you sure you want to delete the API scope <strong>{{ scope()!.name }}</strong>?
+      This action cannot be undone.
+    </p>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeDeleteModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmDelete()">
+        Delete
+      </ui-button>
+    </div>
+  </ui-modal>
+
+  <!-- Edit Modal -->
+  <ui-modal
+    [open]="showEditModal()"
+    title="Edit API Scope"
+    (closed)="closeEditModal()"
+  >
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Display Name</label>
+        <input
+          type="text"
+          [(ngModel)]="editFormData.displayName"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+          placeholder="e.g., Read Orders"
+        />
+        <p class="mt-1 text-xs text-gray-500">Shown to users on consent screen</p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Description</label>
+        <textarea
+          [(ngModel)]="editFormData.description"
+          rows="3"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        ></textarea>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.enabled"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Enabled</span>
+        </label>
+
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.required"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Required</span>
+        </label>
+
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.emphasize"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Emphasize on consent</span>
+        </label>
+
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.showInDiscoveryDocument"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Show in Discovery</span>
+        </label>
+      </div>
+
+      <div>
+        <label class="flex items-center">
+          <input
+            type="checkbox"
+            [(ngModel)]="editFormData.isPrefix"
+            data-testid="prefix-scope-checkbox"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span class="ml-2 text-sm text-gray-700">Prefix scope</span>
+        </label>
+        <p class="mt-1 ml-6 text-xs text-gray-500">
+          Matches any scope that starts with this name, e.g. <code>device:</code> matches <code>device:abc123</code>.
+          The client chooses the rest (the suffix).
+        </p>
+        @if (editFormData.isPrefix) {
+          <ng-container *ngTemplateOutlet="prefixFields; context: { $implicit: editFormData, idPrefix: 'edit' }" />
+        }
+      </div>
+
+      <div class="flex justify-end gap-2 pt-4">
+        <ui-button variant="secondary" (clicked)="closeEditModal()">
+          Cancel
+        </ui-button>
+        <ui-button
+          [disabled]="saving() || (!!editFormData.isPrefix && !!suffixMaxLengthError(editFormData.suffixMaxLength))"
+          (clicked)="onUpdate()"
+        >
+          {{ saving() ? 'Saving...' : 'Save Changes' }}
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+
+  <!-- Edit Claims Modal -->
+  <ui-modal
+    [open]="showClaimsModal()"
+    title="Edit User Claims"
+    (closed)="closeClaimsModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500">
+        Add or remove claims that will be included in access tokens when this scope is requested.
+      </p>
+
+      <!-- Add new claim -->
+      <div class="flex gap-2">
+        <input
+          type="text"
+          [(ngModel)]="newClaim"
+          (keydown)="onClaimKeydown($event)"
+          placeholder="Enter claim type (e.g., sub, email, role)"
+          class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        />
+        <ui-button [disabled]="!newClaim || saving()" (clicked)="addClaim()">
+          <ui-icon name="plus" class="h-4 w-4 mr-1" />
+          Add
+        </ui-button>
+      </div>
+
+      <!-- Current claims -->
+      <div class="border rounded-md divide-y max-h-64 overflow-y-auto">
+        @if (scope()!.userClaims && scope()!.userClaims.length > 0) {
+          @for (claim of scope()!.userClaims; track claim) {
+            <div class="flex items-center justify-between p-3">
+              <span class="text-sm text-gray-900">{{ claim }}</span>
+              <ui-button variant="ghost" size="sm" [disabled]="saving()" (clicked)="removeClaim(claim)">
+                <ui-icon name="trash" class="h-4 w-4 text-red-500" />
+              </ui-button>
+            </div>
+          }
+        } @else {
+          <div class="p-4 text-center text-sm text-gray-500">
+            No claims configured yet
+          </div>
+        }
+      </div>
+
+      <!-- Common claims suggestions -->
+      <div class="text-xs text-gray-500">
+        <p class="font-medium mb-1">Common claims:</p>
+        <div class="flex flex-wrap gap-1">
+          @for (claim of commonClaims; track claim) {
+            <button
+              type="button"
+              (click)="selectCommonClaim(claim)"
+              class="px-2 py-0.5 bg-gray-100 rounded text-gray-600 hover:bg-gray-200"
+            >
+              {{ claim }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <ui-button variant="secondary" (clicked)="closeClaimsModal()">
+          Done
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+}
+
+<!-- Prefix scope suffix rule, shared by the create form and the edit modal -->
+<ng-template #prefixFields let-form let-idPrefix="idPrefix">
+  <div class="mt-3 ml-6 space-y-4 border-l-2 border-gray-200 pl-4" data-testid="prefix-fields">
+    <div>
+      <label class="block text-sm font-medium text-gray-700" [attr.for]="idPrefix + '-suffix-pattern'">
+        Allowed suffix pattern
+        <span class="font-normal text-gray-500">(optional)</span>
+      </label>
+      <input
+        type="text"
+        [id]="idPrefix + '-suffix-pattern'"
+        [(ngModel)]="form.suffixPattern"
+        data-testid="suffix-pattern"
+        spellcheck="false"
+        autocomplete="off"
+        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono"
+        [class.border-red-500]="suffixPatternError(form.suffixPattern)"
+        placeholder="e.g., [A-Za-z0-9._~-]+"
+      />
+      @if (suffixPatternError(form.suffixPattern); as error) {
+        <p class="mt-1 text-xs text-red-600" data-testid="suffix-pattern-error">{{ error }}</p>
+      }
+      <p class="mt-1 text-xs text-gray-500">
+        Leave empty to allow any characters a scope can contain. Anchored to the whole suffix.
+      </p>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700" [attr.for]="idPrefix + '-suffix-max-length'">
+        Maximum suffix length
+        <span class="font-normal text-gray-500">(optional)</span>
+      </label>
+      <input
+        type="number"
+        min="1"
+        step="1"
+        [id]="idPrefix + '-suffix-max-length'"
+        [(ngModel)]="form.suffixMaxLength"
+        data-testid="suffix-max-length"
+        class="mt-1 block w-40 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+        [class.border-red-500]="suffixMaxLengthError(form.suffixMaxLength)"
+        [placeholder]="defaultSuffixMaxLength() + ' (default)'"
+      />
+      @if (suffixMaxLengthError(form.suffixMaxLength); as error) {
+        <p class="mt-1 text-xs text-red-600" data-testid="suffix-max-length-error">{{ error }}</p>
+      }
+      <p class="mt-1 text-xs text-gray-500">Leave empty for this tenant's default of {{ defaultSuffixMaxLength() }} characters (Settings → Protocol).</p>
+    </div>
+  </div>
+</ng-template>

@@ -1,28 +1,48 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
     <!-- NuGet Package Metadata -->
     <PackageId>Oluso.Core</PackageId>
-    <Version>1.0.0</Version>
     <Description>Core abstractions and domain entities for Oluso identity server.</Description>
     <PackageTags>oauth;oidc;identity;core</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Required for OlusoUser/OlusoRole base classes -->
-    <PackageReference Include="Microsoft.Extensions.Identity.Stores" Version="8.0.22" />
+    <!-- License contracts (ILicenseValidator, LicenseTier, LicensedFeatures) now
+         live in this project under Licensing/. The validator implementation is
+         registered by the host, so the public surface compiles on its own. -->
+    <ProjectReference Include="..\Oluso.Core.Generators\Oluso.Core.Generators.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+    <ProjectReference Include="..\Oluso.Dto\Oluso.Dto.csproj" />
+    <ProjectReference Include="..\Oluso.Contracts\Oluso.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Locale\Resources\*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Required for signing key abstractions (SecurityKey, SigningCredentials, JsonWebKey) -->
-    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.3.1" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" />
+    <!-- Must match Tokens version to avoid v7/v8 IdentityModel mix that breaks OIDC discovery parsing -->
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <!-- Required for API extensions (AddOlusoApiAuthentication) -->
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!-- Required for PluginDbContextBase and IPluginDbContext -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.22" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <!-- Required for HttpContext, IActionResult in protocol abstractions -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- HTML sanitization for XSS protection in rich text fields -->
+    <PackageReference Include="HtmlSanitizer" />
+    <PackageReference Include="DnsClient" />
+    <!-- QR codes are rendered on the server so secrets (e.g. TOTP keys) never leave the platform -->
+    <PackageReference Include="QRCoder" />
   </ItemGroup>
 
 </Project>

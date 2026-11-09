@@ -17,7 +17,7 @@ namespace Oluso.Enterprise.Saml.Migrations.Postgres
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.22")
+                .HasAnnotation("ProductVersion", "10.0.5")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -87,6 +87,9 @@ namespace Oluso.Enterprise.Saml.Migrations.Postgres
                         .HasColumnType("text");
 
                     b.Property<bool>("RequireSignedAuthnRequests")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequireVerifiedEmail")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("SignAssertions")

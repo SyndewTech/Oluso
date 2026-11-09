@@ -8,8 +8,8 @@
     </div>
 }
 
-<h1 class="title text-center">Authorize @Model?.ClientName</h1>
-<p class="subtitle text-center">This application wants to access your account</p>
+<h1 class="title text-center">@Localizer["consent_title", Model!.ClientName]</h1>
+<p class="subtitle text-center">@Localizer["consent_subtitle"]</p>
 
 @if (!string.IsNullOrEmpty(Model?.ClientUri))
 {
@@ -32,8 +32,8 @@
     @if (Model?.IdentityScopes?.Any() == true)
     {
         <div class="scope-section mb-3">
-            <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">Personal Information</label>
-            <p class="form-text mb-2">This application is requesting access to:</p>
+            <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">@Localizer["consent_personal_info_label"]</label>
+            <p class="form-text mb-2">@Localizer["consent_personal_info_description"]</p>
 
             @foreach (var scope in Model.IdentityScopes)
             {
@@ -54,7 +54,7 @@
                             <strong>@scope.DisplayName</strong>
                             @if (scope.Required)
                             {
-                                <span class="required-badge">Required</span>
+                                <span class="required-badge">@Localizer["consent_scope_required"]</span>
                             }
                         </label>
                     </div>
@@ -70,7 +70,7 @@
     @if (Model?.ApiScopes?.Any() == true)
     {
         <div class="scope-section mb-3">
-            <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">Application Access</label>
+            <label style="font-weight: 600; margin-bottom: 0.5rem; display: block;">@Localizer["consent_api_access_label"]</label>
 
             @foreach (var scope in Model.ApiScopes)
             {
@@ -91,7 +91,7 @@
                             <strong>@scope.DisplayName</strong>
                             @if (scope.Required)
                             {
-                                <span class="required-badge">Required</span>
+                                <span class="required-badge">@Localizer["consent_scope_required"]</span>
                             }
                         </label>
                     </div>
@@ -113,17 +113,35 @@
                    class="form-check-input"
                    value="true" />
             <label class="form-check-label" for="rememberConsent">
-                Remember my decision for this application
+                @Localizer["consent_remember"]
             </label>
         </div>
     }
 
+    @if (!string.IsNullOrEmpty(Model?.PolicyUri) || !string.IsNullOrEmpty(Model?.TosUri))
+    {
+        <p class="text-center text-muted" style="font-size: 0.875rem;">
+            @if (!string.IsNullOrEmpty(Model?.PolicyUri))
+            {
+                <a href="@Model.PolicyUri" target="_blank" rel="noopener noreferrer">@Localizer["client_policy_link"]</a>
+            }
+            @if (!string.IsNullOrEmpty(Model?.PolicyUri) && !string.IsNullOrEmpty(Model?.TosUri))
+            {
+                <span aria-hidden="true"> · </span>
+            }
+            @if (!string.IsNullOrEmpty(Model?.TosUri))
+            {
+                <a href="@Model.TosUri" target="_blank" rel="noopener noreferrer">@Localizer["client_tos_link"]</a>
+            }
+        </p>
+    }
+
     <div class="consent-actions">
         <button type="submit" name="consent_action" value="deny" class="btn btn-secondary">
-            Deny
+            @Localizer["consent_deny_button"]
         </button>
         <button type="submit" name="consent_action" value="allow" class="btn btn-primary">
-            Allow Access
+            @Localizer["consent_allow_button"]
         </button>
     </div>
 </form>

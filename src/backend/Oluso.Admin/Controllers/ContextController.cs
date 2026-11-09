@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Core.Api;
+using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
+using Oluso.Admin.Dto.Context;
 
 namespace Oluso.Admin.Controllers;
 
@@ -15,6 +18,7 @@ namespace Oluso.Admin.Controllers;
 public class ContextController : AdminBaseController
 {
     private readonly ITenantStore _tenantStore;
+    private readonly IOlusoUserService _userService;
     private readonly IOrganizationStore? _organizationStore;
     private readonly IOrganizationMembershipStore? _membershipStore;
     private readonly ILogger<ContextController> _logger;
@@ -22,12 +26,14 @@ public class ContextController : AdminBaseController
     public ContextController(
         ITenantContext tenantContext,
         ITenantStore tenantStore,
+        IOlusoUserService userService,
         ILogger<ContextController> logger,
         IOrganizationStore? organizationStore = null,
         IOrganizationMembershipStore? membershipStore = null)
         : base(tenantContext)
     {
         _tenantStore = tenantStore;
+        _userService = userService;
         _organizationStore = organizationStore;
         _membershipStore = membershipStore;
         _logger = logger;
@@ -59,6 +65,13 @@ public class ContextController : AdminBaseController
             } : null
         };
 
+        // Resolve org name
+        if (context.CurrentOrganization != null && _organizationStore != null)
+        {
+            var org = await _organizationStore.GetByIdAsync(context.CurrentOrganization.Id, cancellationToken);
+            context.CurrentOrganization.Name = org?.Name;
+        }
+
         // Get available tenants
         context.AvailableTenants = await GetAvailableTenantsInternalAsync(cancellationToken);
 
@@ -88,6 +101,18 @@ public class ContextController : AdminBaseController
         CancellationToken cancellationToken = default)
     {
         var tenants = await GetAvailableTenantsInternalAsync(cancellationToken, organizationId);
+
+        // The token names the tenant switched to, so the client can't tell which tenant is home; the user record can.
+        if (!string.IsNullOrEmpty(AdminUserId))
+        {
+            var users = await _userService.FindByIdsAcrossTenantsAsync(new[] { AdminUserId }, cancellationToken);
+            var homeTenantId = users.GetValueOrDefault(AdminUserId)?.TenantId;
+            foreach (var tenant in tenants)
+            {
+                tenant.IsHome = tenant.Id == homeTenantId;
+            }
+        }
+
         return Ok(tenants);
     }
 
@@ -222,13 +247,15 @@ public class ContextController : AdminBaseController
             return result;
         }
 
-        if (_membershipStore == null || string.IsNullOrEmpty(AdminUserId))
+        if (string.IsNullOrEmpty(AdminUserId))
         {
             return result;
         }
 
         // Get tenants from user's organizations
-        var memberships = await _membershipStore.GetByUserAsync(AdminUserId, cancellationToken);
+        var memberships = _membershipStore == null
+            ? Enumerable.Empty<OrganizationMembership>()
+            : await _membershipStore.GetByUserAsync(AdminUserId, cancellationToken);
 
         foreach (var membership in memberships)
         {
@@ -256,11 +283,43 @@ public class ContextController : AdminBaseController
             }
         }
 
+        // The user's own tenants (home tenant and tenant memberships, carried in
+        // allowed_tenants) are switchable whether or not they belong to one of
+        // the user's organizations.
+        foreach (var tenantId in User.GetAllowedTenantIds())
+        {
+            if (result.Any(t => t.Id == tenantId))
+                continue;
+
+            var tenant = await _tenantStore.GetByIdAsync(tenantId, cancellationToken);
+            if (tenant is not { Enabled: true })
+                continue;
+            if (filterOrganizationId != null && tenant.OrganizationId != filterOrganizationId)
+                continue;
+
+            result.Add(new TenantSwitchDto
+            {
+                Id = tenant.Id,
+                Name = tenant.Name,
+                DisplayName = tenant.DisplayName,
+                Identifier = tenant.Identifier,
+                Environment = tenant.Environment.ToString(),
+                OrganizationId = tenant.OrganizationId,
+                UserRole = "member",
+                Enabled = tenant.Enabled
+            });
+        }
+
         return result;
     }
 
     private async Task<bool> ValidateTenantAccessAsync(Tenant tenant, CancellationToken cancellationToken)
     {
+        if (User.GetAllowedTenantIds().Contains(tenant.Id))
+        {
+            return true;
+        }
+
         if (_membershipStore == null || string.IsNullOrEmpty(AdminUserId))
         {
             return false;
@@ -278,77 +337,3 @@ public class ContextController : AdminBaseController
         return allowedTenantIds.Contains(tenant.Id);
     }
 }
-
-#region DTOs
-
-public class AdminContextDto
-{
-    public string? UserId { get; set; }
-    public string? Email { get; set; }
-    public bool IsSuperAdmin { get; set; }
-    public bool IsOrgAdmin { get; set; }
-    public TenantSummaryDto? CurrentTenant { get; set; }
-    public OrganizationSummaryDto? CurrentOrganization { get; set; }
-    public List<TenantSwitchDto> AvailableTenants { get; set; } = new();
-    public List<OrganizationMembershipSummaryDto> Organizations { get; set; } = new();
-}
-
-public class TenantSummaryDto
-{
-    public string Id { get; set; } = null!;
-    public string? Name { get; set; }
-    public string? Identifier { get; set; }
-}
-
-public class OrganizationSummaryDto
-{
-    public string Id { get; set; } = null!;
-    public string? Role { get; set; }
-}
-
-public class OrganizationMembershipSummaryDto
-{
-    public string OrganizationId { get; set; } = null!;
-    public string? OrganizationName { get; set; }
-    public string? OrganizationSlug { get; set; }
-    public string Role { get; set; } = null!;
-}
-
-public class TenantSwitchDto
-{
-    public string Id { get; set; } = null!;
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string Identifier { get; set; } = null!;
-    public string Environment { get; set; } = null!;
-    public string? OrganizationId { get; set; }
-    public string? UserRole { get; set; }
-    public bool Enabled { get; set; }
-}
-
-public class OrganizationSwitchDto
-{
-    public string Id { get; set; } = null!;
-    public string Name { get; set; } = null!;
-    public string Slug { get; set; } = null!;
-    public string Role { get; set; } = null!;
-    public int TenantCount { get; set; }
-    public bool Enabled { get; set; }
-}
-
-public class TenantDetailDto
-{
-    public string Id { get; set; } = null!;
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string Identifier { get; set; } = null!;
-    public string? Description { get; set; }
-    public string Environment { get; set; } = null!;
-    public bool Enabled { get; set; }
-    public string? OrganizationId { get; set; }
-    public string? OrganizationName { get; set; }
-    public DateTime Created { get; set; }
-    public DateTime? Updated { get; set; }
-}
-
-#endregion

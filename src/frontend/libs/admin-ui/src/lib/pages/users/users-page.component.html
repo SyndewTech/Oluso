@@ -1,0 +1,560 @@
+<div class="space-y-6">
+  <!-- Page header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Users</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Manage user accounts and their roles
+      </p>
+    </div>
+    <ui-button (clicked)="onAddUser()">
+      <ui-icon name="plus" class="h-4 w-4 mr-2" />
+      Add User
+    </ui-button>
+  </div>
+
+  <!-- Search and filters -->
+  <ui-card>
+    <div class="flex flex-wrap gap-4">
+      <div class="flex-1 min-w-[200px]">
+        <ui-input
+          label="Search"
+          placeholder="Search by name or email..."
+          [(ngModel)]="searchInput"
+          (keyup.enter)="onSearch()"
+        />
+      </div>
+      <div class="flex items-end">
+        <ui-button variant="secondary" (clicked)="onSearch()">
+          <ui-icon name="search" class="h-4 w-4 mr-2" />
+          Search
+        </ui-button>
+      </div>
+    </div>
+  </ui-card>
+
+  <!-- Users table -->
+  <ui-card [padding]="false">
+    <div class="overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+          <tr>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              User
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Email
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Status
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Roles
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Last Login
+            </th>
+            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          @if (loading()) {
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center">
+                <div class="flex justify-center">
+                  <svg
+                    class="animate-spin h-8 w-8 text-primary-600"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                </div>
+              </td>
+            </tr>
+          } @else if (users().length === 0) {
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center text-sm text-gray-500">
+                No users found
+              </td>
+            </tr>
+          } @else {
+            @for (user of users(); track user.id) {
+              <tr
+                class="cursor-pointer hover:bg-gray-50"
+                (click)="onRowClick(user)"
+              >
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="flex items-center">
+                    <div class="flex-shrink-0 h-10 w-10">
+                      <div class="h-10 w-10 rounded-full bg-primary-100 flex items-center justify-center">
+                        <span class="text-primary-700 font-medium text-sm">
+                          {{ (user.firstName?.charAt(0) || user.email.charAt(0)) | uppercase }}
+                        </span>
+                      </div>
+                    </div>
+                    <div class="ml-4">
+                      <div class="text-sm font-medium text-gray-900 flex items-center gap-2">
+                        {{ getDisplayName(user) }}
+                        @if (user.isExternalToTenant) {
+                          <span
+                            class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200"
+                            [title]="'Belongs to ' + (user.ownerTenantName || 'another tenant') + ' — has access here through tenant membership'"
+                          >
+                            {{ user.ownerTenantName || 'Other tenant' }}
+                          </span>
+                        }
+                      </div>
+                      <div class="text-sm text-gray-500">
+                        {{ user.userName || '-' }}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="text-sm text-gray-900">{{ user.email }}</div>
+                  @if (user.emailVerified) {
+                    <span class="text-xs text-green-600">Verified</span>
+                  } @else {
+                    <span class="text-xs text-yellow-600">Unverified</span>
+                  }
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="flex flex-col gap-1">
+                    <ui-badge [variant]="user.isActive ? 'success' : 'danger'">
+                      {{ user.isActive ? 'Active' : 'Disabled' }}
+                    </ui-badge>
+                    @if (isUserLocked(user)) {
+                      <ui-badge variant="warning">Locked</ui-badge>
+                    }
+                  </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="flex flex-wrap gap-1">
+                    @if (user.roles && user.roles.length > 0) {
+                      @for (role of user.roles.slice(0, 2); track role) {
+                        <ui-badge variant="default">{{ role }}</ui-badge>
+                      }
+                      @if (user.roles.length > 2) {
+                        <ui-badge variant="default">+{{ user.roles.length - 2 }}</ui-badge>
+                      }
+                    } @else {
+                      <span class="text-sm text-gray-400">No roles</span>
+                    }
+                  </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(user.lastLoginAt) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <div class="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      class="text-gray-400 hover:text-primary-600"
+                      title="Edit User"
+                      (click)="onEditUser(user, $event)"
+                    >
+                      <ui-icon name="pencil" class="h-5 w-5" />
+                    </button>
+                    <button
+                      type="button"
+                      class="text-gray-400 hover:text-primary-600"
+                      title="Manage Roles"
+                      (click)="onManageRoles(user, $event)"
+                    >
+                      <ui-icon name="user-group" class="h-5 w-5" />
+                    </button>
+                    @if (isOrgAdmin()) {
+                      <button
+                        type="button"
+                        class="text-gray-400 hover:text-indigo-600"
+                        title="Promote to Org Member"
+                        (click)="onPromoteUser(user, $event)"
+                      >
+                        <ui-icon name="shield" class="h-5 w-5" />
+                      </button>
+                    }
+                    @if (user.isFederated && !user.hasPassword) {
+                      <span
+                        class="text-gray-300"
+                        [title]="
+                          'Signs in via ' +
+                          (user.linkedProviders?.join(', ') || 'an external identity provider') +
+                          ': no local password to reset'
+                        "
+                      >
+                        <ui-icon name="key" class="h-5 w-5" />
+                      </span>
+                    } @else {
+                      <button
+                        type="button"
+                        class="text-gray-400 hover:text-yellow-600"
+                        [title]="
+                          user.isFederated
+                            ? 'Reset Password (also linked to ' + (user.linkedProviders?.join(', ') || 'SSO') + ')'
+                            : 'Reset Password'
+                        "
+                        (click)="onResetPassword(user, $event)"
+                      >
+                        <ui-icon name="key" class="h-5 w-5" />
+                      </button>
+                    }
+                    @if (!user.hasPassword && !user.isFederated) {
+                      <button
+                        type="button"
+                        class="text-gray-400 hover:text-primary-600"
+                        title="Resend invite: they haven't set a password yet"
+                        (click)="onResendInvite(user, $event)"
+                      >
+                        <ui-icon name="paper-airplane" class="h-5 w-5" />
+                      </button>
+                    }
+                    @if (isUserLocked(user)) {
+                      <button
+                        type="button"
+                        class="text-gray-400 hover:text-green-600"
+                        title="Unlock User"
+                        (click)="onUnlockUser(user, $event)"
+                      >
+                        <ui-icon name="lock" class="h-5 w-5" />
+                      </button>
+                    }
+                    <button
+                      *uiHasPermission="'users.delete'"
+                      type="button"
+                      class="text-gray-400 hover:text-red-600"
+                      title="Delete User"
+                      (click)="onDeleteUser(user, $event)"
+                    >
+                      <ui-icon name="trash" class="h-5 w-5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </ui-card>
+
+  <!-- Pagination -->
+  @if (totalPages() > 1) {
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-gray-500">
+        Showing page {{ currentPage() }} of {{ totalPages() }} ({{ totalCount() }} users)
+      </p>
+      <div class="space-x-2">
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="currentPage() === 1"
+          (clicked)="onPreviousPage()"
+        >
+          Previous
+        </ui-button>
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="currentPage() === totalPages()"
+          (clicked)="onNextPage()"
+        >
+          Next
+        </ui-button>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- Create/Edit User Modal -->
+<ui-modal
+  [open]="showCreateEditModal()"
+  [title]="selectedUser() ? 'Edit User' : 'Create User'"
+  (closed)="closeCreateEditModal()"
+>
+  <form (ngSubmit)="onSaveUser()">
+    <div class="space-y-4">
+      @if (editingExternalUser()) {
+        <div class="rounded-md bg-amber-50 p-3 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
+          This user belongs to
+          <strong>{{ selectedUser()?.ownerTenantName || 'another tenant' }}</strong>
+          and has access here through tenant membership. Their profile, credentials
+          and sessions are managed from their home tenant. You can still manage
+          their roles and module access in this tenant.
+        </div>
+      }
+
+      <ui-input
+        label="Email"
+        type="email"
+        [required]="true"
+        [(ngModel)]="formData.email"
+        name="email"
+        [disabled]="!!selectedUser() || editingExternalUser()"
+      />
+
+      <ui-input
+        label="Username"
+        [(ngModel)]="formData.userName"
+        name="userName"
+        [disabled]="!!selectedUser() || editingExternalUser()"
+      />
+
+      @if (!selectedUser()) {
+        <fieldset class="space-y-2">
+          <legend class="text-sm font-medium text-gray-700">Password</legend>
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input type="radio" name="passwordChoice" [value]="true" [(ngModel)]="formData.sendInvite" class="mt-0.5" />
+            <span>Email an invite so they set their own password. The link expires after the tenant's account-link lifetime and can be resent.</span>
+          </label>
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input type="radio" name="passwordChoice" [value]="false" [(ngModel)]="formData.sendInvite" class="mt-0.5" />
+            <span>Set a password now</span>
+          </label>
+        </fieldset>
+        @if (!formData.sendInvite) {
+          <ui-input
+            label="Password"
+            type="password"
+            [required]="true"
+            [(ngModel)]="formData.password"
+            name="password"
+          />
+        }
+      }
+
+      <div class="grid grid-cols-2 gap-4">
+        <ui-input
+          label="First Name"
+          [(ngModel)]="formData.firstName"
+          name="firstName"
+          [disabled]="editingExternalUser()"
+        />
+        <ui-input
+          label="Last Name"
+          [(ngModel)]="formData.lastName"
+          name="lastName"
+          [disabled]="editingExternalUser()"
+        />
+      </div>
+
+      <ui-input
+        label="Phone Number"
+        [(ngModel)]="formData.phoneNumber"
+        name="phoneNumber"
+        [disabled]="editingExternalUser()"
+      />
+
+      <div class="flex items-center gap-6">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            [(ngModel)]="formData.isActive"
+            name="isActive"
+            [disabled]="editingExternalUser()"
+            class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <span class="text-sm text-gray-700">Active</span>
+        </label>
+
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            [(ngModel)]="formData.emailConfirmed"
+            name="emailConfirmed"
+            [disabled]="editingExternalUser()"
+            class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <span class="text-sm text-gray-700">Email Verified</span>
+        </label>
+        <p class="text-xs text-gray-500 w-full">
+          Only for addresses at an email domain your organization has verified (Settings, Domains). Anyone else confirms
+          their address with a code.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button
+        type="button"
+        variant="secondary"
+        (clicked)="closeCreateEditModal()"
+      >
+        Cancel
+      </ui-button>
+      <ui-button
+        type="submit"
+        [disabled]="saving() || editingExternalUser()"
+      >
+        {{ saving() ? 'Saving...' : (selectedUser() ? 'Update User' : 'Create User') }}
+      </ui-button>
+    </div>
+  </form>
+</ui-modal>
+
+<!-- Delete User Modal -->
+<ui-modal
+  [open]="showDeleteModal()"
+  title="Delete User"
+  (closed)="closeDeleteModal()"
+>
+  <p class="text-gray-600">
+    Are you sure you want to permanently delete the user <strong>{{ selectedUser()?.email }}</strong>?
+    Their account, roles, sessions and sign-in methods are removed. This action cannot be undone.
+  </p>
+
+  <div class="mt-6 flex justify-end gap-3">
+    <ui-button
+      variant="secondary"
+      (clicked)="closeDeleteModal()"
+    >
+      Cancel
+    </ui-button>
+    <ui-button
+      variant="danger"
+      (clicked)="confirmDelete()"
+    >
+      Delete User
+    </ui-button>
+  </div>
+</ui-modal>
+
+<!-- Manage Roles Modal -->
+<ui-modal
+  [open]="showRolesModal()"
+  title="Manage Roles"
+  (closed)="closeRolesModal()"
+>
+  <div class="space-y-4">
+    <p class="text-sm text-gray-600">
+      Select roles for <strong>{{ selectedUser()?.email }}</strong>
+    </p>
+
+    <div class="space-y-2 max-h-64 overflow-y-auto">
+      @for (role of availableRoles(); track role.id) {
+        <label class="flex items-start gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+          <input
+            type="checkbox"
+            [checked]="selectedRoleIds.includes(role.id)"
+            (change)="toggleRole(role.id)"
+            class="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <div>
+            <div class="text-sm font-medium text-gray-900">{{ role.displayName || role.name }}</div>
+            @if (role.description) {
+              <div class="text-xs text-gray-500">{{ role.description }}</div>
+            }
+          </div>
+        </label>
+      }
+      @if (availableRoles().length === 0) {
+        <p class="text-sm text-gray-500 text-center py-4">No roles available</p>
+      }
+    </div>
+  </div>
+
+  <div class="mt-6 flex justify-end gap-3">
+    <ui-button
+      variant="secondary"
+      (clicked)="closeRolesModal()"
+    >
+      Cancel
+    </ui-button>
+    <ui-button
+      [disabled]="saving()"
+      (clicked)="saveRoles()"
+    >
+      {{ saving() ? 'Saving...' : 'Save Roles' }}
+    </ui-button>
+  </div>
+</ui-modal>
+
+<!-- Reset Password Modal -->
+<ui-modal
+  [open]="showPasswordModal()"
+  title="Reset Password"
+  (closed)="closePasswordModal()"
+>
+  <div class="space-y-4">
+    <p class="text-sm text-gray-600">
+      Set a new password for <strong>{{ selectedUser()?.email }}</strong>
+    </p>
+
+    <ui-input
+      label="New Password"
+      type="password"
+      [required]="true"
+      [(ngModel)]="newPassword"
+    />
+  </div>
+
+  <div class="mt-6 flex justify-end gap-3">
+    <ui-button
+      variant="secondary"
+      (clicked)="closePasswordModal()"
+    >
+      Cancel
+    </ui-button>
+    <ui-button
+      [disabled]="saving() || !newPassword"
+      (clicked)="resetPassword()"
+    >
+      {{ saving() ? 'Resetting...' : 'Reset Password' }}
+    </ui-button>
+  </div>
+</ui-modal>
+
+<!-- Promote to Org Member Modal -->
+<ui-modal
+  [open]="showPromoteModal()"
+  title="Promote to Organization Member"
+  (closed)="closePromoteModal()"
+>
+  <div class="space-y-4">
+    <p class="text-sm text-gray-600">
+      Add <strong>{{ selectedUser()?.email }}</strong> as a member of the current organization.
+    </p>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+      <select
+        [(ngModel)]="promoteRole"
+        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+      >
+        @for (role of promotableRoles(); track role) {
+          <option [value]="role">{{ role }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  <div class="mt-6 flex justify-end gap-3">
+    <ui-button
+      variant="secondary"
+      (clicked)="closePromoteModal()"
+    >
+      Cancel
+    </ui-button>
+    <ui-button
+      [disabled]="saving() || !promoteRole"
+      (clicked)="confirmPromote()"
+    >
+      {{ saving() ? 'Promoting...' : 'Promote' }}
+    </ui-button>
+  </div>
+</ui-modal>

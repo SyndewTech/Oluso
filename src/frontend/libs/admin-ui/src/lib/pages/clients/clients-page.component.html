@@ -1,0 +1,169 @@
+<div class="space-y-6">
+  <!-- Page header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Clients</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Manage OAuth 2.0 / OpenID Connect client applications
+      </p>
+    </div>
+    <ui-button (clicked)="onAddClient()">
+      <ui-icon name="plus" class="h-4 w-4 mr-2" />
+      Add Client
+    </ui-button>
+  </div>
+
+  <ui-card>
+    <div class="max-w-md">
+      <ui-input
+        label="Search"
+        placeholder="Search by client id, name or description..."
+        [ngModel]="searchTerm()"
+        (ngModelChange)="onSearchChange($event)"
+      />
+    </div>
+  </ui-card>
+
+  <!-- Clients table -->
+  <ui-card [padding]="false">
+    <div class="overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+          <tr>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Client ID
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Name
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Status
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Grant Types
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Created
+            </th>
+            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
+              <span class="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          @if (loading()) {
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center">
+                <div class="flex justify-center">
+                  <svg
+                    class="animate-spin h-8 w-8 text-primary-600"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                </div>
+              </td>
+            </tr>
+          } @else if (clients().length === 0) {
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center text-sm text-gray-500">
+                No clients configured yet
+              </td>
+            </tr>
+          } @else {
+            @for (client of clients(); track client.clientId) {
+              <tr
+                class="cursor-pointer hover:bg-gray-50"
+                (click)="onRowClick(client)"
+              >
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {{ client.clientId }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ client.clientName || '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="client.enabled ? 'success' : 'danger'">
+                    {{ client.enabled ? 'Enabled' : 'Disabled' }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
+                  {{ formatGrantTypes(client.allowedGrantTypes) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(client.created) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                  <button
+                    type="button"
+                    class="text-gray-400 hover:text-primary-600 p-1 rounded hover:bg-gray-100"
+                    (click)="openConnectionPreview($event, client)"
+                    title="Preview connection details"
+                    aria-label="Preview connection details"
+                  >
+                    <ui-icon name="eye" class="h-4 w-4" />
+                  </button>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </ui-card>
+
+  <!-- Pagination -->
+  @if (totalPages() > 1) {
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-gray-500">
+        Showing page {{ currentPage() }} of {{ totalPages() }}
+      </p>
+      <div class="space-x-2">
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="currentPage() === 1"
+          (clicked)="onPreviousPage()"
+        >
+          Previous
+        </ui-button>
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="currentPage() === totalPages()"
+          (clicked)="onNextPage()"
+        >
+          Next
+        </ui-button>
+      </div>
+    </div>
+  }
+
+  <!-- Connection preview — opens from the eye-icon button on each row. Reuses
+       the same panel the Connection tab on the detail page renders, so output
+       stays consistent without duplicating layout. -->
+  <ui-modal
+    [open]="!!previewClient()"
+    [title]="previewClient()?.clientName || previewClient()?.clientId || 'Connection details'"
+    size="lg"
+    (closed)="closeConnectionPreview()"
+  >
+    @if (previewClient(); as c) {
+      <admin-client-connection-panel [clientId]="c.id" />
+    }
+  </ui-modal>
+</div>

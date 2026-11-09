@@ -1,6 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Core.Domain.Interfaces;
@@ -17,8 +16,7 @@ public class CibaService : ICibaService
     private readonly ICibaStore _cibaStore;
     private readonly IOlusoUserService _userService;
     private readonly ISigningCredentialStore _signingCredentialStore;
-    private readonly ITenantContext _tenantContext;
-    private readonly IConfiguration _configuration;
+    private readonly IIssuerResolver _issuerResolver;
     private readonly ICibaUserNotificationService? _notificationService;
     private readonly ILogger<CibaService> _logger;
 
@@ -26,16 +24,14 @@ public class CibaService : ICibaService
         ICibaStore cibaStore,
         IOlusoUserService userService,
         ISigningCredentialStore signingCredentialStore,
-        ITenantContext tenantContext,
-        IConfiguration configuration,
+        IIssuerResolver issuerResolver,
         ILogger<CibaService> logger,
         ICibaUserNotificationService? notificationService = null)
     {
         _cibaStore = cibaStore;
         _userService = userService;
         _signingCredentialStore = signingCredentialStore;
-        _tenantContext = tenantContext;
-        _configuration = configuration;
+        _issuerResolver = issuerResolver;
         _logger = logger;
         _notificationService = notificationService;
     }
@@ -357,7 +353,7 @@ public class CibaService : ICibaService
                 return null;
             }
 
-            var issuer = GetIssuer();
+            var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
 
             var validationParameters = new TokenValidationParameters
             {
@@ -448,7 +444,7 @@ public class CibaService : ICibaService
                 return null;
             }
 
-            var issuer = GetIssuer();
+            var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
 
             // For id_token_hint, we validate signature but allow expired tokens
             // (the token is just a hint about who the user is)
@@ -512,19 +508,6 @@ public class CibaService : ICibaService
             _logger.LogWarning(ex, "Unexpected error validating id_token_hint");
             return null;
         }
-    }
-
-    private string GetIssuer()
-    {
-        var baseUrl = _configuration["Oluso:IssuerUri"]
-            ?? throw new InvalidOperationException("IssuerUri not configured");
-
-        if (_tenantContext.HasTenant)
-        {
-            return $"{baseUrl.TrimEnd('/')}/{_tenantContext.Tenant!.Identifier}";
-        }
-
-        return baseUrl;
     }
 
     private static string GenerateAuthReqId()

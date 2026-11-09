@@ -275,6 +275,61 @@ public class DatabasePluginStore : IPluginStore
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<PluginNetworkConfig?> GetNetworkConfigAsync(
+        string pluginId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.PluginNetworkConfigs
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.PluginId == pluginId, cancellationToken);
+    }
+
+    public async Task<PluginNetworkConfig> UpsertNetworkConfigAsync(
+        PluginNetworkConfig config,
+        CancellationToken cancellationToken = default)
+    {
+        // Make sure the plugin actually exists before letting a network
+        // policy land — prevents orphan rows that would never apply.
+        var pluginExists = await _dbContext.PluginMetadata
+            .AnyAsync(p => p.Id == config.PluginId, cancellationToken);
+        if (!pluginExists)
+        {
+            throw new InvalidOperationException($"Plugin '{config.PluginId}' not found");
+        }
+
+        var existing = await _dbContext.PluginNetworkConfigs
+            .FirstOrDefaultAsync(c => c.PluginId == config.PluginId, cancellationToken);
+
+        if (existing == null)
+        {
+            if (string.IsNullOrEmpty(config.Id))
+            {
+                config.Id = Guid.NewGuid().ToString("N");
+            }
+            _dbContext.PluginNetworkConfigs.Add(config);
+        }
+        else
+        {
+            existing.AccessMode = config.AccessMode;
+            existing.AllowedHosts = config.AllowedHosts;
+            existing.HttpTimeoutMs = config.HttpTimeoutMs;
+            existing.MaxHttpRequestsPerExecution = config.MaxHttpRequestsPerExecution;
+            existing.RequiresApproval = config.RequiresApproval;
+            // Approval state — only the controller's approval endpoint
+            // should flip these; preserve when the caller passed null.
+            if (config.IsApproved != existing.IsApproved)
+            {
+                existing.IsApproved = config.IsApproved;
+                existing.ApprovedBy = config.ApprovedBy;
+                existing.ApprovedAt = config.ApprovedAt;
+            }
+            config = existing;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return config;
+    }
+
     private static string GetStoragePath(string pluginName, string? tenantId)
     {
         return tenantId == null

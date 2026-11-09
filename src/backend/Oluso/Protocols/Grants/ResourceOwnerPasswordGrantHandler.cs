@@ -21,6 +21,8 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
     private readonly ITenantContext _tenantContext;
     private readonly IProfileService _profileService;
     private readonly IClientStore _clientStore;
+    private readonly IResourceStore? _resourceStore;
+    private readonly IClientUserAccess _clientUserAccess;
     private readonly ILogger<ResourceOwnerPasswordGrantHandler> _logger;
 
     public string GrantType => OidcConstants.GrantTypes.Password;
@@ -29,10 +31,14 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
         ITenantContext tenantContext,
         IProfileService profileService,
         IClientStore clientStore,
+        IClientUserAccess clientUserAccess,
         ILogger<ResourceOwnerPasswordGrantHandler> logger,
         IOlusoUserService? userService = null,
-        IResourceOwnerPasswordValidator? passwordValidator = null)
+        IResourceOwnerPasswordValidator? passwordValidator = null,
+        IResourceStore? resourceStore = null)
     {
+        _resourceStore = resourceStore;
+        _clientUserAccess = clientUserAccess;
         _tenantContext = tenantContext;
         _profileService = profileService;
         _clientStore = clientStore;
@@ -58,8 +64,8 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
 
             var context = new ResourceOwnerPasswordValidationContext
             {
-                Username = request.UserName,
-                Password = request.Password,
+                Username = request.UserName!,
+                Password = request.Password!,
                 Client = client,
                 RequestedScopes = request.RequestedScopes
             };
@@ -83,10 +89,13 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
         // Fall back to IOlusoUserService if available
         if (_userService != null)
         {
-            var tenantId = _tenantContext.HasTenant ? _tenantContext.TenantId : null;
+            // Use the authenticated client's registered tenant — not _tenantContext (routing context).
+            // The token endpoint is an OIDC protocol path where tenant resolution is from URL/header
+            // without JWT validation, so _tenantContext is not a trusted source.
+            var tenantId = request.Client?.TenantId;
             var validationResult = await _userService.ValidateCredentialsAsync(
-                request.UserName,
-                request.Password,
+                request.UserName!,
+                request.Password!,
                 tenantId,
                 cancellationToken);
 
@@ -95,6 +104,12 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
                 if (validationResult.IsLockedOut)
                 {
                     return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "User account is locked out");
+                }
+
+                if (validationResult.PasswordExpired)
+                {
+                    return GrantResult.Failure(OidcConstants.Errors.InvalidGrant,
+                        "Password expired - sign in interactively to change it");
                 }
 
                 if (validationResult.RequiresMfa)
@@ -116,7 +131,7 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
                 return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "User account is deactivated");
             }
 
-            // Validate user is allowed to access this client (AllowedUsers/AllowedRoles)
+            // Validate user is allowed to access this client
             if (request.Client != null)
             {
                 var accessResult = await ValidateUserClientAccessAsync(
@@ -151,7 +166,8 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
         // Determine scopes
         var scopes = request.RequestedScopes.Any()
             ? request.RequestedScopes.ToList()
-            : request.Client?.AllowedScopes?.ToList() ?? new List<string>();
+            : await ApiScopePrefixes.WithoutPrefixScopesAsync(
+                _resourceStore, request.Client?.AllowedScopes ?? new List<string>(), cancellationToken);
 
         // Fetch full client to pass to profile service
         var fullClient = request.Client != null
@@ -165,6 +181,8 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
             scopes,
             "TokenEndpoint",
             "oidc",
+            request.Resource,
+            additionalData: null,
             cancellationToken);
 
         // Merge with any additional claims from validator
@@ -199,53 +217,28 @@ public class ResourceOwnerPasswordGrantHandler : IGrantHandler
     }
 
     /// <summary>
-    /// Validates that a user is allowed to access a client based on AllowedUsers and AllowedRoles restrictions.
+    /// Whether the user may still have tokens for the client: its AllowedUsers, AllowedRoles, RequiredPermission and
+    /// RequireVerifiedEmail, all of which must be met. The permission is looked up in the user's tenant.
     /// </summary>
     private async Task<(bool IsAllowed, string? Reason)> ValidateUserClientAccessAsync(
         string clientId,
         string userId,
         CancellationToken cancellationToken)
     {
-        // Fetch full client entity to get AllowedUsers and AllowedRoles
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
         if (client == null)
         {
             return (false, "Client not found");
         }
 
-        var hasUserRestrictions = client.AllowedUsers.Count > 0;
-        var hasRoleRestrictions = client.AllowedRoles.Count > 0;
-
-        // No restrictions - allow all users
-        if (!hasUserRestrictions && !hasRoleRestrictions)
+        var restrictions = ClientUserRestrictions.From(client);
+        if (restrictions.IsEmpty)
         {
             return (true, null);
         }
 
-        // Check if user is in allowed users list
-        if (hasUserRestrictions && client.AllowedUsers.Any(au => au.SubjectId == userId))
-        {
-            return (true, null);
-        }
-
-        // Check if user has any of the allowed roles
-        if (hasRoleRestrictions && _userService != null)
-        {
-            var userRoles = await _userService.GetRolesAsync(userId, cancellationToken);
-            var allowedRoleNames = client.AllowedRoles.Select(r => r.Role).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (userRoles.Any(r => allowedRoleNames.Contains(r)))
-            {
-                return (true, null);
-            }
-        }
-
-        // User is not allowed
-        var reason = hasUserRestrictions && hasRoleRestrictions
-            ? "User is not authorized to access this application"
-            : hasUserRestrictions
-                ? "User is not in the allowed users list for this application"
-                : "User does not have any of the required roles for this application";
-
-        return (false, reason);
+        var user = _userService != null ? await _userService.FindByIdAsync(userId, cancellationToken) : null;
+        var denial = await _clientUserAccess.FindDenialAsync(clientId, restrictions, userId, user?.TenantId, cancellationToken);
+        return (denial == null, denial);
     }
 }

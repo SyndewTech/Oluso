@@ -68,6 +68,14 @@ public class PersistedGrantStore : IPersistedGrantStore
         return await query.ToListAsync(cancellationToken);
     }
 
+    public async Task<int> RemoveExpiredAsync(CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        return await _context.PersistedGrants
+            .Where(g => g.Expiration != null && g.Expiration < now)
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
     public async Task RemoveAsync(string key, CancellationToken cancellationToken = default)
     {
         var grant = await _context.PersistedGrants

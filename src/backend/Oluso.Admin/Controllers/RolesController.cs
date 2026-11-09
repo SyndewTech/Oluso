@@ -1,10 +1,14 @@
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Licensing;
 using Oluso.Core.Services;
+using Oluso.Admin.Dto.Roles;
+using Oluso.Admin.Services;
 
 namespace Oluso.Admin.Controllers;
 
@@ -17,6 +21,9 @@ public class RolesController : AdminBaseController
     private readonly IRoleStore _roleStore;
     private readonly IOlusoUserService _userService;
     private readonly IOlusoEventService _eventService;
+    private readonly IFeatureGate _featureGate;
+    private readonly IEntitlementStore _entitlementStore;
+    private readonly IEntitlementScopeProvisioner _entitlementScopeProvisioner;
     private readonly ILogger<RolesController> _logger;
 
     public RolesController(
@@ -24,13 +31,49 @@ public class RolesController : AdminBaseController
         IRoleStore roleStore,
         IOlusoUserService userService,
         IOlusoEventService eventService,
+        IFeatureGate featureGate,
+        IEntitlementStore entitlementStore,
+        IEntitlementScopeProvisioner entitlementScopeProvisioner,
         ILogger<RolesController> logger)
         : base(tenantContext)
     {
         _roleStore = roleStore;
         _userService = userService;
         _eventService = eventService;
+        _featureGate = featureGate;
+        _entitlementStore = entitlementStore;
+        _entitlementScopeProvisioner = entitlementScopeProvisioner;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Registry roles are re-created at every startup, so deleting their
+    /// platform row would only last until the next deploy.
+    /// </summary>
+    private static bool IsPlatformSeededRole(string roleName) =>
+        PermissionRegistry.Instance.GetModuleRoles().Any(r =>
+            r.Name.Equals(roleName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// A role a module's administrator manages (ManagedByRole set to that module's admin role) belongs to that module's
+    /// own roles page; this API neither lists nor reads, edits or deletes it.
+    /// </summary>
+    private static bool IsManagedByModule(OlusoRole role) => role.ManagedByRole is not (null or "System" or "SuperAdmin");
+
+    /// <summary>
+    /// Tenant-owned rows are deletable by the tenant. Platform-wide rows only
+    /// by SuperAdmin, and never the reserved ones or those the registry seeds.
+    /// </summary>
+    private bool IsRoleDeletable(OlusoRole role)
+    {
+        if (role.TenantId == null)
+        {
+            return IsSuperAdmin
+                && !ReservedClaimTypes.IsReservedRoleName(role.Name!)
+                && !IsPlatformSeededRole(role.Name!);
+        }
+
+        return role.TenantId == TenantId && !role.IsSystemRole;
     }
 
     /// <summary>
@@ -39,6 +82,7 @@ public class RolesController : AdminBaseController
     /// <remarks>
     /// System roles (SuperAdmin, SystemAdmin) are only visible to SuperAdmin users.
     /// Tenant admins only see tenant-scoped roles and non-system global roles.
+    /// Module roles (HRAdmin, CRMAdmin, etc.) are hidden when the feature is disabled.
     /// </remarks>
     [HttpGet]
     [RequirePermission(AdminPermissions.RolesRead)]
@@ -48,26 +92,80 @@ public class RolesController : AdminBaseController
     {
         var roles = await _roleStore.GetRolesAsync(TenantId, includeSystem, cancellationToken);
 
-        // Filter out system-level admin roles for non-SuperAdmin users
-        // These roles should not be visible or assignable by tenant admins
+        // Filter out reserved roles based on caller's privilege level:
+        // - SuperAdmin sees all roles
+        // - OrgAdmin sees org + tenant-level reserved roles, but not platform roles
+        // - TenantAdmin sees tenant-level reserved roles (TenantAdmin, Admin) but not platform or org roles
+        // - Everyone else sees no reserved roles
         if (!IsSuperAdmin)
         {
-            roles = roles.Where(r => !ReservedClaimTypes.IsReservedRoleName(r.Name)).ToList();
+            if (IsCurrentOrgAdmin)
+            {
+                // OrgAdmins see everything except platform-level roles
+                roles = roles.Where(r => !ReservedClaimTypes.IsSuperAdminOnlyRole(r.Name!)).ToList();
+            }
+            else if (HasAnyRole("TenantAdmin", "Admin"))
+            {
+                // TenantAdmins see tenant-level reserved roles only
+                roles = roles.Where(r =>
+                    !ReservedClaimTypes.IsReservedRoleName(r.Name!)
+                    || ReservedClaimTypes.IsTenantAdminAssignableRole(r.Name!)).ToList();
+            }
+            else
+            {
+                roles = roles.Where(r => !ReservedClaimTypes.IsReservedRoleName(r.Name!)).ToList();
+            }
         }
 
-        var result = roles.Select(r => new RoleDto
+        roles = roles.Where(r => !IsManagedByModule(r)).ToList();
+
+        // Filter out module roles whose feature is disabled for this tenant
+        var moduleRoles = PermissionRegistry.Instance.GetModuleRoles();
+        var disabledModuleRoleNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var moduleRole in moduleRoles.Where(mr => mr.FeatureKey != null))
         {
-            Id = r.Id,
-            Name = r.Name,
-            DisplayName = r.DisplayName ?? r.Name,
-            Description = r.Description,
-            IsSystemRole = r.IsSystemRole,
-            TenantId = r.TenantId,
-            IsGlobal = r.TenantId == null,
-            Permissions = r.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
-            CreatedAt = r.CreatedAt,
-            UpdatedAt = r.UpdatedAt
-        });
+            var featureResult = await _featureGate.CheckFeatureAsync(moduleRole.FeatureKey!, cancellationToken: cancellationToken);
+            if (!featureResult.IsAllowed)
+            {
+                disabledModuleRoleNames.Add(moduleRole.Name);
+            }
+        }
+
+        if (disabledModuleRoleNames.Count > 0)
+        {
+            roles = roles.Where(r => !disabledModuleRoleNames.Contains(r.Name!)).ToList();
+        }
+
+        // Build result with permissions from claims
+        var result = new List<RoleDto>();
+        foreach (var r in roles)
+        {
+            var claims = await _roleStore.GetRoleClaimsAsync(r.Id, cancellationToken);
+            var permissions = claims
+                .Where(c => c.Type == OlusoRole.PermissionClaimType)
+                .Select(c => c.Value)
+                .ToList();
+            var entitlements = claims
+                .Where(c => c.Type == OlusoRole.EntitlementClaimType)
+                .Select(c => c.Value)
+                .ToList();
+
+            result.Add(new RoleDto
+            {
+                Id = r.Id,
+                Name = r.Name!,
+                DisplayName = r.DisplayName ?? r.Name!,
+                Description = r.Description,
+                IsSystemRole = r.IsSystemRole,
+                TenantId = r.TenantId,
+                IsGlobal = r.TenantId == null,
+                IsDeletable = IsRoleDeletable(r),
+                Permissions = permissions,
+                Entitlements = entitlements,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            });
+        }
 
         return Ok(result);
     }
@@ -81,7 +179,7 @@ public class RolesController : AdminBaseController
     {
         var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
 
-        if (role == null)
+        if (role == null || IsManagedByModule(role))
         {
             return NotFound();
         }
@@ -94,21 +192,36 @@ public class RolesController : AdminBaseController
 
         var claims = await _roleStore.GetRoleClaimsAsync(roleId, cancellationToken);
 
+        // Separate permissions from other claims
+        var permissions = claims
+            .Where(c => c.Type == OlusoRole.PermissionClaimType)
+            .Select(c => c.Value)
+            .ToList();
+
+        var otherClaims = claims
+            .Where(c => c.Type != OlusoRole.PermissionClaimType)
+            .Select(c => new RoleClaimDto
+            {
+                Type = c.Type,
+                Value = c.Value
+            }).ToList();
+
         return Ok(new RoleDetailDto
         {
             Id = role.Id,
-            Name = role.Name,
-            DisplayName = role.DisplayName ?? role.Name,
+            Name = role.Name!,
+            DisplayName = role.DisplayName ?? role.Name!,
             Description = role.Description,
             IsSystemRole = role.IsSystemRole,
             TenantId = role.TenantId,
             IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
-            Claims = claims.Select(c => new RoleClaimDto
-            {
-                Type = c.Type,
-                Value = c.Value
-            }).ToList(),
+            IsDeletable = IsRoleDeletable(role),
+            Permissions = permissions,
+            Entitlements = claims
+                .Where(c => c.Type == OlusoRole.EntitlementClaimType)
+                .Select(c => c.Value)
+                .ToList(),
+            Claims = otherClaims,
             CreatedAt = role.CreatedAt,
             UpdatedAt = role.UpdatedAt
         });
@@ -132,18 +245,18 @@ public class RolesController : AdminBaseController
             return BadRequest(new { error = $"The role name '{request.Name}' is reserved for system use and cannot be created at tenant level" });
         }
 
-        // Validate claims don't contain reserved claim types
+        // Validate claims don't contain protected claim types (reserved + "permission")
         if (request.Claims?.Any() == true)
         {
-            var reservedClaims = ReservedClaimTypes.GetReservedClaimTypes(
+            var protectedClaims = ReservedClaimTypes.GetProtectedClaimTypes(
                 request.Claims.Select(c => (c.Type, c.Value))).ToList();
 
-            if (reservedClaims.Any())
+            if (protectedClaims.Any())
             {
                 _logger.LogWarning(
-                    "Tenant {TenantId} attempted to create role with reserved claim types: {ClaimTypes}",
-                    TenantId, string.Join(", ", reservedClaims));
-                return BadRequest(new { error = $"The following claim types are reserved for system use: {string.Join(", ", reservedClaims)}" });
+                    "Tenant {TenantId} attempted to create role with protected claim types: {ClaimTypes}",
+                    TenantId, string.Join(", ", protectedClaims));
+                return BadRequest(new { error = $"The following claim types are protected: {string.Join(", ", protectedClaims)}. Use the 'permissions' field for permission claims." });
             }
         }
 
@@ -169,13 +282,33 @@ public class RolesController : AdminBaseController
             DisplayName = request.DisplayName ?? request.Name,
             Description = request.Description,
             TenantId = TenantId, // Always scoped to current tenant
-            IsSystemRole = false, // Tenant-created roles are never system roles
-            Permissions = request.Permissions != null ? string.Join(",", request.Permissions) : null
+            IsSystemRole = false // Tenant-created roles are never system roles
         };
+
+        var rawEntitlementError = ValidateNoRawEntitlementClaims(request.Claims);
+        if (rawEntitlementError != null)
+        {
+            return BadRequest(new { error = rawEntitlementError });
+        }
+
+        var entitlementError = await ValidateEntitlementsAsync(request.Entitlements, cancellationToken);
+        if (entitlementError != null)
+        {
+            return BadRequest(new { error = entitlementError });
+        }
 
         var created = await _roleStore.CreateAsync(role, cancellationToken);
 
-        // Add claims if provided
+        await ApplyEntitlementsAsync(created.Id, request.Entitlements, existingClaims: null, cancellationToken);
+
+        // Add permissions as claims
+        var permissionsList = request.Permissions ?? new List<string>();
+        foreach (var permission in permissionsList)
+        {
+            await _roleStore.AddRoleClaimAsync(created.Id, OlusoRole.PermissionClaimType, permission, cancellationToken);
+        }
+
+        // Add other claims if provided
         if (request.Claims?.Any() == true)
         {
             foreach (var claim in request.Claims)
@@ -207,7 +340,9 @@ public class RolesController : AdminBaseController
             IsSystemRole = role.IsSystemRole,
             TenantId = role.TenantId,
             IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
+            IsDeletable = IsRoleDeletable(role),
+            Permissions = permissionsList,
+            Entitlements = request.Entitlements?.Distinct().ToList() ?? new List<string>(),
             CreatedAt = role.CreatedAt
         });
     }
@@ -219,12 +354,12 @@ public class RolesController : AdminBaseController
     [RequirePermission(AdminPermissions.RolesWrite)]
     public async Task<ActionResult<RoleDto>> UpdateRole(
         string roleId,
-        [FromBody] UpdateRoleRequest request,
+        [FromBody] RoleDetailDto request,
         CancellationToken cancellationToken)
     {
         var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
 
-        if (role == null)
+        if (role == null || IsManagedByModule(role))
         {
             return NotFound();
         }
@@ -239,6 +374,39 @@ public class RolesController : AdminBaseController
         if (role.IsSystemRole)
         {
             return BadRequest(new { error = "System roles cannot be modified" });
+        }
+
+        // Everything is validated before the first write, so a rejected request
+        // leaves the role untouched.
+        // Validate permissions are valid system-defined permissions
+        var permissionValidationError = ValidatePermissions(request.Permissions);
+        if (permissionValidationError != null)
+        {
+            return BadRequest(new { error = permissionValidationError });
+        }
+
+        var rawEntitlementError = ValidateNoRawEntitlementClaims(request.Claims);
+        if (rawEntitlementError != null)
+        {
+            return BadRequest(new { error = rawEntitlementError });
+        }
+
+        var entitlementError = await ValidateEntitlementsAsync(request.Entitlements, cancellationToken);
+        if (entitlementError != null)
+        {
+            return BadRequest(new { error = entitlementError });
+        }
+
+        // Validate claims don't contain protected claim types (reserved + "permission")
+        var protectedClaims = ReservedClaimTypes.GetProtectedClaimTypes(
+            request.Claims.Select(c => (c.Type, c.Value))).ToList();
+
+        if (protectedClaims.Any())
+        {
+            _logger.LogWarning(
+                "Tenant {TenantId} attempted to update role with protected claim types: {ClaimTypes}",
+                TenantId, string.Join(", ", protectedClaims));
+            return BadRequest(new { error = $"The following claim types are protected: {string.Join(", ", protectedClaims)}. Use the 'permissions' field for permission claims." });
         }
 
         // Check for name conflict if name is being changed
@@ -262,53 +430,49 @@ public class RolesController : AdminBaseController
             role.Name = request.Name;
         }
 
-        // Update other fields
-        if (request.DisplayName != null)
-            role.DisplayName = request.DisplayName;
-
-        if (request.Description != null)
-            role.Description = request.Description;
-
-        if (request.Permissions != null)
-        {
-            // Validate permissions are valid system-defined permissions
-            var permissionValidationError = ValidatePermissions(request.Permissions);
-            if (permissionValidationError != null)
-            {
-                return BadRequest(new { error = permissionValidationError });
-            }
-            role.Permissions = string.Join(",", request.Permissions);
-        }
+        role.DisplayName = request.DisplayName;
+        role.Description = request.Description;
 
         role.UpdatedAt = DateTime.UtcNow;
 
         var updated = await _roleStore.UpdateAsync(role, cancellationToken);
 
-        // Update claims if provided
-        if (request.Claims != null)
+        // Get existing claims
+        var existingClaims = await _roleStore.GetRoleClaimsAsync(roleId, cancellationToken);
+
+        await ApplyEntitlementsAsync(roleId, request.Entitlements, existingClaims, cancellationToken);
+
+        // Remove old permission claims
+        var existingPermissions = existingClaims.Where(c => c.Type == OlusoRole.PermissionClaimType).ToList();
+        foreach (var perm in existingPermissions)
         {
-            // Validate claims don't contain reserved claim types
-            var reservedClaims = ReservedClaimTypes.GetReservedClaimTypes(
-                request.Claims.Select(c => (c.Type, c.Value))).ToList();
+            await _roleStore.RemoveRoleClaimAsync(roleId, perm.Type, perm.Value, cancellationToken);
+        }
 
-            if (reservedClaims.Any())
-            {
-                _logger.LogWarning(
-                    "Tenant {TenantId} attempted to update role with reserved claim types: {ClaimTypes}",
-                    TenantId, string.Join(", ", reservedClaims));
-                return BadRequest(new { error = $"The following claim types are reserved for system use: {string.Join(", ", reservedClaims)}" });
-            }
+        // Add new permission claims
+        foreach (var permission in request.Permissions)
+        {
+            await _roleStore.AddRoleClaimAsync(roleId, OlusoRole.PermissionClaimType, permission, cancellationToken);
+        }
 
-            var existingClaims = await _roleStore.GetRoleClaimsAsync(roleId, cancellationToken);
-            foreach (var claim in existingClaims)
-            {
-                await _roleStore.RemoveRoleClaimAsync(roleId, claim.Type, claim.Value, cancellationToken);
-            }
+        var currentPermissions = request.Permissions.ToList();
 
-            foreach (var claim in request.Claims)
-            {
-                await _roleStore.AddRoleClaimAsync(roleId, claim.Type, claim.Value, cancellationToken);
-            }
+        // Remove old non-permission claims. Entitlements are excluded: they have
+        // their own field and were just reconciled above, so sweeping them here
+        // would delete what ApplyEntitlementsAsync had written.
+        var existingOtherClaims = existingClaims
+            .Where(c => c.Type != OlusoRole.PermissionClaimType
+                && c.Type != OlusoRole.EntitlementClaimType)
+            .ToList();
+        foreach (var claim in existingOtherClaims)
+        {
+            await _roleStore.RemoveRoleClaimAsync(roleId, claim.Type, claim.Value, cancellationToken);
+        }
+
+        // Add new claims
+        foreach (var claim in request.Claims)
+        {
+            await _roleStore.AddRoleClaimAsync(roleId, claim.Type, claim.Value, cancellationToken);
         }
 
         _logger.LogInformation("Updated role {RoleId}", roleId);
@@ -322,19 +486,21 @@ public class RolesController : AdminBaseController
             IpAddress = ClientIp,
             ResourceId = roleId,
             ResourceName = role.Name,
-            RoleName = role.Name
+            RoleName = role.Name!
         }, cancellationToken);
 
         return Ok(new RoleDto
         {
             Id = role.Id,
-            Name = role.Name,
-            DisplayName = role.DisplayName ?? role.Name,
+            Name = role.Name!,
+            DisplayName = role.DisplayName ?? role.Name!,
             Description = role.Description,
             IsSystemRole = role.IsSystemRole,
             TenantId = role.TenantId,
             IsGlobal = role.TenantId == null,
-            Permissions = role.Permissions?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? new List<string>(),
+            IsDeletable = IsRoleDeletable(role),
+            Permissions = currentPermissions,
+            Entitlements = request.Entitlements?.Distinct().ToList() ?? new List<string>(),
             CreatedAt = role.CreatedAt,
             UpdatedAt = role.UpdatedAt
         });
@@ -349,29 +515,43 @@ public class RolesController : AdminBaseController
     {
         var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
 
-        if (role == null)
+        if (role == null || IsManagedByModule(role))
         {
             return NotFound();
         }
 
-        // Check tenant access - can only delete own roles
-        if (role.TenantId != TenantId)
+        if (role.TenantId == null)
         {
-            return Forbid();
+            // Platform-wide rows: SuperAdmin only, never the reserved ones
+            // (SuperAdmin, OrgAdmin, ...) nor anything the registry re-seeds at startup.
+            if (!IsSuperAdmin)
+            {
+                return Forbid();
+            }
+
+            if (ReservedClaimTypes.IsReservedRoleName(role.Name!) || IsPlatformSeededRole(role.Name!))
+            {
+                return BadRequest(new { error = $"'{role.Name}' is a platform role and cannot be deleted." });
+            }
+        }
+        else
+        {
+            if (role.TenantId != TenantId)
+            {
+                return Forbid();
+            }
+
+            if (role.IsSystemRole)
+            {
+                return BadRequest(new { error = "System roles cannot be deleted" });
+            }
         }
 
-        // System roles cannot be deleted
-        if (role.IsSystemRole)
-        {
-            return BadRequest(new { error = "System roles cannot be deleted" });
-        }
-
-        // Check if any users are assigned to this role
         var usersInRole = await _roleStore.GetUsersInRoleAsync(roleId, cancellationToken);
 
         if (usersInRole > 0)
         {
-            return BadRequest(new { error = $"Cannot delete role. {usersInRole} user(s) are assigned to this role." });
+            return BadRequest(new { error = $"Cannot delete role: {usersInRole} user(s) are assigned to it. Remove them from the role first." });
         }
 
         await _roleStore.DeleteAsync(roleId, cancellationToken);
@@ -387,7 +567,7 @@ public class RolesController : AdminBaseController
             IpAddress = ClientIp,
             ResourceId = roleId,
             ResourceName = role.Name,
-            RoleName = role.Name
+            RoleName = role.Name!
         }, cancellationToken);
 
         return NoContent();
@@ -404,7 +584,7 @@ public class RolesController : AdminBaseController
     {
         var role = await _roleStore.GetByIdAsync(roleId, cancellationToken);
 
-        if (role == null)
+        if (role == null || IsManagedByModule(role))
         {
             return NotFound();
         }
@@ -427,81 +607,101 @@ public class RolesController : AdminBaseController
     }
 
     /// <summary>
-    /// Validates that all permissions in the list are valid system-defined permissions.
-    /// Returns an error message if validation fails, null if successful.
+    /// Validates that all permissions in the list are valid system-defined permissions
+    /// and that the caller is authorized to assign them.
+    ///
+    /// Enforcement rules:
+    /// - Only core permissions can be assigned via the main roles endpoint
+    /// - Module permissions must be assigned via each module's
+    ///   dedicated roles endpoint (e.g., the module's own admin roles endpoint)
+    /// - Unknown permission names are rejected
+    /// - RequiresSuperAdmin permissions can only be assigned by SuperAdmin
+    /// - Organization/Tenants category permissions are restricted to OrgAdmin+
     /// </summary>
-    private static string? ValidatePermissions(ICollection<string>? permissions)
+    /// <summary>
+    /// Rejects entitlement claims supplied through the generic claims field.
+    /// They have a dedicated, catalog-validated field; allowing them here would
+    /// be a way to attach an entitlement that isn't defined.
+    /// </summary>
+    private static string? ValidateNoRawEntitlementClaims(IEnumerable<RoleClaimDto>? claims)
     {
-        if (permissions == null || permissions.Count == 0)
+        return claims == null
+            ? null
+            : RolePermissionValidator.RawEntitlementClaimError(claims.Select(c => c.Type));
+    }
+
+    /// <summary>
+    /// Checks every requested entitlement exists in the tenant's catalog. Keeps
+    /// the picker authoritative: a name that isn't defined is a typo, and left
+    /// unchecked it would become a claim the tenant's app never matches.
+    /// </summary>
+    private async Task<string?> ValidateEntitlementsAsync(
+        ICollection<string>? entitlements,
+        CancellationToken cancellationToken)
+    {
+        if (entitlements == null || entitlements.Count == 0)
         {
             return null;
         }
 
-        var invalidPermissions = permissions
-            .Where(p => !AdminPermissions.Exists(p))
-            .Distinct()
+        var requested = entitlements
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e.Trim())
+            .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (invalidPermissions.Count > 0)
+        var known = (await _entitlementStore.FindByNamesAsync(TenantId, requested, cancellationToken))
+            .Select(e => e.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var unknown = requested.Where(e => !known.Contains(e)).ToList();
+
+        return unknown.Count > 0
+            ? $"The following entitlements are not defined for this tenant: {string.Join(", ", unknown)}. "
+                + "Add them to the entitlement catalog first."
+            : null;
+    }
+
+    /// <summary>
+    /// Reconciles a role's entitlement claims to the requested set, and makes
+    /// sure the scope that releases them exists — assigning an entitlement that
+    /// no scope can deliver is the dead end this feature removes.
+    /// </summary>
+    private async Task ApplyEntitlementsAsync(
+        string roleId,
+        ICollection<string>? entitlements,
+        IEnumerable<RoleClaim>? existingClaims,
+        CancellationToken cancellationToken)
+    {
+        var desired = (entitlements ?? Array.Empty<string>())
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var current = (existingClaims ?? Array.Empty<RoleClaim>())
+            .Where(c => c.Type == OlusoRole.EntitlementClaimType)
+            .Select(c => c.Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var removed in current.Except(desired, StringComparer.Ordinal))
         {
-            return $"The following permissions are not valid: {string.Join(", ", invalidPermissions)}. Use GET /api/admin/permissions to see available permissions.";
+            await _roleStore.RemoveRoleClaimAsync(
+                roleId, OlusoRole.EntitlementClaimType, removed, cancellationToken);
         }
 
-        return null;
+        foreach (var added in desired.Except(current, StringComparer.Ordinal))
+        {
+            await _roleStore.AddRoleClaimAsync(
+                roleId, OlusoRole.EntitlementClaimType, added, cancellationToken);
+        }
+
+        if (desired.Count > 0)
+        {
+            await _entitlementScopeProvisioner.EnsureAsync(cancellationToken);
+        }
     }
+
+    private string? ValidatePermissions(ICollection<string>? permissions) =>
+        RolePermissionValidator.Validate(permissions, new RolePermissionGrantor(IsSuperAdmin, IsCurrentOrgAdmin));
 }
-
-#region DTOs
-
-public class RoleDto
-{
-    public string Id { get; set; } = null!;
-    public string Name { get; set; } = null!;
-    public string DisplayName { get; set; } = null!;
-    public string? Description { get; set; }
-    public bool IsSystemRole { get; set; }
-    public string? TenantId { get; set; }
-    public bool IsGlobal { get; set; }
-    public List<string> Permissions { get; set; } = new();
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
-}
-
-public class RoleDetailDto : RoleDto
-{
-    public List<RoleClaimDto> Claims { get; set; } = new();
-}
-
-public class RoleClaimDto
-{
-    public string Type { get; set; } = null!;
-    public string Value { get; set; } = null!;
-}
-
-public class CreateRoleRequest
-{
-    public string Name { get; set; } = null!;
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public List<string>? Permissions { get; set; }
-    public List<RoleClaimDto>? Claims { get; set; }
-}
-
-public class UpdateRoleRequest
-{
-    public string? Name { get; set; }
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public List<string>? Permissions { get; set; }
-    public List<RoleClaimDto>? Claims { get; set; }
-}
-
-public class RoleUserDto
-{
-    public string Id { get; set; } = null!;
-    public string UserName { get; set; } = null!;
-    public string Email { get; set; } = null!;
-    public string? DisplayName { get; set; }
-}
-
-#endregion

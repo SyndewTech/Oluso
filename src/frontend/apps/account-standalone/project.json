@@ -1,0 +1,87 @@
+{
+  "name": "account-standalone",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "prefix": "account",
+  "sourceRoot": "apps/account-standalone/src",
+  "tags": [],
+  "targets": {
+    "collect-help": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "rm -rf .help-staging && mkdir -p .help-staging && for dir in libs/*/help; do [ -d \"$dir\" ] && cp -R \"$dir\"/. .help-staging/; done; true"
+      }
+    },
+    "build": {
+      "executor": "@angular/build:application",
+      "dependsOn": ["collect-help", "^build"],
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/apps/account-standalone",
+        "browser": "apps/account-standalone/src/main.ts",
+        "tsConfig": "apps/account-standalone/tsconfig.app.json",
+        "assets": [
+          {
+            "glob": "**/*",
+            "input": "apps/account-standalone/public"
+          },
+          {
+            "glob": "**/*",
+            "input": ".help-staging",
+            "output": "/assets/help"
+          }
+        ],
+        "styles": ["apps/account-standalone/src/styles.css"]
+      },
+      "configurations": {
+        "production": {
+          "budgets": [
+            {
+              "type": "initial",
+              "maximumWarning": "2mb",
+              "maximumError": "3mb"
+            },
+            {
+              "type": "anyComponentStyle",
+              "maximumWarning": "4kb",
+              "maximumError": "8kb"
+            }
+          ],
+          "outputHashing": "all"
+        },
+        "development": {
+          "optimization": false,
+          "extractLicenses": false,
+          "sourceMap": true
+        }
+      },
+      "defaultConfiguration": "production"
+    },
+    "serve": {
+      "continuous": true,
+      "executor": "@angular/build:dev-server",
+      "configurations": {
+        "production": {
+          "buildTarget": "account-standalone:build:production"
+        },
+        "development": {
+          "buildTarget": "account-standalone:build:development"
+        }
+      },
+      "defaultConfiguration": "development"
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint"
+    },
+    "serve-static": {
+      "continuous": true,
+      "executor": "@nx/web:file-server",
+      "options": {
+        "buildTarget": "account-standalone:build",
+        "port": 4200,
+        "staticFilePath": "dist/apps/account-standalone/browser",
+        "spa": true
+      }
+    }
+  }
+}

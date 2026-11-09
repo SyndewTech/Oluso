@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Oluso.Account.Dto</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Oluso.Account.Dto</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Wire-contract DTOs for the Oluso Account module. Shared by backend controllers and mobile clients.</Description>
+    <PackageTags>oluso;account;dto;contracts</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Oluso.Contracts\Oluso.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

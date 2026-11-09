@@ -11,16 +11,17 @@ namespace Oluso.Protocols.DPoP;
 public class InMemoryDPoPNonceStore : IDPoPNonceStore
 {
     private readonly IDistributedCache _cache;
+    private readonly IDPoPReplayCache _replay;
     private readonly TimeSpan _nonceLifetime = TimeSpan.FromMinutes(5);
 
     private const string NonceCachePrefix = "oluso:dpop:nonce:";
-    private const string JtiCachePrefix = "oluso:dpop:jti:";
 
     public bool IsNonceRequired { get; set; } = false;
 
-    public InMemoryDPoPNonceStore(IDistributedCache cache)
+    public InMemoryDPoPNonceStore(IDistributedCache cache, IDPoPReplayCache? replay = null)
     {
         _cache = cache;
+        _replay = replay ?? new LocalDPoPReplayCache(cache);
     }
 
     public async Task<string> GenerateNonceAsync(string? clientId, CancellationToken cancellationToken = default)
@@ -61,26 +62,13 @@ public class InMemoryDPoPNonceStore : IDPoPNonceStore
         return false;
     }
 
-    public async Task<bool> ValidateJtiAsync(string jti, TimeSpan lifetime, CancellationToken cancellationToken = default)
-    {
-        var cacheKey = GetJtiCacheKey(jti);
-
-        // Check if JTI was already used
-        var existing = await _cache.GetAsync(cacheKey, cancellationToken);
-        if (existing != null)
-        {
-            return false;
-        }
-
-        // Mark JTI as used
-        var options = new DistributedCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = lifetime
-        };
-        await _cache.SetAsync(cacheKey, new byte[] { 1 }, options, cancellationToken);
-        return true;
-    }
+    /// <summary>
+    /// Records the proof's jti; false when it was seen before. Delegates to <see cref="IDPoPReplayCache"/>,
+    /// whose check-and-record is atomic (a get-then-set on the distributed cache let two concurrent
+    /// requests replaying one proof both pass).
+    /// </summary>
+    public Task<bool> ValidateJtiAsync(string jti, TimeSpan lifetime, CancellationToken cancellationToken = default) =>
+        _replay.TryAddAsync(jti, lifetime, cancellationToken);
 
     private static string GetNonceCacheKey(string nonce) => $"{NonceCachePrefix}{nonce}";
-    private static string GetJtiCacheKey(string jti) => $"{JtiCachePrefix}{jti}";
 }

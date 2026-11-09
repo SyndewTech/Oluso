@@ -44,6 +44,12 @@ public class TenantLdapSettings
     public string? AdminPasswordHash { get; set; }
 
     /// <summary>
+    /// Admin password (write-only). Used to set a new password on PUT.
+    /// Never returned in GET responses.
+    /// </summary>
+    public string? AdminPassword { get; set; }
+
+    /// <summary>
     /// TLS certificate configuration for this tenant.
     /// If not set, uses the global certificate.
     /// </summary>

@@ -1,8 +1,8 @@
 @model Oluso.UserJourneys.Steps.CaptchaViewModel
 
 <div class="captcha-form">
-    <h2>Security Check</h2>
-    <p class="description">Please complete the security verification below to continue.</p>
+    <h2>@Localizer["captcha_title"]</h2>
+    <p class="description">@Localizer["captcha_description"]</p>
 
     @if (!string.IsNullOrEmpty(Model.ErrorMessage))
     {
@@ -50,6 +50,7 @@
                     break;
 
                 case "turnstile":
+                case "cloudflare":
                     <div class="cf-turnstile"
                          data-sitekey="@Model.SiteKey"
                          data-theme="@Model.Theme"
@@ -61,7 +62,7 @@
         </div>
 
         <div class="d-grid gap-2">
-            <button type="submit" class="btn btn-primary" id="submit-btn">Continue</button>
+            <button type="submit" class="btn btn-primary" id="submit-btn">@Localizer["captcha_button"]</button>
         </div>
     </form>
 </div>

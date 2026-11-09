@@ -10,7 +10,7 @@ namespace Oluso.Messaging;
 /// <summary>
 /// SMS sender implementation using Infobip
 /// </summary>
-public class InfobipSmsSender : ISmsSender
+public class InfobipSmsSender : ISmsService
 {
     private readonly HttpClient _httpClient;
     private readonly SmsOptions _options;
@@ -84,7 +84,8 @@ public class InfobipSmsSender : ISmsSender
                 if (messageResult != null)
                 {
                     var status = messageResult.Status;
-                    if (status.GroupId <= 2) // Pending or Undeliverable
+                    // Infobip status groups: 1 PENDING, 2 UNDELIVERABLE, 3 DELIVERED, 4 EXPIRED, 5 REJECTED.
+                    if (status.GroupId is 1 or 3)
                     {
                         _logger.LogInformation(
                             "SMS sent successfully to {Phone} via Infobip, MessageId: {MessageId}, Status: {Status}",

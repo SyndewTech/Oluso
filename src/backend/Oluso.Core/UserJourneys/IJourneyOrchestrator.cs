@@ -39,6 +39,34 @@ public interface IJourneyOrchestrator
 public class JourneyStartContext
 {
     /// <summary>
+    /// The launch link the journey was opened with, when there was one. A module's journey starts only with a launch
+    /// from a module that may use it; its context and module are written into the journey's data.
+    /// </summary>
+    public JourneyLaunchTicket? Launch { get; init; }
+
+    /// <summary>
+    /// Journey data key holding the user signed in by an existing session. Login steps
+    /// complete for this user instead of asking for credentials again.
+    /// </summary>
+    public const string SessionUserIdDataKey = "session_user_id";
+
+    /// <summary>
+    /// Journey data key holding when the existing session signed in (Unix seconds), so a
+    /// login step can ask again when that sign-in is older than it accepts.
+    /// </summary>
+    public const string SessionAuthTimeDataKey = "session_auth_time";
+
+    /// <summary>
+    /// User already signed in by an existing session, when a requested policy runs for them
+    /// </summary>
+    public string? UserId { get; init; }
+
+    /// <summary>
+    /// When the existing session signed in, for a journey started for <see cref="UserId"/>
+    /// </summary>
+    public DateTimeOffset? SessionAuthTime { get; init; }
+
+    /// <summary>
     /// HTTP context
     /// </summary>
     public HttpContext HttpContext { get; init; } = null!;
@@ -107,6 +135,7 @@ public enum JourneyType
     SignUp,
     SignInSignUp,
     PasswordReset,
+    PasswordChange,
     ProfileEdit,
     LinkAccount,
     Consent,
@@ -130,6 +159,82 @@ public class JourneyStepInput
     public required string StepId { get; init; }
     public IDictionary<string, object>? Values { get; init; }
     public string? Action { get; init; }
+
+    /// <summary>
+    /// Files posted with the step's form. Only the request that posted them can read
+    /// them; they are never written to journey state, so a step that keeps a file
+    /// stores it (see <see cref="Oluso.Core.Storage.IJourneyFileUploadService"/>).
+    /// </summary>
+    public IReadOnlyList<JourneyInputFile>? Files { get; init; }
+}
+
+/// <summary>A file posted to a journey step, read through <see cref="OpenReadStream"/>.</summary>
+public sealed class JourneyInputFile
+{
+    private readonly Func<Stream> _open;
+
+    public JourneyInputFile(string fieldName, string fileName, string? contentType, long length, Func<Stream> open)
+    {
+        FieldName = fieldName;
+        FileName = fileName;
+        ContentType = contentType;
+        Length = length;
+        _open = open;
+    }
+
+    /// <summary>The form field the file was posted under.</summary>
+    public string FieldName { get; }
+
+    /// <summary>The name the browser sent; untrusted.</summary>
+    public string FileName { get; }
+
+    /// <summary>The type the browser claimed; untrusted (uploads are sniffed instead).</summary>
+    public string? ContentType { get; }
+
+    public long Length { get; }
+
+    public Stream OpenReadStream() => _open();
+}
+
+/// <summary>
+/// Told when a journey that started without a user learns who the user is (a sign-up or
+/// sign-in step set it), so records made earlier in the same journey can be tied to them.
+/// </summary>
+public interface IJourneyUserAttachedHandler
+{
+    Task OnUserAttachedAsync(JourneyUserAttached attached, CancellationToken cancellationToken = default);
+}
+
+public sealed record JourneyUserAttached(string JourneyId, string TenantId, string UserId, IReadOnlyDictionary<string, object> JourneyData);
+
+/// <summary>
+/// A counter in journey data that waiting pages poll (through the journey status
+/// endpoint) to learn that something outside the browser changed what the current step
+/// would show, e.g. a provider's webhook deciding a pending check.
+/// </summary>
+public static class JourneyStatusRevision
+{
+    /// <summary>Journey data key; underscored so it never reaches submissions or claims.</summary>
+    public const string DataKey = "_status_revision";
+
+    public static long Read(IDictionary<string, object>? data)
+    {
+        if (data == null || !data.TryGetValue(DataKey, out var value) || value == null) return 0;
+        return long.TryParse(value is System.Text.Json.JsonElement e ? e.ToString() : value.ToString(), out var n) ? n : 0;
+    }
+
+    /// <summary>Increments the counter on a journey that is still running; false when it's gone or finished.</summary>
+    public static async Task<bool> BumpAsync(IJourneyStateStore store, string journeyId, CancellationToken cancellationToken = default)
+    {
+        var state = await store.GetAsync(journeyId, cancellationToken);
+        if (state == null || state.Status != JourneyStatus.InProgress) return false;
+        var data = state.Data != null
+            ? new Dictionary<string, object>(state.Data)
+            : new Dictionary<string, object>();
+        data[DataKey] = Read(data) + 1;
+        await store.SaveAsync(state with { Data = data }, cancellationToken);
+        return true;
+    }
 }
 
 /// <summary>

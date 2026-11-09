@@ -13,12 +13,14 @@ namespace Oluso.Protocols.Grants;
 public class CibaGrantHandler : IGrantHandler
 {
     private readonly ICibaService _cibaService;
+    private readonly IClientUserAccess _clientUserAccess;
 
     public string GrantType => OidcConstants.GrantTypes.Ciba;
 
-    public CibaGrantHandler(ICibaService cibaService)
+    public CibaGrantHandler(ICibaService cibaService, IClientUserAccess clientUserAccess)
     {
         _cibaService = cibaService;
+        _clientUserAccess = clientUserAccess;
     }
 
     public async Task<GrantResult> HandleAsync(TokenRequest request, CancellationToken cancellationToken = default)
@@ -60,7 +62,18 @@ public class CibaGrantHandler : IGrantHandler
                     "The auth_req_id has already been used");
 
             case CibaRequestStatus.Approved:
-                // Success! Return the grant
+                // The client's user restrictions, in the client's tenant: a backchannel request stays in it.
+                if (!string.IsNullOrEmpty(status.SubjectId) && request.Client != null)
+                {
+                    var denial = await _clientUserAccess.FindDenialAsync(
+                        request.Client.ClientId, ClientUserRestrictions.From(request.Client),
+                        status.SubjectId, request.Client.TenantId, cancellationToken);
+                    if (denial != null)
+                    {
+                        return GrantResult.Failure(OidcConstants.Errors.AccessDenied, denial);
+                    }
+                }
+
                 return new GrantResult
                 {
                     SubjectId = status.SubjectId,

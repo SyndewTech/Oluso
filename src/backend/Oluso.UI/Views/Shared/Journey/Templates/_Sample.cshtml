@@ -1,0 +1,68 @@
+@model Oluso.Core.UserJourneys.CustomPageViewModel
+@*
+    Bundled sample for the `custom_page` journey step.
+
+    HOW TO USE IT IN YOUR OWN APP
+    -----------------------------
+    Copy this file into your host application (or a referenced Razor Class
+    Library) before you deploy, at:
+
+        Views/Shared/Journey/Templates/_{YourName}.cshtml
+
+    Then reference it from a journey step (your name, minus the leading
+    underscore and .cshtml):
+
+        { "type": "custom_page",
+          "settings": {
+            "templatePath": "{YourName}",
+            "model": { "title": "Welcome" }
+          } }
+
+    Host views take precedence over the library's, so a file you place at the
+    same path overrides this bundled sample.
+
+    WHAT YOU CAN BIND TO (CustomPageViewModel)
+    ------------------------------------------
+      Model.Data    journey state from earlier steps (e.g. values an api_call
+                    step mapped in). Credential keys are already stripped.
+      Model.Input   values submitted to this page on a previous render.
+      Model.Config  the step's static `model` setting (labels, copy, flags).
+      Model.Get(k)  shortcut for the string form of a Model.Data value.
+
+    POSTING BACK
+    ------------
+    The form posts to the same journey URL. Any named input becomes journey
+    input for the next step. The hidden `__submitted` field marks the round-trip.
+*@
+@{
+    var title = Model.Config.TryGetValue("title", out var t) ? t?.ToString() : "Custom page";
+}
+<div class="custom-page">
+    <h2>@title</h2>
+
+    @* Example: surface whatever an earlier step placed in journey data.
+       Replace this with your own markup — a select populated from a fetched
+       collection, a confirmation summary, a postMessage result page, etc. *@
+    @if (Model.Data.Count > 0)
+    {
+        <ul class="custom-page-data">
+            @foreach (var entry in Model.Data)
+            {
+                <li><strong>@entry.Key:</strong> @entry.Value</li>
+            }
+        </ul>
+    }
+
+    <form method="post">
+        <input type="hidden" name="__submitted" value="true" />
+
+        <div class="form-check mb-3">
+            <input type="checkbox" id="acknowledged" name="acknowledged" value="true" class="form-check-input" />
+            <label class="form-check-label" for="acknowledged">I acknowledge</label>
+        </div>
+
+        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+            <button type="submit" class="btn btn-primary">Continue</button>
+        </div>
+    </form>
+</div>

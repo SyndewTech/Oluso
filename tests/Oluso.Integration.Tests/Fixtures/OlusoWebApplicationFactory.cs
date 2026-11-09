@@ -3,9 +3,12 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Oluso.EntityFramework;
 using Oluso.Enterprise.Ldap.Server;
 using Oluso.Enterprise.Scim.EntityFramework;
+using Oluso.Keys;
+using Oluso.Middleware;
 
 namespace Oluso.Integration.Tests.Fixtures;
 
@@ -19,6 +22,15 @@ public class OlusoWebApplicationFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // The signing-credential cache is process-wide (static fields in
+        // SigningCredentialStore), so keys auto-provisioned by a prior test
+        // factory leak into this one — whose fresh in-memory DB doesn't contain
+        // them, yielding IDX10500 / empty JWKS / 401s. Reset it for each factory.
+        // Safe because the integration suite runs collections serially
+        // (xunit.runner.json: parallelizeTestCollections=false), so no live
+        // factory's cache is cleared out from under it.
+        SigningCredentialStore.InvalidateCache();
+
         builder.UseEnvironment("Testing");
 
         builder.ConfigureServices(services =>
@@ -31,52 +43,58 @@ public class OlusoWebApplicationFactory : WebApplicationFactory<Program>
                 services.Remove(ldapHostedService);
             }
 
-            // Remove existing OlusoDbContext registrations
-            RemoveDbContextRegistrations<OlusoDbContext>(services);
+            // Replace ALL DbContextOptions<T> registrations with in-memory databases.
+            // This covers OlusoDbContextSqlite, ScimDbContextSqlite, all module DbContexts,
+            // and any other EF Core contexts registered by the app. The context registrations
+            // themselves (including Identity's UserStore<..., OlusoDbContextSqlite>) remain
+            // intact — only the backing database is swapped to in-memory.
+            ReplaceAllDbContextOptionsWithInMemory(services);
 
-            // Remove existing ScimDbContext registrations
-            RemoveDbContextRegistrations<ScimDbContext>(services);
-
-            // Add in-memory database for OlusoDbContext
-            services.AddDbContext<OlusoDbContext>(options =>
+            // HostValidationMiddleware only accepts localhost in Development; tests run
+            // under "Testing" so the WebApplicationFactory's default localhost host is
+            // rejected with HTTP 421. Allow it explicitly for the test environment.
+            services.PostConfigure<HostValidationOptions>(options =>
             {
-                options.UseInMemoryDatabase(_databaseName);
+                options.AdditionalAllowedHosts.Add("localhost");
+                options.AdditionalAllowedHosts.Add("127.0.0.1");
             });
-
-            // Add in-memory database for ScimDbContext
-            services.AddDbContext<ScimDbContext>(options =>
-            {
-                options.UseInMemoryDatabase($"{_databaseName}_Scim");
-            });
-
-            // Build service provider and ensure database is created
-            var sp = services.BuildServiceProvider();
-            using var scope = sp.CreateScope();
-
-            var db = scope.ServiceProvider.GetRequiredService<OlusoDbContext>();
-            db.Database.EnsureCreated();
-
-            var scimDb = scope.ServiceProvider.GetService<ScimDbContext>();
-            scimDb?.Database.EnsureCreated();
         });
     }
 
-    private static void RemoveDbContextRegistrations<TContext>(IServiceCollection services) where TContext : DbContext
+    private void ReplaceAllDbContextOptionsWithInMemory(IServiceCollection services)
     {
-        // Remove DbContextOptions
-        var optionsDescriptor = services.SingleOrDefault(
-            d => d.ServiceType == typeof(DbContextOptions<TContext>));
-        if (optionsDescriptor != null)
+        // Find all registered DbContextOptions<T> types
+        var optionsDescriptors = services
+            .Where(d => d.ServiceType.IsGenericType &&
+                        d.ServiceType.GetGenericTypeDefinition() == typeof(DbContextOptions<>))
+            .ToList();
+
+        foreach (var descriptor in optionsDescriptors)
         {
-            services.Remove(optionsDescriptor);
+            services.Remove(descriptor);
+
+            var contextType = descriptor.ServiceType.GetGenericArguments()[0];
+            var dbName = $"{_databaseName}_{contextType.Name}";
+            var optionsBuilderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(contextType);
+
+            // Resolve options through a factory so ApplicationServiceProvider is
+            // set to the runtime service provider — DbContexts that read the live
+            // ITenantContext via that path (for tenant-aware query filters)
+            // would otherwise see a null SP and bypass tenant isolation in tests.
+            services.AddSingleton(descriptor.ServiceType, sp =>
+            {
+                var builder = (DbContextOptionsBuilder)Activator.CreateInstance(optionsBuilderType)!;
+                builder.UseInMemoryDatabase(dbName);
+                builder.UseApplicationServiceProvider(sp);
+                return builder.Options;
+            });
         }
 
-        // Remove DbContext registration
-        var contextDescriptor = services.SingleOrDefault(
-            d => d.ServiceType == typeof(TContext));
-        if (contextDescriptor != null)
+        // Also replace non-generic DbContextOptions if registered
+        var nonGenericOptions = services.Where(d => d.ServiceType == typeof(DbContextOptions)).ToList();
+        foreach (var descriptor in nonGenericOptions)
         {
-            services.Remove(contextDescriptor);
+            services.Remove(descriptor);
         }
     }
 

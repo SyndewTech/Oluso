@@ -20,7 +20,13 @@ public class UserJourneyBuilder
     }
 
     /// <summary>
-    /// Add a custom step handler
+    /// Add a custom step handler. Registered Singleton — every step
+    /// handler in the codebase resolves its dependencies via
+    /// <c>context.ServiceProvider.GetService&lt;&gt;()</c> inside
+    /// <c>ExecuteAsync</c> rather than constructor injection, so handlers
+    /// are stateless dispatchers and one instance for the host lifetime is
+    /// sufficient. The scoped resolution still works because
+    /// <c>context.ServiceProvider</c> is the per-request scope.
     /// </summary>
     public UserJourneyBuilder AddStepHandler<THandler>() where THandler : class, IStepHandler
     {
@@ -29,7 +35,8 @@ public class UserJourneyBuilder
     }
 
     /// <summary>
-    /// Add a custom step handler instance
+    /// Add a custom step handler instance. Same Singleton lifetime as the
+    /// type-based overload.
     /// </summary>
     public UserJourneyBuilder AddStepHandler(IStepHandler handler)
     {
@@ -37,150 +44,114 @@ public class UserJourneyBuilder
         return this;
     }
 
-    /// <summary>
-    /// Add built-in local login step handler
-    /// </summary>
-    public UserJourneyBuilder AddLocalLogin()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, LocalLoginStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in local login step handler</summary>
+    public UserJourneyBuilder AddLocalLogin() => Add<LocalLoginStepHandler>();
 
-    /// <summary>
-    /// Add built-in sign-up step handler
-    /// </summary>
-    public UserJourneyBuilder AddSignUp()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, SignUpStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in composite-login step handler (presents multiple login methods on one screen)</summary>
+    public UserJourneyBuilder AddCompositeLogin() => Add<CompositeLoginStepHandler>();
 
-    /// <summary>
-    /// Add built-in MFA step handler
-    /// </summary>
-    public UserJourneyBuilder AddMfa()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, MfaStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in sign-up step handler</summary>
+    public UserJourneyBuilder AddSignUp() => Add<SignUpStepHandler>();
 
-    /// <summary>
-    /// Add built-in consent step handler
-    /// </summary>
-    public UserJourneyBuilder AddConsent()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, ConsentStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in MFA step handler</summary>
+    public UserJourneyBuilder AddMfa() => Add<MfaStepHandler>();
 
-    /// <summary>
-    /// Add built-in password reset step handler
-    /// </summary>
-    public UserJourneyBuilder AddPasswordReset()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, PasswordResetStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in consent step handler</summary>
+    public UserJourneyBuilder AddConsent() => Add<ConsentStepHandler>();
 
-    /// <summary>
-    /// Add built-in external login step handler
-    /// </summary>
-    public UserJourneyBuilder AddExternalLogin()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, ExternalLoginStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in password reset step handler</summary>
+    public UserJourneyBuilder AddPasswordReset() => Add<PasswordResetStepHandler>();
 
-    /// <summary>
-    /// Add built-in condition step handler (no UI - logic only)
-    /// </summary>
-    public UserJourneyBuilder AddCondition()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, ConditionStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in password change step handler (logged-in user changing their password)</summary>
+    public UserJourneyBuilder AddPasswordChange() => Add<PasswordChangeStepHandler>();
 
-    /// <summary>
-    /// Add built-in branch step handler (no UI - logic only)
-    /// </summary>
-    public UserJourneyBuilder AddBranch()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, BranchStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in external login step handler</summary>
+    public UserJourneyBuilder AddExternalLogin() => Add<ExternalLoginStepHandler>();
 
-    /// <summary>
-    /// Add built-in transform step handler (no UI - data transformation)
-    /// </summary>
-    public UserJourneyBuilder AddTransform()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, TransformStepHandler>());
-        return this;
-    }
+    /// <summary>Add built-in condition step handler (no UI — logic only)</summary>
+    public UserJourneyBuilder AddCondition() => Add<ConditionStepHandler>();
 
-    /// <summary>
-    /// Add built-in API call step handler (no UI - external API integration)
-    /// </summary>
+    /// <summary>Add built-in branch step handler (no UI — logic only)</summary>
+    public UserJourneyBuilder AddBranch() => Add<BranchStepHandler>();
+
+    /// <summary>Add built-in transform step handler (no UI — data transformation)</summary>
+    public UserJourneyBuilder AddTransform() => Add<TransformStepHandler>();
+
+    /// <summary>Add built-in API call step handler (no UI — external API integration)</summary>
     public UserJourneyBuilder AddApiCall()
     {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, ApiCallStepHandler>());
+        Add<ApiCallStepHandler>();
         EnsureHttpClientRegistered();
         return this;
     }
 
-    /// <summary>
-    /// Add built-in webhook step handler (no UI - event notifications)
-    /// </summary>
+    /// <summary>Add built-in webhook step handler (no UI — event notifications)</summary>
     public UserJourneyBuilder AddWebhook()
     {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, WebhookStepHandler>());
+        Add<WebhookStepHandler>();
         EnsureHttpClientRegistered();
         return this;
     }
 
-    /// <summary>
-    /// Add passwordless email step handler (OTP or magic link)
-    /// </summary>
-    public UserJourneyBuilder AddPasswordlessEmail()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, PasswordlessEmailStepHandler>());
-        return this;
-    }
+    /// <summary>Add passwordless email step handler (OTP or magic link)</summary>
+    public UserJourneyBuilder AddPasswordlessEmail() => Add<PasswordlessEmailStepHandler>();
+
+    /// <summary>Add passwordless SMS step handler (OTP)</summary>
+    public UserJourneyBuilder AddPasswordlessSms() => Add<PasswordlessSmsStepHandler>();
 
     /// <summary>
-    /// Add passwordless SMS step handler (OTP)
+    /// Add email-verification step handler — proves ownership of an email
+    /// address without authenticating a user. Use as a pre-condition for
+    /// sign-up, password reset, or sensitive profile changes.
     /// </summary>
-    public UserJourneyBuilder AddPasswordlessSms()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, PasswordlessSmsStepHandler>());
-        return this;
-    }
+    public UserJourneyBuilder AddEmailVerification() => Add<EmailVerificationStepHandler>();
+
+    /// <summary>Add dynamic form step handler (claims collection)</summary>
+    public UserJourneyBuilder AddDynamicForm() => Add<DynamicFormStepHandler>();
 
     /// <summary>
-    /// Add dynamic form step handler (claims collection)
+    /// Add the custom page step handler, which renders a host-authored Razor
+    /// partial from <c>Views/Shared/Journey/Templates/</c> as a journey screen.
     /// </summary>
-    public UserJourneyBuilder AddDynamicForm()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, DynamicFormStepHandler>());
-        return this;
-    }
+    public UserJourneyBuilder AddCustomPage() => Add<CustomPageStepHandler>();
 
-    /// <summary>
-    /// Add link account step handler (for linking external providers)
-    /// </summary>
-    public UserJourneyBuilder AddLinkAccount()
-    {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, LinkAccountStepHandler>());
-        return this;
-    }
+    /// <summary>Add link account step handler (for linking external providers)</summary>
+    public UserJourneyBuilder AddLinkAccount() => Add<LinkAccountStepHandler>();
 
-    /// <summary>
-    /// Add CAPTCHA verification step handler
-    /// </summary>
+    /// <summary>Add CAPTCHA verification step handler</summary>
     public UserJourneyBuilder AddCaptcha()
     {
-        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, CaptchaStepHandler>());
+        Add<CaptchaStepHandler>();
         EnsureHttpClientRegistered();
+        return this;
+    }
+
+    /// <summary>Add built-in create-user step handler (programmatic — no UI)</summary>
+    public UserJourneyBuilder AddCreateUser() => Add<CreateUserStepHandler>();
+
+    /// <summary>Add built-in update-user step handler (programmatic — no UI)</summary>
+    public UserJourneyBuilder AddUpdateUser() => Add<UpdateUserStepHandler>();
+
+    /// <summary>Add built-in assign-roles step handler (programmatic — no UI)</summary>
+    public UserJourneyBuilder AddAssignRoles() => Add<AssignRolesStepHandler>();
+
+    /// <summary>Add built-in terms-acceptance step handler</summary>
+    public UserJourneyBuilder AddTermsAcceptance() => Add<TermsAcceptanceStepHandler>();
+
+    /// <summary>
+    /// Add the dispatcher step handler that delegates to a registered
+    /// <see cref="ICustomStepHandler"/> by name. Required to make plugins
+    /// added via <c>AddCustomJourneyStep&lt;T&gt;</c> reachable from
+    /// journey policies.
+    /// </summary>
+    public UserJourneyBuilder AddCustomPluginDispatcher() => Add<CustomPluginStepHandler>();
+
+    private UserJourneyBuilder Add<THandler>() where THandler : class, IStepHandler
+    {
+        // Singleton: handlers resolve all dependencies via
+        // context.ServiceProvider inside ExecuteAsync, so they're stateless
+        // dispatchers. Scoped resolution still works through that path.
+        Services.TryAddEnumerable(ServiceDescriptor.Singleton<IStepHandler, THandler>());
         return this;
     }
 
@@ -206,6 +177,11 @@ public class UserJourneyBuilder
         {
             client.DefaultRequestHeaders.Add("User-Agent", "Oluso-Journey/1.0");
         });
+
+        // Singleton cache so client_credentials tokens are shared across
+        // step executions within the same host process. Reuses the
+        // JourneyApiCall named client for outbound token fetches.
+        Services.AddSingleton<IClientCredentialsTokenCache, ClientCredentialsTokenCache>();
     }
 
     /// <summary>
@@ -214,15 +190,20 @@ public class UserJourneyBuilder
     public UserJourneyBuilder AddBuiltInSteps()
     {
         AddLocalLogin();
+        AddCompositeLogin();
         AddSignUp();
         AddMfa();
         AddConsent();
         AddPasswordReset();
+        AddPasswordChange();
         AddExternalLogin();
         AddPasswordlessEmail();
         AddPasswordlessSms();
+        AddEmailVerification();
         AddDynamicForm();
+        AddCustomPage();
         AddLinkAccount();
+        AddTermsAcceptance();
         AddCaptcha();
         return this;
     }
@@ -237,6 +218,10 @@ public class UserJourneyBuilder
         AddTransform();
         AddApiCall();
         AddWebhook();
+        AddCreateUser();
+        AddUpdateUser();
+        AddAssignRoles();
+        AddCustomPluginDispatcher();
         return this;
     }
 
@@ -342,11 +327,4 @@ public static class UserJourneyBuilderExtensions
         return builder;
     }
 
-    /// <summary>
-    /// Configure user journeys with all built-in steps
-    /// </summary>
-    public static OlusoBuilder AddUserJourneysWithDefaults(this OlusoBuilder builder)
-    {
-        return builder.AddUserJourneys(j => j.AddBuiltInSteps());
-    }
 }

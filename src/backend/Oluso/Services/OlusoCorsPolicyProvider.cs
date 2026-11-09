@@ -6,14 +6,19 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 using Oluso.EntityFramework;
+using Oluso.Middleware;
 
 namespace Oluso.Services;
 
 /// <summary>
-/// Dynamic CORS policy provider that checks:
-/// 1. App config origins - For admin UI, dev servers (Cors:Origins in appsettings)
-/// 2. OAuth Client origins - SPAs configured as clients get CORS automatically
+/// Dynamic CORS policy provider that checks, in order:
+/// 1. App config origins - For admin UI, dev servers (Oluso:Cors:Origins in appsettings)
+/// 2. Public metadata (/.well-known/*: discovery, JWKS) - any origin, without credentials
+/// 3. OAuth Client origins - SPAs configured as clients get CORS automatically
+/// 4. The tenant's own CORS settings - on the tenant's host only
 ///
 /// Why Clients specify CORS origins:
 /// - OAuth clients (especially SPAs) need to call token, userinfo, and other endpoints
@@ -28,7 +33,8 @@ namespace Oluso.Services;
 /// </summary>
 public class OlusoCorsPolicyProvider : ICorsPolicyProvider
 {
-    private const string CacheKey = "oluso:cors:origins";
+    internal const string ClientOriginsCacheKey = "oluso:cors:origins";
+    internal static string TenantCacheKey(string tenantId) => $"oluso:cors:tenant:{tenantId}";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     private readonly IServiceProvider _serviceProvider;
@@ -70,12 +76,35 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
             return BuildPolicyForOrigin(origin);
         }
 
-        // 2. Check OAuth client origins (cached from DB)
+        // 2. Public metadata: discovery documents and keys are meant for any client to read,
+        //    and carry nothing a cookie could unlock.
+        if (context.Request.Path.StartsWithSegments("/.well-known"))
+        {
+            return BuildAnyOriginPolicy();
+        }
+
+        // 3. Check OAuth client origins (cached from DB)
         var clientOrigins = await GetCachedClientOriginsAsync(context);
         if (clientOrigins.Contains(origin))
         {
             _logger.LogDebug("CORS allowed for {Origin} (OAuth client)", origin);
             return BuildPolicyForOrigin(origin);
+        }
+
+        // 4. The tenant's own CORS settings, on the tenant's host only
+        var tenantCors = await GetTenantCorsAsync(context);
+        if (tenantCors != null)
+        {
+            if (tenantCors.AllowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug("CORS allowed for {Origin} (tenant settings)", origin);
+                return BuildPolicyForOrigin(origin);
+            }
+            if (tenantCors.AllowAllOrigins)
+            {
+                _logger.LogDebug("CORS allowed for {Origin} (tenant allows all origins, no credentials)", origin);
+                return BuildAnyOriginPolicy();
+            }
         }
 
         _logger.LogDebug("CORS denied for {Origin}", origin);
@@ -89,7 +118,7 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
         // Try cache first
         if (cache != null)
         {
-            var cachedJson = await cache.GetStringAsync(CacheKey);
+            var cachedJson = await cache.GetStringAsync(ClientOriginsCacheKey);
             if (!string.IsNullOrEmpty(cachedJson))
             {
                 try
@@ -146,10 +175,73 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
             {
                 AbsoluteExpirationRelativeToNow = CacheDuration
             };
-            await cache.SetStringAsync(CacheKey, json, options);
+            await cache.SetStringAsync(ClientOriginsCacheKey, json, options);
         }
 
         return origins;
+    }
+
+    /// <summary>
+    /// The CORS settings of the tenant the request's host belongs to (cached), or null when the
+    /// host names no tenant. Runs before tenant resolution, so it resolves the host itself.
+    /// </summary>
+    private async Task<TenantCorsSettings?> GetTenantCorsAsync(HttpContext context)
+    {
+        try
+        {
+            var identifier = await TenantResolutionMiddleware.ResolveHostTenantIdentifierAsync(
+                context, TenantResolutionMiddleware.EffectiveOptions(context));
+            if (string.IsNullOrEmpty(identifier)) return null;
+
+            var tenantStore = context.RequestServices.GetService<ITenantStore>();
+            if (tenantStore == null) return null;
+            var tenant = await tenantStore.GetByIdentifierAsync(identifier) ?? await tenantStore.GetByIdAsync(identifier);
+            if (tenant == null) return null;
+
+            var cache = context.RequestServices.GetService<IDistributedCache>();
+            var key = TenantCacheKey(tenant.Id);
+            if (cache != null)
+            {
+                var cached = await cache.GetStringAsync(key);
+                if (!string.IsNullOrEmpty(cached))
+                {
+                    return JsonSerializer.Deserialize<TenantCorsSettings>(cached);
+                }
+            }
+
+            var config = context.RequestServices.GetService<ITenantConfigurationService>();
+            var settings = (config == null ? null : await config.GetSectionAsync<TenantCorsSettings>(tenant.Id, TenantCorsSettings.SectionKey))
+                ?? new TenantCorsSettings();
+
+            if (cache != null)
+            {
+                await cache.SetStringAsync(key, JsonSerializer.Serialize(settings),
+                    new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheDuration });
+            }
+            return settings;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading tenant CORS settings");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Response headers a browser client must read across origins: the auth challenge, and the DPoP nonce it
+    /// has to put in its next proof (RFC 9449 §8).
+    /// </summary>
+    private static readonly string[] ExposedHeaders = ["WWW-Authenticate", "DPoP-Nonce"];
+
+    /// <summary>Any origin, without credentials (cookies are never sent or accepted).</summary>
+    private static CorsPolicy BuildAnyOriginPolicy()
+    {
+        return new CorsPolicyBuilder()
+            .AllowAnyOrigin()
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .WithExposedHeaders(ExposedHeaders)
+            .Build();
     }
 
     private static CorsPolicy BuildPolicyForOrigin(string origin)
@@ -159,6 +251,7 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()
+            .WithExposedHeaders(ExposedHeaders)
             .Build();
     }
 
@@ -166,7 +259,8 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
     {
         var builder = new CorsPolicyBuilder()
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .WithExposedHeaders(ExposedHeaders);
 
         if (_configuredOrigins.Count > 0)
         {
@@ -177,20 +271,9 @@ public class OlusoCorsPolicyProvider : ICorsPolicyProvider
     }
 }
 
-/// <summary>
-/// Invalidates the CORS origins cache. Call this when client CORS origins change.
-/// </summary>
-public interface ICorsOriginsCacheInvalidator
-{
-    Task InvalidateCacheAsync(CancellationToken cancellationToken = default);
-}
-
-/// <summary>
-/// Default implementation that clears the distributed cache
-/// </summary>
+/// <summary>Clears the distributed-cache entries the CORS policy provider reads.</summary>
 public class CorsOriginsCacheInvalidator : ICorsOriginsCacheInvalidator
 {
-    private const string CacheKey = "oluso:cors:origins";
     private readonly IDistributedCache? _cache;
 
     public CorsOriginsCacheInvalidator(IDistributedCache? cache = null)
@@ -200,9 +283,11 @@ public class CorsOriginsCacheInvalidator : ICorsOriginsCacheInvalidator
 
     public async Task InvalidateCacheAsync(CancellationToken cancellationToken = default)
     {
-        if (_cache != null)
-        {
-            await _cache.RemoveAsync(CacheKey, cancellationToken);
-        }
+        if (_cache != null) await _cache.RemoveAsync(OlusoCorsPolicyProvider.ClientOriginsCacheKey, cancellationToken);
+    }
+
+    public async Task InvalidateTenantAsync(string tenantId, CancellationToken cancellationToken = default)
+    {
+        if (_cache != null) await _cache.RemoveAsync(OlusoCorsPolicyProvider.TenantCacheKey(tenantId), cancellationToken);
     }
 }

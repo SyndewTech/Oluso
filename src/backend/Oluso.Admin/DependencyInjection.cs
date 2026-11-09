@@ -1,13 +1,20 @@
-using System.Text;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
+using Oluso.Core.Events;
 using Oluso.Admin.Controllers;
+using Oluso.Admin.Controllers.Service;
+using Oluso.Admin.Search;
+using Oluso.Admin.Services;
+using Oluso.Core.Protocols.Models;
+using Oluso.Imaging;
+
+using Oluso.Admin.Services.ProviderIcons;
 
 namespace Oluso.Admin;
 
@@ -17,9 +24,9 @@ namespace Oluso.Admin;
 public static class OlusoAdminExtensions
 {
     /// <summary>
-    /// Authentication scheme name for Admin API JWT tokens
+    /// Authentication scheme name for Admin API — uses Oluso OIDC access tokens
     /// </summary>
-    public const string AdminApiScheme = "AdminApiJwt";
+    public const string AdminApiScheme = OidcConstants.AccessTokenAuthenticationScheme;
 
     /// <summary>
     /// Add Oluso Admin API services and controllers
@@ -29,13 +36,64 @@ public static class OlusoAdminExtensions
         var options = new AdminApiOptions();
         configure?.Invoke(options);
 
+        // Backfill core admin permissions into the singleton PermissionRegistry
+        // so the registry is the canonical universe of valid permissions — used
+        // by RolesController.ValidatePermissionsAsync, by the reserved-auth
+        // SaveChanges interceptor, and by anywhere else that needs to ask
+        // "is this a known permission?". Before this, core perms lived in
+        // AdminPermissions.GetCorePermissions() as a separate source and
+        // callers had to remember to merge both, which the interceptor
+        // can't do (it can't reference Oluso.Admin).
+        PermissionRegistry.Instance.RegisterPermissions(
+            AdminPermissions.GetCorePermissions());
+
+        // OrgAdmin is a reserved platform role that authorization keys off
+        // (ReservedClaimTypes.AdminDashboardRoles, TenantAdminAuthorizationHandler),
+        // but nothing outside the demo seeders ever created the row — so granting
+        // it threw "Role ORGADMIN does not exist" on any real deployment, and it
+        // can't be created through RolesController because reserved names are
+        // rejected. Registering it here means SeedModuleRolesAsync() creates it at
+        // startup like every other system role. No FeatureKey: it isn't gated.
+        PermissionRegistry.Instance.RegisterModuleRole(new ModuleRoleDefinition(
+            Name: "OrgAdmin",
+            DisplayName: "Organization Administrator",
+            Description: "Manages an organization: its tenants, members and their roles",
+            Category: "system",
+            Permissions: new[]
+            {
+                AdminPermissions.AdminAccess,
+                "organizations.*",
+                "tenants.*",
+                "users.*",
+                "roles.*"
+            }));
+
         // Add admin controllers from this assembly
         mvcBuilder.AddApplicationPart(typeof(UsersController).Assembly);
+
+        // Image resizer for the anonymous public-image shim (PublicFilesController).
+        // Default is SkiaSharp (MIT); only hit in local/dev — prod resizes at the
+        // Cloudflare edge.
+        mvcBuilder.Services.AddImageResizing();
+
+        // Provider icon discovery: a dedicated client with redirects off and
+        // connections pinned to the address that passed the public-IP check.
+        mvcBuilder.Services.AddHttpClient(SafeIconFetcher.ClientName)
+            .ConfigurePrimaryHttpMessageHandler(SafeIconFetcher.CreateHandler);
+        mvcBuilder.Services.TryAddSingleton<IProviderIconFetcher, SafeIconFetcher>();
+        mvcBuilder.Services.TryAddScoped<IProviderIconDiscoveryService, ProviderIconDiscoveryService>();
+
+        // Register auto-generated event property source for admin events
+        mvcBuilder.Services.AddEventPropertySource<Oluso.Core.Events.AdminEventPropertySource>();
+
+        // Global search: aggregator plus the core record providers; modules add theirs.
+        mvcBuilder.Services.AddAdminSearch();
 
         // Configure MVC options for admin API
         mvcBuilder.AddMvcOptions(mvcOptions =>
         {
-            // Add custom conventions if needed
+            // Add SensitiveDataFilter globally to strip unauthorized sensitive fields from responses
+            mvcOptions.Filters.Add<SensitiveDataFilter>();
         });
 
         // Register authorization handlers
@@ -43,78 +101,35 @@ public static class OlusoAdminExtensions
         mvcBuilder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
         mvcBuilder.Services.AddScoped<IAuthorizationHandler, ServiceApiAuthorizationHandler>();
 
+        // A scope-restricted client's user token never reaches the admin API.
+        mvcBuilder.Services.AddScopeRestrictedClients();
+
+        // Provisions the ApiScope rows behind the Service API when a client is
+        // granted service access — see ServiceApiScopeProvisioner.
+        mvcBuilder.Services.AddScoped<IServiceApiScopeProvisioner, ServiceApiScopeProvisioner>();
+
+        // Provisions the identity resource that releases the entitlements claim
+        // — see EntitlementScopeProvisioner.
+        mvcBuilder.Services.AddScoped<IEntitlementScopeProvisioner, EntitlementScopeProvisioner>();
+
         // Register dynamic policy provider for permission-based authorization
         mvcBuilder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
 
-        // Add JWT Bearer authentication for Admin API
-        // Configuration is read at runtime when the authentication handler is invoked
-        mvcBuilder.Services.AddAuthentication()
-            .AddJwtBearer(AdminApiScheme, options =>
-            {
-                // Defer token validation parameter configuration to runtime
-                // so we can read from IConfiguration
-                options.Events = new JwtBearerEvents
-                {
-                    OnMessageReceived = context =>
-                    {
-                        // Configuration is available here
-                        var config = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-                        var jwtKey = config["Oluso:Jwt:Key"] ?? config["Oluso:AdminJwtKey"];
+        // Include required permission name in 403 responses
+        mvcBuilder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, PermissionDeniedResultHandler>();
 
-                        if (!string.IsNullOrEmpty(jwtKey))
-                        {
-                            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
-                            context.Options.TokenValidationParameters.IssuerSigningKey = key;
-                        }
-
-                        return Task.CompletedTask;
-                    },
-                    OnChallenge = context =>
-                    {
-                        // Return 401 JSON instead of redirect for API endpoints
-                        if (context.Request.Path.StartsWithSegments("/api"))
-                        {
-                            context.HandleResponse();
-                            context.Response.StatusCode = 401;
-                            context.Response.ContentType = "application/json";
-                            return context.Response.WriteAsync("{\"error\":\"Unauthorized\"}");
-                        }
-                        return Task.CompletedTask;
-                    },
-                    OnForbidden = context =>
-                    {
-                        // Return 403 JSON instead of redirect for API endpoints
-                        if (context.Request.Path.StartsWithSegments("/api"))
-                        {
-                            context.Response.StatusCode = 403;
-                            context.Response.ContentType = "application/json";
-                            return context.Response.WriteAsync("{\"error\":\"Forbidden\"}");
-                        }
-                        return Task.CompletedTask;
-                    }
-                };
-
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer = false, // Issuer validation can be added if needed
-                    ValidateAudience = false, // Audience validation can be added if needed
-                    ValidateLifetime = true,
-                    ValidateIssuerSigningKey = true,
-                    ClockSkew = TimeSpan.FromMinutes(1)
-                };
-            });
-
-        // Register authorization policies with the Admin API authentication scheme
+        // Register authorization policies using Oluso OIDC access token scheme
         mvcBuilder.Services.AddAuthorization(authOptions =>
         {
-            // AdminApi policy: Tenant-scoped admin access
-            // Requires authenticated user with Admin/TenantAdmin/SuperAdmin role
-            // SuperAdmin can access any tenant, others only their own
+            // AdminApi policy: the admin.access permission in the tenant the request landed in, the same
+            // permission the admin-portal client requires at token issuance. Endpoints guard themselves
+            // with their own permission or the SuperAdmin / SuperAdminOrOrgAdmin policies.
             authOptions.AddPolicy("AdminApi", policy =>
             {
                 policy.AuthenticationSchemes.Add(AdminApiScheme);
                 policy.RequireAuthenticatedUser();
-                policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: false));
+                policy.AddRequirements(new PermissionRequirement(AdminPermissions.AdminAccess));
+                policy.AddRequirements(new ScopeRestrictedClientRequirement());
             });
 
             // SuperAdmin policy: Cross-tenant system-wide access
@@ -123,7 +138,8 @@ public static class OlusoAdminExtensions
             {
                 policy.AuthenticationSchemes.Add(AdminApiScheme);
                 policy.RequireAuthenticatedUser();
-                policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: true));
+                policy.AddRequirements(new TenantAdminRequirement());
+                policy.AddRequirements(new ScopeRestrictedClientRequirement());
             });
 
             // SuperAdminOrOrgAdmin policy: Cross-tenant access for SuperAdmin or OrgAdmin
@@ -132,26 +148,27 @@ public static class OlusoAdminExtensions
             {
                 policy.AuthenticationSchemes.Add(AdminApiScheme);
                 policy.RequireAuthenticatedUser();
-                policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: true, allowOrgAdmin: true));
+                policy.AddRequirements(new TenantAdminRequirement(allowOrgAdmin: true));
+                policy.AddRequirements(new ScopeRestrictedClientRequirement());
             });
 
-            // TenantAdmin policy: Explicit tenant-scoped admin (alias for AdminApi)
+            // TenantAdmin policy: alias for AdminApi
             authOptions.AddPolicy("TenantAdmin", policy =>
             {
                 policy.AuthenticationSchemes.Add(AdminApiScheme);
                 policy.RequireAuthenticatedUser();
-                policy.AddRequirements(new TenantAdminRequirement(requireSuperAdmin: false));
+                policy.AddRequirements(new PermissionRequirement(AdminPermissions.AdminAccess));
+                policy.AddRequirements(new ScopeRestrictedClientRequirement());
             });
 
             // ServiceApi policy: Machine-to-machine access via client_credentials grant
             // Used by resource servers and external applications for automated operations
-            // Requires "service" scope in the access token
-            // Uses OlusoAccessToken scheme (Oluso's own access tokens) not AdminApiJwt
+            // Requires the base service scope (ServiceScopes.ServiceApi) in the access token
             authOptions.AddPolicy("ServiceApi", policy =>
             {
-                policy.AuthenticationSchemes.Add("OlusoAccessToken");
+                policy.AuthenticationSchemes.Add(OidcConstants.AccessTokenAuthenticationScheme);
                 policy.RequireAuthenticatedUser();
-                policy.AddRequirements(new ServiceApiRequirement("service"));
+                policy.AddRequirements(new ServiceApiRequirement(ServiceScopes.ServiceApi));
             });
         });
 

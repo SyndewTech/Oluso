@@ -1,3 +1,7 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Oluso.Core.Locale;
+
 namespace Oluso.Core.UserJourneys;
 
 /// <summary>
@@ -25,6 +29,21 @@ public interface IStepHandler
 }
 
 /// <summary>
+/// Marks a step that signs the user in (a first factor: password, passkey, external IdP,
+/// directory, one-time link). When a journey runs for a user already signed in by an
+/// existing session, the orchestrator completes these steps from the session instead of
+/// running them. Step-up steps such as MFA must not carry this marker.
+/// </summary>
+public interface IPrimaryAuthenticationStep : IStepHandler
+{
+    /// <summary>
+    /// Whether this run of the step signs someone in. A step configured only to verify an address returns false, so
+    /// a signed-in session never stands in for the check.
+    /// </summary>
+    bool SignsIn(StepExecutionContext context) => true;
+}
+
+/// <summary>
 /// Marker interface for custom step handlers that can be registered by external modules
 /// </summary>
 public interface ICustomStepHandler : IStepHandler
@@ -35,6 +54,42 @@ public interface ICustomStepHandler : IStepHandler
 /// Interface for custom step handlers that provide their own metadata for Admin UI discovery.
 /// Implement this alongside ICustomStepHandler to have your step appear in the journey builder.
 /// </summary>
+/// <summary>
+/// A step that describes its own settings. The registry uses this schema for the step's
+/// type, so the builder offers exactly the settings the step reads.
+/// </summary>
+public interface IStepSettingsSchema
+{
+    /// <summary>The step's settings, keyed by name (same shape as a registry schema).</summary>
+    Dictionary<string, object> GetConfigurationSchema();
+}
+
+/// <summary>
+/// A step that can check its own settings from the journey builder ("Test"): reach the
+/// services it calls, verify credentials, confirm the providers it names exist. Runs with
+/// the step's saved settings (secrets included) and no user, so it must not change data.
+/// </summary>
+public interface IStepConfigurationTester
+{
+    Task<StepConfigurationTestResult> TestConfigurationAsync(StepExecutionContext context, CancellationToken cancellationToken = default);
+}
+
+public sealed class StepConfigurationTestResult
+{
+    public required bool Success { get; init; }
+    public required string Message { get; init; }
+    public IReadOnlyList<string> Details { get; init; } = Array.Empty<string>();
+
+    public static StepConfigurationTestResult Passed(string message, params string[] details) =>
+        new() { Success = true, Message = message, Details = details };
+
+    public static StepConfigurationTestResult Failed(string message, params string[] details) =>
+        new() { Success = false, Message = message, Details = details };
+
+    public static StepConfigurationTestResult Of(bool success, string message, IEnumerable<string> details) =>
+        new() { Success = success, Message = message, Details = details.ToList() };
+}
+
 public interface ICustomStepHandlerMetadata
 {
     /// <summary>
@@ -48,12 +103,25 @@ public interface ICustomStepHandlerMetadata
     string Description { get; }
 
     /// <summary>
-    /// Category for grouping in the UI (e.g., "Billing", "Authentication")
+    /// Category for grouping in the UI (e.g., "Integrations", "Authentication")
     /// </summary>
     string Category { get; }
 
     /// <summary>
-    /// Optional module name (e.g., "Oluso.Billing")
+    /// Icon shown for the step in the journey builder (a ui-icon name, e.g. <c>"key"</c>).
+    /// Null uses the category's icon.
+    /// </summary>
+    string? Icon => null;
+
+    /// <summary>
+    /// FeatureKey of the owning <see cref="Oluso.Core.Licensing.IModuleDescriptor"/>
+    /// (e.g. <c>"&lt;module&gt;"</c>). Null when the step is part of core. The admin
+    /// API's step-types endpoint feature-gates and permission-gates by this
+    /// value the same way the permissions / roles / webhook-events endpoints
+    /// do, so a step is hidden in the picker when its module isn't licensed
+    /// or the user lacks the module's admin permission.
+    /// Reference the descriptor's <c>FeatureKeyConst</c> so a rename catches
+    /// at compile time.
     /// </summary>
     string? Module => null;
 
@@ -119,6 +187,9 @@ public class StepExecutionContext
     public string? UserId { get; set; }
     public string? TenantId { get; init; }
     public string? ClientId { get; init; }
+
+    /// <summary>The journey policy the run follows (the sign-up or sign-in policy), as opposed to <see cref="JourneyId"/>, the run itself.</summary>
+    public string? PolicyId { get; init; }
     public IDictionary<string, object> JourneyData { get; init; } = new Dictionary<string, object>();
     public JourneyStepInput? Input { get; init; }
     public IServiceProvider ServiceProvider { get; init; } = null!;
@@ -175,22 +246,13 @@ public class StepExecutionContext
     {
         if (Configuration.Settings == null) return defaultValue;
         if (!Configuration.Settings.TryGetValue(key, out var value)) return defaultValue;
-
-        if (value is T typed) return typed;
-
-        try
-        {
-            if (value is System.Text.Json.JsonElement element)
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<T>(element.GetRawText());
-            }
-            return (T)Convert.ChangeType(value, typeof(T));
-        }
-        catch
-        {
-            return defaultValue;
-        }
+        return StepValueReader.Read(value, defaultValue, problem => ReportSettingProblem(key, problem));
     }
+
+    private void ReportSettingProblem(string key, string problem) =>
+        ServiceProvider?.GetService<ILoggerFactory>()?
+            .CreateLogger("Oluso.UserJourneys.StepSettings")
+            .LogWarning("Step {StepId} ({StepType}) setting '{Setting}': {Problem}", StepId, Configuration.Type, key, problem);
 
     /// <summary>
     /// Get a string value from user input
@@ -209,6 +271,13 @@ public class StepExecutionContext
     /// </summary>
     public bool HasInput => Input?.Values != null && Input.Values.Count > 0;
 
+    /// <summary>Files posted with this step's form (empty when none were).</summary>
+    public IReadOnlyList<JourneyInputFile> InputFiles => Input?.Files ?? Array.Empty<JourneyInputFile>();
+
+    /// <summary>Non-empty files posted under one form field.</summary>
+    public IReadOnlyList<JourneyInputFile> GetInputFiles(string fieldName) =>
+        InputFiles.Where(f => f.Length > 0 && string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase)).ToList();
+
     /// <summary>
     /// Get or set a value in the journey data bag
     /// </summary>
@@ -220,15 +289,67 @@ public class StepExecutionContext
     public T? GetData<T>(string key, T? defaultValue = default)
     {
         if (!JourneyData.TryGetValue(key, out var value)) return defaultValue;
-        if (value is T typed) return typed;
-        try
+        return StepValueReader.Read(value, defaultValue);
+    }
+
+    /// <summary>
+    /// The resolved locale for this journey, derived from the OIDC <c>ui_locales</c>
+    /// parameter, the browser's <c>Accept-Language</c> header, or the tenant default.
+    /// Returns <c>"en"</c> when no locale information is available.
+    /// </summary>
+    public string ResolvedLocale
+    {
+        get
         {
-            return (T)Convert.ChangeType(value, typeof(T));
+            var uiLocales = GetDataString("ui_locales");
+            if (!string.IsNullOrEmpty(uiLocales))
+                return uiLocales.Split(' ', ',').FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "en";
+
+            var locale = GetDataString("locale");
+            if (!string.IsNullOrEmpty(locale))
+                return locale;
+
+            return "en";
         }
-        catch
+    }
+
+    public string? GetDataString(string key)
+    {
+        if (!JourneyData.TryGetValue(key, out var value)) return null;
+        if (value is string s) return s;
+        if (value is System.Text.Json.JsonElement el && el.ValueKind == System.Text.Json.JsonValueKind.String)
+            return el.GetString();
+        return value?.ToString();
+    }
+
+    /// <summary>
+    /// Gets a config value that may be a <see cref="LocalizedString"/> (either a
+    /// plain string or a locale-keyed object). Resolves to the best match for the
+    /// current journey locale.
+    /// </summary>
+    public string? GetLocalizedConfig(string key, string? defaultValue = null)
+    {
+        if (Configuration.Settings == null) return defaultValue;
+        if (!Configuration.Settings.TryGetValue(key, out var value)) return defaultValue;
+
+        if (value is string s) return s;
+
+        if (value is System.Text.Json.JsonElement element)
         {
-            return defaultValue;
+            if (element.ValueKind == System.Text.Json.JsonValueKind.String)
+                return element.GetString() ?? defaultValue;
+
+            if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                var ls = System.Text.Json.JsonSerializer.Deserialize<LocalizedString>(element.GetRawText());
+                return ls?.Resolve(ResolvedLocale) ?? defaultValue;
+            }
         }
+
+        if (value is LocalizedString localized)
+            return localized.Resolve(ResolvedLocale);
+
+        return value?.ToString() ?? defaultValue;
     }
 
     /// <summary>
@@ -394,6 +515,13 @@ public class StepHandlerResult
     public string? RedirectUrl { get; init; }
 
     /// <summary>
+    /// The step is shown again because its input failed (a wrong code or password). These count
+    /// toward the step's attempt limit (<see cref="JourneyPolicyStep.MaxRetries"/>), after which
+    /// the journey fails.
+    /// </summary>
+    public bool FailedAttempt { get; init; }
+
+    /// <summary>
     /// Continue to the next step in sequence
     /// </summary>
     public static StepHandlerResult Continue(string? nextStepId = null) =>
@@ -410,6 +538,27 @@ public class StepHandlerResult
     /// </summary>
     public static StepHandlerResult RequireInput(JourneyStepResult stepResult) =>
         new() { Outcome = StepOutcome.RequireInput, StepResult = stepResult };
+
+    /// <summary>
+    /// Show the step again after input that failed (a wrong code or password). Counts toward
+    /// the step's attempt limit.
+    /// </summary>
+    public static StepHandlerResult FailedAttemptUi(string viewName, object? viewModel = null) =>
+        ShowUi(viewName, viewModel).AsFailedAttempt();
+
+    /// <summary>This result, counted as a failed attempt at the step.</summary>
+    public StepHandlerResult AsFailedAttempt() => new()
+    {
+        Outcome = Outcome,
+        NextStepId = NextStepId,
+        BranchId = BranchId,
+        StepResult = StepResult,
+        Error = Error,
+        ErrorDescription = ErrorDescription,
+        OutputData = OutputData,
+        RedirectUrl = RedirectUrl,
+        FailedAttempt = true
+    };
 
     /// <summary>
     /// Show a view with the specified view model
@@ -460,6 +609,49 @@ public class StepHandlerResult
     /// </summary>
     public static StepHandlerResult Branch(string branchId, IDictionary<string, object>? outputData) =>
         new() { Outcome = StepOutcome.Branch, BranchId = branchId, OutputData = outputData };
+
+    /// <summary>
+    /// Branch if the step has a mapping for <paramref name="branchId"/>,
+    /// otherwise fall back to <see cref="Success"/>. Tries each candidate
+    /// in order so callers can provide specific-then-generic fallbacks
+    /// (e.g. "auth_google", "auth_external").
+    /// </summary>
+    public static StepHandlerResult SuccessOrBranch(
+        StepExecutionContext context,
+        IDictionary<string, object>? outputData,
+        params string[] branchIds)
+    {
+        var branches = context.Configuration.Branches;
+        if (branches != null)
+        {
+            foreach (var id in branchIds)
+            {
+                if (branches.ContainsKey(id))
+                    return Branch(id, outputData);
+            }
+        }
+        return Success(outputData);
+    }
+
+    /// <summary>
+    /// Branch if the step has a mapping for <paramref name="branchId"/>,
+    /// otherwise fall back to <see cref="Skip"/>.
+    /// </summary>
+    public static StepHandlerResult SkipOrBranch(
+        StepExecutionContext context,
+        params string[] branchIds)
+    {
+        var branches = context.Configuration.Branches;
+        if (branches != null)
+        {
+            foreach (var id in branchIds)
+            {
+                if (branches.ContainsKey(id))
+                    return Branch(id);
+            }
+        }
+        return Skip();
+    }
 
     /// <summary>
     /// Skip this step and continue to the next
@@ -550,6 +742,10 @@ public class StepTypeInfo
 
     public string? Description { get; init; }
     public string? Category { get; init; }
+
+    /// <summary>Icon for the journey builder (a ui-icon name). Null uses the category's icon.</summary>
+    public string? Icon { get; init; }
+
     public string? Module { get; init; }
     public Type? HandlerType { get; init; }
 
@@ -558,6 +754,22 @@ public class StepTypeInfo
     /// This schema describes what settings are available when configuring this step type.
     /// </summary>
     public Dictionary<string, object>? ConfigurationSchema { get; init; }
+
+    /// <summary>
+    /// Branch IDs this step type can emit. Each entry describes a named
+    /// outcome the admin can wire to a target step in the journey builder.
+    /// </summary>
+    public IReadOnlyList<StepBranchInfo>? AvailableBranches { get; init; }
+}
+
+/// <summary>
+/// Describes a branch ID a step handler can emit.
+/// </summary>
+public class StepBranchInfo
+{
+    public required string Id { get; init; }
+    public string? DisplayName { get; init; }
+    public string? Description { get; init; }
 }
 
 /// <summary>
@@ -565,11 +777,20 @@ public class StepTypeInfo
 /// </summary>
 public class StepTypeBuilder
 {
+    internal string? DisplayName { get; private set; }
     internal string? Description { get; private set; }
     internal string? Category { get; private set; }
+    internal string? Icon { get; private set; }
     internal string? Module { get; private set; }
     internal string? RequiredFeature { get; private set; }
     internal Dictionary<string, object>? ConfigurationSchema { get; private set; }
+    internal List<StepBranchInfo>? AvailableBranches { get; private set; }
+
+    public StepTypeBuilder WithDisplayName(string displayName)
+    {
+        DisplayName = displayName;
+        return this;
+    }
 
     public StepTypeBuilder WithDescription(string description)
     {
@@ -583,6 +804,13 @@ public class StepTypeBuilder
         return this;
     }
 
+    /// <summary>Icon for the journey builder (a ui-icon name, e.g. <c>"key"</c>).</summary>
+    public StepTypeBuilder WithIcon(string icon)
+    {
+        Icon = icon;
+        return this;
+    }
+
     public StepTypeBuilder FromModule(string module)
     {
         Module = module;
@@ -592,6 +820,13 @@ public class StepTypeBuilder
     public StepTypeBuilder RequiresFeature(string feature)
     {
         RequiredFeature = feature;
+        return this;
+    }
+
+    public StepTypeBuilder WithBranch(string id, string displayName, string? description = null)
+    {
+        AvailableBranches ??= new List<StepBranchInfo>();
+        AvailableBranches.Add(new StepBranchInfo { Id = id, DisplayName = displayName, Description = description });
         return this;
     }
 
@@ -897,6 +1132,64 @@ public class SchemaBuilder
         return this;
     }
 
+    /// <summary>
+    /// Add a string property whose value is stored as a <c>LocalizedString</c>
+    /// (locale-keyed map). The admin UI renders locale tabs for this field.
+    /// At runtime, step handlers resolve the value via
+    /// <see cref="StepExecutionContext.GetLocalizedConfig"/>.
+    /// </summary>
+    public SchemaBuilder LocalizableStringProperty(string name, string title, string? description = null, bool required = false, string? defaultValue = null)
+    {
+        var prop = new Dictionary<string, object>
+        {
+            ["type"] = "string",
+            ["title"] = title,
+            ["x-localizable"] = true
+        };
+        if (description != null) prop["description"] = description;
+        if (defaultValue != null) prop["default"] = defaultValue;
+        _properties[name] = prop;
+        if (required) _required.Add(name);
+        return this;
+    }
+
+    /// <summary>
+    /// Add an enum property whose option labels are localizable. The underlying
+    /// value stays constant across locales; only the display label for each
+    /// option changes. The admin UI renders locale tabs for labels, not values.
+    /// </summary>
+    /// <param name="name">Property name</param>
+    /// <param name="title">Display title</param>
+    /// <param name="options">Static option values (keys)</param>
+    /// <param name="labels">Default-locale display label for each option value</param>
+    /// <param name="description">Optional description</param>
+    /// <param name="required">Whether required</param>
+    /// <param name="defaultValue">Default selected value</param>
+    public SchemaBuilder LocalizableEnumProperty(
+        string name,
+        string title,
+        string[] options,
+        Dictionary<string, string>? labels = null,
+        string? description = null,
+        bool required = false,
+        string? defaultValue = null)
+    {
+        var prop = new Dictionary<string, object>
+        {
+            ["type"] = "string",
+            ["title"] = title,
+            ["enum"] = options,
+            ["x-localizable"] = true,
+            ["x-localizableLabels"] = true
+        };
+        if (labels != null) prop["x-enumLabels"] = labels;
+        if (description != null) prop["description"] = description;
+        if (defaultValue != null) prop["default"] = defaultValue;
+        _properties[name] = prop;
+        if (required) _required.Add(name);
+        return this;
+    }
+
     public Dictionary<string, object> Build()
     {
         var schema = new Dictionary<string, object>
@@ -921,14 +1214,96 @@ public class StepConfigurationValidationResult
     public bool IsValid { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Non-fatal issues — the step is structurally valid but the admin
+    /// likely wants to know (e.g. ExternalIdp with no providers configured
+    /// will fall back to all enabled providers; that's a warning, not a
+    /// save-blocking error).
+    /// </summary>
+    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
+
     public static StepConfigurationValidationResult Valid() =>
         new() { IsValid = true };
+
+    public static StepConfigurationValidationResult Valid(params string[] warnings) =>
+        new() { IsValid = true, Warnings = warnings };
 
     public static StepConfigurationValidationResult Invalid(params string[] errors) =>
         new() { IsValid = false, Errors = errors };
 
     public static StepConfigurationValidationResult Invalid(IEnumerable<string> errors) =>
         new() { IsValid = false, Errors = errors.ToList() };
+
+    /// <summary>
+    /// Build a result with both errors and warnings. <c>IsValid</c> is true
+    /// when there are no errors, regardless of warnings.
+    /// </summary>
+    public static StepConfigurationValidationResult Build(IEnumerable<string> errors, IEnumerable<string> warnings)
+    {
+        var errorList = errors.ToList();
+        return new StepConfigurationValidationResult
+        {
+            IsValid = errorList.Count == 0,
+            Errors = errorList,
+            Warnings = warnings.ToList()
+        };
+    }
+}
+
+/// <summary>
+/// Shared helpers for step config validators. The config dict arrives from
+/// the controller as <c>IDictionary&lt;string, object&gt;</c> with values
+/// deserialized by System.Text.Json — which means nested arrays/objects
+/// land as <see cref="System.Text.Json.JsonElement"/>, not native CLR
+/// collections. Validators must handle both shapes; these helpers
+/// encapsulate that so each handler doesn't reimplement the same check.
+/// </summary>
+public static class StepConfigurationHelpers
+{
+    /// <summary>
+    /// Returns true when <paramref name="value"/> represents a non-empty
+    /// list. Treats strings as non-lists. Recognises:
+    /// <list type="bullet">
+    ///   <item><see cref="System.Text.Json.JsonElement"/> with
+    ///     <c>ValueKind = Array</c></item>
+    ///   <item>Any <see cref="System.Collections.IEnumerable"/> (List, Array,
+    ///     etc.) excluding <see cref="string"/></item>
+    /// </list>
+    /// </summary>
+    public static bool IsNonEmptyList(object? value)
+    {
+        if (value is null || value is string) return false;
+
+        if (value is System.Text.Json.JsonElement element)
+        {
+            return element.ValueKind == System.Text.Json.JsonValueKind.Array
+                && element.GetArrayLength() > 0;
+        }
+
+        if (value is System.Collections.IEnumerable enumerable)
+        {
+            foreach (var _ in enumerable) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Pulls a string from a config dict, normalising
+    /// <see cref="System.Text.Json.JsonElement"/> string values to plain
+    /// strings.
+    /// </summary>
+    public static string? GetString(IDictionary<string, object>? config, string key)
+    {
+        if (config is null || !config.TryGetValue(key, out var value)) return null;
+        if (value is System.Text.Json.JsonElement element)
+        {
+            return element.ValueKind == System.Text.Json.JsonValueKind.String
+                ? element.GetString()
+                : null;
+        }
+        return value?.ToString();
+    }
 }
 
 /// <summary>

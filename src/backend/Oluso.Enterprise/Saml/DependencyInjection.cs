@@ -15,6 +15,8 @@ using Oluso.Enterprise.Saml.IdentityProvider;
 using Oluso.Enterprise.Saml.Integration;
 using Oluso.Enterprise.Saml.Protocol;
 using Oluso.Enterprise.Saml.ServiceProvider;
+using Oluso.Core.Authorization;
+using Oluso.Core.Events;
 using Oluso.Enterprise.Saml.Services;
 using Oluso.Enterprise.Saml.Stores;
 
@@ -32,6 +34,14 @@ public static class DependencyInjection
     {
         // Validate license once for both SP and IdP
         ValidateSamlLicense(services);
+
+        services.AddSingleton<IWebhookEventProvider, SamlWebhookEventProvider>();
+
+        PermissionRegistry.Instance.RegisterPermissions(new[]
+        {
+            new PermissionDefinition("saml.read", "View SAML settings", "SAML", "View SAML IdP configuration"),
+            new PermissionDefinition("saml.write", "Manage SAML settings", "SAML", "Configure SAML IdP settings"),
+        });
 
         return services
             .AddSamlServiceProviderInternal(configuration)
@@ -85,6 +95,7 @@ public static class DependencyInjection
         // Register journey step handler for SAML authentication
         services.AddScoped<SamlStepHandler>();
         services.AddScoped<IStepHandler>(sp => sp.GetRequiredService<SamlStepHandler>());
+        services.AddJourneyStepFormDescribers(typeof(SamlStepHandler).Assembly);
 
         return services;
     }
@@ -136,6 +147,7 @@ public static class DependencyInjection
 
         // Register journey step handler for SAML authentication
         services.AddScoped<SamlStepHandler>();
+        services.AddJourneyStepFormDescribers(typeof(SamlStepHandler).Assembly);
 
         return services;
     }
@@ -313,6 +325,7 @@ public class SamlBuilder
                 sp.GetRequiredService<IHttpClientFactory>());
         });
         _services.AddScoped<SamlStepHandler>();
+        _services.AddJourneyStepFormDescribers(typeof(SamlStepHandler).Assembly);
 
         return this;
     }

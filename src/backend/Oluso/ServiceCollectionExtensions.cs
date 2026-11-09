@@ -6,10 +6,13 @@ using Microsoft.Extensions.Options;
 using Oluso.Certificates;
 using Oluso.Core.Authentication;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.ActionCenter;
 using Oluso.Core.Events;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Oluso.Keys;
+using Oluso.Core.Licensing;
+using Oluso.Middleware;
 
 namespace Oluso;
 
@@ -38,15 +41,135 @@ public static class ServiceCollectionExtensions
         // Register core services that are always needed
         services.AddHttpContextAccessor();
         services.AddMemoryCache();
+        services.AddSignInRateLimiting(configuration);
+
+        // SignalR + realtime broadcaster primitive. Modules push events
+        // through IRealtimeBroadcaster — they never depend on SignalR
+        // directly — and the consumer app exposes the hub by calling
+        // app.MapOlusoRealtime() alongside MapControllers().
+        // CamelCase JSON so the wire shape (channel/name/payload) matches
+        // what the workspace-ui RealtimeEvent interface declares; without
+        // this, default System.Text.Json sends PascalCase, the frontend's
+        // `evt.channel === '...'` filter never matches, and every
+        // subscriber silently drops every event.
+        var signalR = services.AddSignalR().AddJsonProtocol(options =>
+        {
+            options.PayloadSerializerOptions.PropertyNamingPolicy =
+                System.Text.Json.JsonNamingPolicy.CamelCase;
+            options.PayloadSerializerOptions.DictionaryKeyPolicy =
+                System.Text.Json.JsonNamingPolicy.CamelCase;
+        });
+
+        // Scale-out backplane (optional). SignalR keeps connection→group mappings
+        // in-memory PER server, so tenant/user/channel broadcasts only reach the
+        // server a connection landed on. With more than one app instance behind a
+        // load balancer, a Redis backplane fans every broadcast across all servers
+        // so group targeting works cluster-wide — the hub/broadcaster code is
+        // unchanged. No connection table is needed (and would only go stale).
+        //
+        // Opt-in: set ConnectionStrings:RealtimeRedis (preferred) or
+        // ConnectionStrings:Redis. Absent (single instance / dev) → in-memory,
+        // exactly as before. Safe no-op when not configured.
+        var redisConn = configuration.GetConnectionString("RealtimeRedis")
+            ?? configuration.GetConnectionString("Redis");
+        if (!string.IsNullOrWhiteSpace(redisConn))
+        {
+            signalR.AddStackExchangeRedis(redisConn, options =>
+            {
+                // Namespace the channel so multiple Oluso deployments can share a
+                // Redis instance without cross-talk.
+                options.Configuration.ChannelPrefix =
+                    StackExchange.Redis.RedisChannel.Literal("oluso:realtime");
+            });
+        }
+
+        // Realtime hub tickets live where the hub's connections do: in Redis alongside the backplane when
+        // there are several instances, in this server's memory otherwise.
+        if (!string.IsNullOrWhiteSpace(redisConn))
+        {
+            services.TryAddSingleton<Oluso.Realtime.IHubTicketStore>(_ => new Oluso.Realtime.RedisHubTicketStore(redisConn));
+        }
+        else
+        {
+            services.AddMemoryCache();
+            services.TryAddSingleton<Oluso.Realtime.IHubTicketStore, Oluso.Realtime.MemoryHubTicketStore>();
+        }
+        // Central catalogue of realtime channels (scope + permission). Singleton
+        // built from every IRealtimeChannelGate at startup; the hub gates
+        // Subscribe against it and the broadcaster targets channel groups. An
+        // unregistered channel is rejected on subscribe and dropped on broadcast
+        // (fail-closed).
+        services.TryAddSingleton<Oluso.Core.Realtime.IRealtimeChannelRegistry, Oluso.Core.Realtime.RealtimeChannelRegistry>();
+        services.TryAddSingleton<Oluso.Core.Realtime.IRealtimeBroadcaster, Oluso.Realtime.SignalRRealtimeBroadcaster>();
+
+        // Terminology — the platform's single engine (contracts + engine in
+        // Oluso.Core, override table on the platform DbContext). Modules only
+        // contribute keys/bundles via ITerminologyContributor; nothing about
+        // terminology depends on any particular module being enabled.
+        services.TryAddScoped<Oluso.Core.Terminology.ITerminologyService, Oluso.Core.Terminology.TerminologyService>();
+        services.TryAddScoped<Oluso.Core.Terminology.ITenantProfileService, Oluso.Core.Terminology.TenantProfileService>();
+        services.AddScoped<Oluso.Core.Events.IOlusoEventSink, Oluso.Realtime.TerminologyRealtimeSink>();
+        services.AddSingleton<Oluso.Core.Realtime.IRealtimeChannelGate, Oluso.Realtime.PlatformChannelGate>();
+
+        // nosniff on every response; SVG/XML responses are sandboxed.
+        services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter,
+            Oluso.Middleware.ActiveContentHeadersStartupFilter>();
+
+        // Auto-injects the early host-based tenant resolver at the start
+        // of the pipeline so OAuth callbacks (/signin-{scheme}), the
+        // dynamic external-scheme provider, and Stripe webhook signature
+        // verification can read ITenantContext when they fire — those
+        // sit inside UseAuthentication and would otherwise short-circuit
+        // before any post-auth middleware could populate the context.
+        // Using IStartupFilter means consumers don't have to remember to
+        // place a Use*() call at the right point in their pipeline.
+        services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter,
+            Oluso.Middleware.EarlyTenantHostStartupFilter>();
+
+        // Bearer token tenant resolver — runs after EarlyTenantHost (so a
+        // subdomain match still wins) but before UseAuthentication, so the
+        // JWT bearer's signing-key lookup and issuer validation see the
+        // tenant the token claims rather than the request host's tenant.
+        services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter,
+            Oluso.Middleware.BearerTokenTenantResolverStartupFilter>();
 
         // Configure OIDC options from configuration
         services.Configure<OlusoOptions>(configuration.GetSection("Oluso"));
 
-        // Register event service for authentication hooks
-        services.AddScoped<IOlusoEventService, OlusoEventService>();
+        // Bind HostValidationOptions from Oluso:HostValidation so consumers can
+        // set Enabled / AdditionalAllowedHosts / etc. via env vars and appsettings
+        // without writing inline Configure() lambdas. Multiple Configure() calls
+        // compose, so any consumer-side .Configure<HostValidationOptions>(...)
+        // still applies on top of the values bound here.
+        services.Configure<Oluso.Middleware.HostValidationOptions>(
+            configuration.GetSection("Oluso:HostValidation"));
+
+        // Register event service, core event property source, and webhook event registry
+        services.AddOlusoEvents();
+
+        // Register tenant seeding event sink (seeds module data on tenant creation)
+        services.AddTenantSeeding();
+
+        // Register action center aggregation service + platform-level
+        // providers. Module providers are
+        // registered from each module's descriptor.
+        services.AddActionCenter();
+        services.AddActionCenterProvider<Oluso.ActionCenter.MentionsActionCenterProvider>();
+
+        // Conversation threads: shared by the workspace and Service API controllers
+        services.TryAddScoped<Oluso.Core.Notifications.IConversationService, Oluso.Core.Notifications.ConversationService>();
+
+        // Register feature gate (always available — returns Allowed when no license/providers configured)
+        services.AddFeatureGate();
+
+        // Register HTML sanitization service for XSS protection in rich text content
+        services.TryAddSingleton<IHtmlSanitizationService, HtmlSanitizationService>();
 
         // Register key encryption service (shared between keys and certificates)
         services.TryAddSingleton<IKeyEncryptionService, DataProtectionKeyEncryptionService>();
+
+        // Register tenant configuration encryption options (modules add their section keys)
+        services.AddOptions<Oluso.Core.Services.TenantConfigurationOptions>();
 
         // Register certificate services (local provider by default)
         services.TryAddSingleton<ICertificateMaterialProvider, LocalCertificateMaterialProvider>();
@@ -107,7 +230,10 @@ public static class MultiTenancyExtensions
             TenantCookieAuthenticationOptions>();
 
         // Register host validation cache invalidator for when tenants change
-        builder.Services.AddSingleton<Middleware.IHostValidationCacheInvalidator, Middleware.HostValidationCacheInvalidator>();
+        // Register for both the Oluso.Middleware and Oluso.Core.Services interfaces
+        builder.Services.AddSingleton<Middleware.HostValidationCacheInvalidator>();
+        builder.Services.AddSingleton<Middleware.IHostValidationCacheInvalidator>(sp => sp.GetRequiredService<Middleware.HostValidationCacheInvalidator>());
+        builder.Services.AddSingleton<Core.Services.IHostValidationCacheInvalidator>(sp => sp.GetRequiredService<Middleware.HostValidationCacheInvalidator>());
 
         // Tenant resolution will be added via middleware
         builder.Options.MultiTenancyEnabled = true;
@@ -150,9 +276,35 @@ public class MultiTenancyOptions
     public string TenantHeaderName { get; set; } = "X-Tenant-Id";
 
     /// <summary>
-    /// Default tenant ID when no tenant is resolved from request
+    /// Default tenant ID when no tenant is resolved from request.
+    /// Defaults to the platform tenant — platform clients (admin-portal, workspace-portal)
+    /// serve users from all tenants, and the platform tenant enables unscoped user lookup.
     /// </summary>
-    public string? DefaultTenantId { get; set; } = "default";
+    public string? DefaultTenantId { get; set; } = Core.PlatformConstants.TenantId;
+
+    /// <summary>
+    /// Subdomains that are reserved and should not be treated as tenant identifiers.
+    /// Case-insensitive comparison.
+    /// </summary>
+    public HashSet<string> ReservedSubdomains { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "www", "api", "admin", "auth", "login", "mail", "smtp", "ftp",
+        "cdn", "static", "assets", "status", "health", "docs"
+    };
+
+    /// <summary>
+    /// Query parameter name used for tenant resolution (default: "tenant").
+    /// </summary>
+    public string TenantQueryParameterName { get; set; } = "tenant";
+
+    /// <summary>
+    /// Base domain for subdomain-based tenant resolution.
+    /// Auto-derived from IssuerUri host if not explicitly set.
+    /// Tenant subdomains are resolved as {identifier}.{BaseDomain}.
+    /// Example: "auth.example.com" enables "acme.auth.example.com" → tenant "acme".
+    /// Example: "localhost" enables "acme.localhost" → tenant "acme".
+    /// </summary>
+    public string? BaseDomain { get; set; }
 }
 
 public enum TenantResolutionStrategy
@@ -219,6 +371,7 @@ public static class UserJourneyExtensions
         builder.Options.UserJourneyEngineEnabled = true;
 
         var options = new UserJourneyOptions();
+        builder.Configuration.GetSection(UserJourneyOptions.SectionName).Bind(options);
         configure(options);
 
         // Register options
@@ -234,30 +387,19 @@ public static class UserJourneyExtensions
         builder.Services.AddSingleton<IJourneyStateStore, InMemoryJourneyStateStore>();
         builder.Services.AddSingleton<IConditionEvaluator, DefaultConditionEvaluator>();
 
-        // Register built-in step handlers
-        // These are discovered by DefaultStepHandlerRegistry via IServiceProvider.GetServices<IStepHandler>()
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.LocalLoginStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.CompositeLoginStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.ExternalLoginStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.MfaStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.SignUpStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.CreateUserStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.ConsentStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.PasswordResetStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.PasswordChangeStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.UpdateUserStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.TermsAcceptanceStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.LinkAccountStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.PasswordlessEmailStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.PasswordlessSmsStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.CaptchaStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.DynamicFormStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.ConditionStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.BranchStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.TransformStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.ApiCallStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.WebhookStepHandler>();
-        builder.Services.AddScoped<IStepHandler, Oluso.UserJourneys.Steps.CustomPluginStepHandler>();
+        // Files posted to journey steps: validated by content, stored as attachments
+        // readable through the generic attachment endpoint by the uploader and by
+        // administrators who can read submissions.
+        builder.Services.AddScoped<Oluso.Core.Storage.IJourneyFileUploadService, Oluso.Storage.JourneyFileUploadService>();
+        builder.Services.AddScoped<Oluso.Core.Storage.IFileAccessProvider, Oluso.Storage.JourneyUploadFileAccessProvider>();
+        builder.Services.AddScoped<IJourneyUserAttachedHandler, Oluso.Storage.JourneyUploadUserAttachedHandler>();
+
+        // Register all built-in step handlers via the canonical builder
+        // pattern.
+        // Discovered by DefaultStepHandlerRegistry via
+        // IServiceProvider.GetServices<IStepHandler>().
+        var journeyBuilder = new Oluso.UserJourneys.UserJourneyBuilder(builder);
+        journeyBuilder.AddAllBuiltInSteps();
 
         // Register plugin system
         if (!string.IsNullOrEmpty(options.PluginDirectory))
@@ -290,12 +432,24 @@ public static class UserJourneyExtensions
         Action<StepTypeBuilder>? configure = null)
         where THandler : class, ICustomStepHandler
     {
-        // Register the handler
-        builder.Services.AddScoped<THandler>();
+        // Register the concrete type AND expose it as ICustomStepHandler so
+        // DefaultStepHandlerRegistry.GetServices<ICustomStepHandler>() can
+        // discover it. Without the second registration the handler goes
+        // into DI but is unreachable from the journey runtime.
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<THandler, THandler>());
+        builder.Services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<ICustomStepHandler>(
+                sp => sp.GetRequiredService<THandler>()));
 
-        // Register step type configuration
-        builder.Services.AddSingleton<ICustomStepHandlerConfiguration>(
-            new CustomStepHandlerConfiguration<THandler>(configure));
+        // Apply the StepTypeBuilder configure callback through the canonical
+        // IConfigureStepHandlers path the registry constructor invokes.
+        // Resolves THandler at Configure-time to read its StepType, then
+        // calls registry.Register<THandler>(stepType, configure) which
+        // populates _handlerTypes and _typeInfo so the step shows up in
+        // the journey-builder UI with admin-supplied metadata.
+        builder.Services.AddSingleton<IConfigureStepHandlers>(sp =>
+            new CustomJourneyStepConfigurator<THandler>(sp, configure));
 
         return builder;
     }
@@ -325,21 +479,31 @@ public static class UserJourneyExtensions
 }
 
 /// <summary>
-/// Configuration wrapper for custom step handlers
+/// Carries the <see cref="StepTypeBuilder"/> configure callback supplied
+/// to <c>AddCustomJourneyStep&lt;T&gt;</c> through to the step handler
+/// registry. The registry constructor invokes every
+/// <see cref="IConfigureStepHandlers"/> contributor at startup; this one
+/// resolves the handler instance to read its <c>StepType</c> and then
+/// calls <c>registry.Register&lt;THandler&gt;(stepType, configure)</c> so
+/// the step appears in the journey-builder UI with admin-supplied
+/// metadata.
 /// </summary>
-internal class CustomStepHandlerConfiguration<THandler> : ICustomStepHandlerConfiguration
+internal class CustomJourneyStepConfigurator<THandler> : IConfigureStepHandlers
     where THandler : class, ICustomStepHandler
 {
+    private readonly IServiceProvider _serviceProvider;
     private readonly Action<StepTypeBuilder>? _configure;
 
-    public CustomStepHandlerConfiguration(Action<StepTypeBuilder>? configure)
+    public CustomJourneyStepConfigurator(IServiceProvider serviceProvider, Action<StepTypeBuilder>? configure)
     {
+        _serviceProvider = serviceProvider;
         _configure = configure;
     }
 
-    public void Configure(IStepHandlerRegistry registry)
+    public void Configure(IExtendedStepHandlerRegistry registry)
     {
-        // Configuration will be applied when handler is resolved
+        var handler = _serviceProvider.GetRequiredService<THandler>();
+        registry.Register<THandler>(handler.StepType, _configure);
     }
 }
 

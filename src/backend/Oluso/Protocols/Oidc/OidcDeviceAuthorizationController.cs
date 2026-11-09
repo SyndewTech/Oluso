@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Oluso.Core.Domain.Entities;
@@ -9,6 +8,7 @@ using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
+using Oluso.Core.Services;
 using Oluso.Protocols.Grants;
 
 namespace Oluso.Protocols.Oidc;
@@ -18,13 +18,13 @@ namespace Oluso.Protocols.Oidc;
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
 
-public class OidcDeviceAuthorizationController : ControllerBase
+public class OidcDeviceAuthorizationController : OidcControllerBase
 {
     private readonly IClientAuthenticator _clientAuthenticator;
     private readonly IDeviceFlowStore _deviceFlowStore;
     private readonly IScopeValidator _scopeValidator;
     private readonly OidcEndpointConfiguration _endpointConfig;
-    private readonly IConfiguration _configuration;
+    private readonly IIssuerResolver _issuerResolver;
     private readonly ILogger<OidcDeviceAuthorizationController> _logger;
 
     private const int DeviceCodeLength = 32;
@@ -36,14 +36,14 @@ public class OidcDeviceAuthorizationController : ControllerBase
         IDeviceFlowStore deviceFlowStore,
         IScopeValidator scopeValidator,
         IOptions<OidcEndpointConfiguration> endpointConfig,
-        IConfiguration configuration,
+        IIssuerResolver issuerResolver,
         ILogger<OidcDeviceAuthorizationController> logger)
     {
         _clientAuthenticator = clientAuthenticator;
         _deviceFlowStore = deviceFlowStore;
         _scopeValidator = scopeValidator;
         _endpointConfig = endpointConfig.Value;
-        _configuration = configuration;
+        _issuerResolver = issuerResolver;
         _logger = logger;
     }
 
@@ -81,7 +81,15 @@ public class OidcDeviceAuthorizationController : ControllerBase
         var requestedScopes = _scopeValidator.ParseScopes(scope).ToList();
         var allowedScopes = client.AllowedScopes.Select(s => s.Scope).ToList();
 
-        var scopeValidation = await _scopeValidator.ValidateAsync(requestedScopes, allowedScopes, cancellationToken);
+        // Scopes the server won't issue are left out (RFC 6749 §3.3); the token response reports what was granted.
+        var scopeValidation = await _scopeValidator.ValidateAsync(new ScopeValidationContext
+        {
+            RequestedScopes = requestedScopes,
+            ClientAllowedScopes = allowedScopes,
+            ClientId = client.ClientId,
+            Endpoint = "device_authorization",
+            Strict = ScopeValidationContext.IsStrict(client.Properties)
+        }, cancellationToken);
         if (!scopeValidation.IsValid)
         {
             return BadRequest(new TokenErrorResponse
@@ -118,10 +126,10 @@ public class OidcDeviceAuthorizationController : ControllerBase
         _logger.LogInformation("Device authorization started for client {ClientId}, user code {UserCode}",
             client.ClientId, userCode);
 
-        // Build verification URI
-        var baseUri = _configuration["Oluso:IssuerUri"]
-            ?? _configuration["IdentityServer:IssuerUri"]
-            ?? $"{Request.Scheme}://{Request.Host}";
+        // Build verification URI from the same source the discovery doc uses
+        // so tenant-subdomain deployments hand users a URL they can actually
+        // visit (e.g. https://acme.localhost:5050/device, not the bare host).
+        var baseUri = await _issuerResolver.GetIssuerAsync(cancellationToken);
         var verificationUri = $"{baseUri}/device";
         var verificationUriComplete = $"{verificationUri}?user_code={userCode}";
 
@@ -132,7 +140,7 @@ public class OidcDeviceAuthorizationController : ControllerBase
             VerificationUri = verificationUri,
             VerificationUriComplete = verificationUriComplete,
             ExpiresIn = lifetime,
-            Interval = 5
+            Interval = DeviceCodeData.DefaultInterval
         });
     }
 
@@ -146,19 +154,8 @@ public class OidcDeviceAuthorizationController : ControllerBase
             .TrimEnd('=');
     }
 
-    private static string GenerateUserCode()
-    {
-        var bytes = new byte[UserCodeLength];
-        RandomNumberGenerator.Fill(bytes);
-
-        var chars = new char[UserCodeLength];
-        for (var i = 0; i < UserCodeLength; i++)
-        {
-            chars[i] = UserCodeCharacters[bytes[i] % UserCodeCharacters.Length];
-        }
-
-        return new string(chars);
-    }
+    private static string GenerateUserCode() =>
+        new(RandomNumberGenerator.GetItems<char>(UserCodeCharacters, UserCodeLength));
 
     private static string FormatUserCode(string userCode)
     {

@@ -1,0 +1,51 @@
+name: Publish NuGet Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  publish-public:
+    runs-on: ubuntu-latest
+    permissions:
+      # Trusted Publishing to nuget.org via OIDC — no long-lived API key.
+      # Requires a trusted-publishing policy configured on nuget.org for this
+      # repo + workflow, and the vars.NUGET_USER account name.
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore Oluso.sln
+
+      - name: Pack
+        run: dotnet pack Oluso.sln -c Release --no-restore -p:OlusoVersion=${{ steps.version.outputs.VERSION }} -p:PackageIdPrefix=Syndew.
+
+      - name: NuGet Trusted Publishing login
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push public packages
+        run: |
+          dotnet nuget push 'src/backend/**/bin/Release/*.nupkg' \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} \
+            --skip-duplicate

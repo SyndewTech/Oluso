@@ -1,8 +1,8 @@
 @using Oluso.UserJourneys.Steps
 @model LocalLoginViewModel
 
-<h1 class="title">Sign In</h1>
-<p class="subtitle">Enter your credentials to continue</p>
+<h1 class="title">@Localizer["local_login_title"]</h1>
+<p class="subtitle">@Localizer["local_login_subtitle"]</p>
 
 @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
 {
@@ -14,27 +14,46 @@
     </div>
 }
 
+@if (Model?.AvailableOrganizations is { Count: > 1 })
+{
+    <p class="subtitle">@Localizer["login_choose_organization_subtitle"]</p>
+
+    <div class="org-choices">
+        @foreach (var org in Model.AvailableOrganizations)
+        {
+            <button type="submit"
+                    form="loginForm"
+                    name="organization"
+                    value="@org.Slug"
+                    class="btn btn-secondary btn-block org-choice">
+                <span class="org-choice-name">@org.Name</span>
+                <span class="org-choice-slug">@org.Slug</span>
+            </button>
+        }
+    </div>
+}
+
 <form method="post" id="loginForm">
     <div class="form-group">
-        <label for="username">Username or Email</label>
+        <label for="username">@Localizer["local_login_username_label"]</label>
         <input type="text"
                id="username"
                name="username"
                class="form-control"
                value="@Model?.Username"
-               placeholder="Enter your username or email"
+               placeholder="@Localizer["local_login_username_placeholder"]"
                autofocus
                autocomplete="username"
                required />
     </div>
 
     <div class="form-group">
-        <label for="password">Password</label>
+        <label for="password">@Localizer["local_login_password_label"]</label>
         <input type="password"
                id="password"
                name="password"
                class="form-control"
-               placeholder="Enter your password"
+               placeholder="@Localizer["local_login_password_placeholder"]"
                autocomplete="current-password"
                required />
     </div>
@@ -48,16 +67,16 @@
                    class="form-check-input"
                    value="true"
                    @(Model?.RememberMe == true ? "checked" : "") />
-            <label class="form-check-label" for="rememberMe">Remember me on this device</label>
+            <label class="form-check-label" for="rememberMe">@Localizer["local_login_remember_me"]</label>
         </div>
     }
 
-    <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+    <button type="submit" class="btn btn-primary btn-block">@Localizer["local_login_button"]</button>
 </form>
 
 @if (Model?.ShowPasskey == true)
 {
-    <div class="divider"><span>or</span></div>
+    <div class="divider"><span>@Localizer["local_login_divider_or"]</span></div>
     <form method="post" id="passkeyForm">
         <input type="hidden" name="action" value="passkey_login" />
         @if (Model?.PasskeyUsernameless != true)
@@ -68,10 +87,15 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
             </svg>
-            Sign in with Passkey
+            @Localizer["local_login_passkey_button"]
         </button>
     </form>
-    <p class="form-text text-center mt-1">Use your fingerprint, face, or security key</p>
+    <p class="form-text text-center mt-1">@Localizer["local_login_passkey_hint"]</p>
+}
+
+@if (ViewData[Oluso.UI.Pages.Journey.IndexModel.OrgSignInUrlKey] is string { Length: > 0 } orgSignInUrl)
+{
+    @await Html.PartialAsync("_OrgSignInLink", orgSignInUrl)
 }
 
 @if (Model?.AllowForgotPassword == true)
@@ -79,7 +103,7 @@
     <div class="journey-footer">
         <form method="post" style="display: inline;">
             <input type="hidden" name="action" value="forgot_password" />
-            <button type="submit" class="link-button">Forgot your password?</button>
+            <button type="submit" class="link-button">@Localizer["local_login_forgot_password"]</button>
         </form>
     </div>
 }
@@ -87,7 +111,7 @@
 @if (Model?.AllowRegistration == true)
 {
     <div class="journey-footer">
-        <p>Don't have an account? <a href="@(Model?.RegistrationUrl ?? "#")">Sign up</a></p>
+        <p>@Localizer["local_login_signup_prefix"] <a href="@(Model?.RegistrationUrl ?? "#")">@Localizer["local_login_signup_link"]</a></p>
     </div>
 }
 

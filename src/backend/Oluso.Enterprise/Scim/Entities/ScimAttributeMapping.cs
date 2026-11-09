@@ -17,17 +17,28 @@ public class ScimAttributeMapping : TenantEntity
     public string ScimAttribute { get; set; } = string.Empty;
 
     /// <summary>
-    /// The internal user property to map to (e.g., "Email", "LastName", "Department")
+    /// The internal user property to write (e.g., "Email", "LastName",
+    /// "custom:department"). See <see cref="Services.ScimInboundTargets"/>.
     /// </summary>
     public string InternalProperty { get; set; } = string.Empty;
 
     /// <summary>
-    /// Direction of the mapping: inbound (SCIM -> internal), outbound (internal -> SCIM), or both
+    /// Scriban template that computes the value instead of reading
+    /// <see cref="ScimAttribute"/> directly, e.g.
+    /// <c>{{ scim.name.givenName }} {{ scim.name.familyName }}</c> or
+    /// <c>{{ attr "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department" }}</c>.
+    /// The model exposes <c>scim</c>, <c>enterprise</c>, <c>attr</c> and <c>client</c>.
     /// </summary>
-    public string Direction { get; set; } = "inbound";
+    public string? Expression { get; set; }
 
     /// <summary>
-    /// Whether this mapping is required for user creation
+    /// Scriban boolean expression; when it evaluates false this mapping is
+    /// skipped, e.g. <c>scim.userType == "Employee"</c>.
+    /// </summary>
+    public string? Condition { get; set; }
+
+    /// <summary>
+    /// Whether this mapping must resolve to a value when a user is created.
     /// </summary>
     public bool IsRequired { get; set; }
 
@@ -42,7 +53,10 @@ public class ScimAttributeMapping : TenantEntity
     public string? Transformation { get; set; }
 
     /// <summary>
-    /// Priority for conflict resolution (higher = more priority)
+    /// When several mappings write the same internal property, they are
+    /// tried from the highest priority down and the first that yields a
+    /// value wins. Lets a fallback (e.g. name parts) sit behind a preferred
+    /// attribute (displayName).
     /// </summary>
     public int Priority { get; set; }
 

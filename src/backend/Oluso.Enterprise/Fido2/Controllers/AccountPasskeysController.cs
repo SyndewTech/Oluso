@@ -36,16 +36,14 @@ public class AccountPasskeysController : AccountBaseController
         _logger = logger;
     }
 
-    private string? UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)
+    private new string? UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub)
         ?? User.FindFirstValue("sub");
 
-    private string? UserEmail => User.FindFirstValue(ClaimTypes.Email);
-    private string? UserName => User.FindFirstValue(ClaimTypes.Name)
+    private new string? UserEmail => User.FindFirstValue(ClaimTypes.Email);
+    private new string? UserName => User.FindFirstValue(ClaimTypes.Name)
         ?? User.FindFirstValue("name");
-    private string? TenantId => _tenantContext.TenantId;
-    private string? ClientIp => HttpContext.Connection.RemoteIpAddress?.ToString();
-    private string? UserAgent => HttpContext.Request.Headers.UserAgent.ToString();
+    private new string? TenantId => _tenantContext.TenantId;
 
     /// <summary>
     /// Get all passkeys registered for the current user

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -25,6 +26,7 @@ public class SamlIdentityProvider : ISamlIdentityProvider
     private readonly ISamlServiceProviderStore? _spStore;
     private readonly ISamlTenantSettingsService? _tenantSettingsService;
     private readonly IIssuerResolver? _issuerResolver;
+    private readonly ITenantContext? _tenantContext;
     private readonly Dictionary<string, Saml2Configuration> _spConfigs = new();
     private readonly Dictionary<string, SamlSpConfig> _spConfigsRaw = new();
 
@@ -39,7 +41,8 @@ public class SamlIdentityProvider : ISamlIdentityProvider
         ICertificateService? certificateService = null,
         ISamlServiceProviderStore? spStore = null,
         ISamlTenantSettingsService? tenantSettingsService = null,
-        IIssuerResolver? issuerResolver = null)
+        IIssuerResolver? issuerResolver = null,
+        ITenantContext? tenantContext = null)
     {
         _options = options.Value;
         _logger = logger;
@@ -48,6 +51,69 @@ public class SamlIdentityProvider : ISamlIdentityProvider
         _spStore = spStore;
         _tenantSettingsService = tenantSettingsService;
         _issuerResolver = issuerResolver;
+        _tenantContext = tenantContext;
+    }
+
+    /// <summary>
+    /// Resolves the IdP identity (EntityId + signing cert) for the
+    /// current tenant context. Cascade:
+    ///   1. <see cref="ISamlTenantSettingsService"/> per-tenant override
+    ///      (EntityId + signing cert under a tenant-specific configuration)
+    ///   2. <see cref="IIssuerResolver"/>-derived issuer URL (covers the
+    ///      auto-subdomain pattern and the per-tenant TokenSettings.IssuerUri
+    ///      override; signing cert falls back to the platform default)
+    ///   3. Platform fallback: <see cref="SamlIdpOptions.EntityId"/> +
+    ///      <c>_idpConfig.SigningCertificate</c>
+    /// Mirrors the inline logic in <see cref="GenerateMetadataForTenantAsync"/>
+    /// so issued assertions and the tenant's published metadata stay in sync.
+    /// </summary>
+    private async Task<(string EntityId, X509Certificate2? SigningCert)> ResolveTenantIdpIdentityAsync(
+        CancellationToken cancellationToken)
+    {
+        string? entityId = null;
+        X509Certificate2? signingCert = null;
+
+        var tenantId = _tenantContext?.TenantId;
+        if (!string.IsNullOrEmpty(tenantId)
+            && tenantId != Oluso.Core.PlatformConstants.TenantId
+            && _tenantSettingsService != null)
+        {
+            try
+            {
+                var settings = await _tenantSettingsService.GetSettingsAsync(tenantId, cancellationToken);
+                if (settings.Enabled)
+                {
+                    if (!string.IsNullOrEmpty(settings.EntityId))
+                    {
+                        entityId = settings.EntityId;
+                    }
+                    signingCert = await _tenantSettingsService.GetSigningCertificateAsync(tenantId, cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Tenant SAML settings lookup failed for {TenantId}; falling back to platform IdP identity",
+                    tenantId);
+            }
+        }
+
+        if (string.IsNullOrEmpty(entityId) && _issuerResolver != null)
+        {
+            try
+            {
+                entityId = await _issuerResolver.GetIssuerAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "IIssuerResolver threw while resolving SAML IdP EntityId; falling back to _options.EntityId");
+            }
+        }
+
+        return (
+            EntityId: string.IsNullOrEmpty(entityId) ? _options.EntityId : entityId,
+            SigningCert: signingCert ?? _idpConfig?.SigningCertificate);
     }
 
     public bool IsEnabled => _options.Enabled;
@@ -98,7 +164,7 @@ public class SamlIdentityProvider : ISamlIdentityProvider
                 _certificateService, cancellationToken: cancellationToken);
             if (encCert != null)
             {
-                config.DecryptionCertificate = encCert;
+                config.DecryptionCertificates.Add(encCert);
                 _logger.LogInformation("Loaded SAML IdP encryption certificate: {Subject}", encCert.Subject);
             }
         }
@@ -442,11 +508,17 @@ public class SamlIdentityProvider : ISamlIdentityProvider
 
         var claimsIdentity = new ClaimsIdentity(filteredClaims, "SAML2");
 
+        // Resolve IdP identity from tenant context so assertions issued
+        // in a tenant request carry that tenant's EntityId + signing cert,
+        // not the platform default. Falls back to platform when no tenant
+        // context or no per-tenant SAML override is configured.
+        var (idpEntityId, idpSigningCert) = await ResolveTenantIdpIdentityAsync(cancellationToken);
+
         // Configure encryption if needed
         var responseConfig = new Saml2Configuration
         {
-            Issuer = _options.EntityId,
-            SigningCertificate = _idpConfig!.SigningCertificate,
+            Issuer = idpEntityId,
+            SigningCertificate = idpSigningCert,
             AllowedAudienceUris = [parameters.SpEntityId]
         };
 
@@ -523,7 +595,20 @@ public class SamlIdentityProvider : ISamlIdentityProvider
             throw new InvalidOperationException($"SP not registered: {spEntityId}");
         }
 
-        var response = new Saml2AuthnResponse(spConfig)
+        // Build a fresh per-request config instead of passing the cached
+        // spConfig directly — the cache has the platform Issuer baked in,
+        // which would override the tenant identity on the wire.
+        var (idpEntityId, idpSigningCert) = await ResolveTenantIdpIdentityAsync(cancellationToken);
+        var responseConfig = new Saml2Configuration
+        {
+            Issuer = idpEntityId,
+            SigningCertificate = idpSigningCert,
+            AllowedAudienceUris = [spEntityId],
+            SingleSignOnDestination = spConfig.SingleSignOnDestination,
+            EncryptionCertificate = spConfig.EncryptionCertificate,
+        };
+
+        var response = new Saml2AuthnResponse(responseConfig)
         {
             Status = ParseStatusCode(statusCode),
             StatusMessage = message
@@ -534,9 +619,9 @@ public class SamlIdentityProvider : ISamlIdentityProvider
             response.InResponseTo = new Saml2Id(inResponseTo);
         }
 
-        if (spConfig.SingleSignOnDestination != null)
+        if (responseConfig.SingleSignOnDestination != null)
         {
-            response.Destination = spConfig.SingleSignOnDestination;
+            response.Destination = responseConfig.SingleSignOnDestination;
         }
 
         var binding = new Saml2PostBinding();
@@ -544,7 +629,7 @@ public class SamlIdentityProvider : ISamlIdentityProvider
 
         return new SamlResponseResult
         {
-            Destination = spConfig.SingleSignOnDestination?.ToString() ?? "",
+            Destination = responseConfig.SingleSignOnDestination?.ToString() ?? "",
             SamlResponse = result.PostContent
         };
     }
@@ -600,7 +685,20 @@ public class SamlIdentityProvider : ISamlIdentityProvider
             throw new InvalidOperationException($"SP not registered: {spEntityId}");
         }
 
-        var response = new Saml2LogoutResponse(spConfig)
+        // Build a fresh per-request config so the LogoutResponse Issuer
+        // reflects the current tenant rather than the cached platform one.
+        var (idpEntityId, idpSigningCert) = await ResolveTenantIdpIdentityAsync(cancellationToken);
+        var responseConfig = new Saml2Configuration
+        {
+            Issuer = idpEntityId,
+            SigningCertificate = idpSigningCert,
+            AllowedAudienceUris = [spEntityId],
+            SingleSignOnDestination = spConfig.SingleSignOnDestination,
+            SingleLogoutDestination = spConfig.SingleLogoutDestination,
+            EncryptionCertificate = spConfig.EncryptionCertificate,
+        };
+
+        var response = new Saml2LogoutResponse(responseConfig)
         {
             Status = success ? Saml2StatusCodes.Success : Saml2StatusCodes.Responder
         };
@@ -614,7 +712,7 @@ public class SamlIdentityProvider : ISamlIdentityProvider
         var result = binding.Bind(response);
 
         // Get SLO destination for SP
-        var destination = spConfig.SingleLogoutDestination?.ToString() ?? "";
+        var destination = responseConfig.SingleLogoutDestination?.ToString() ?? "";
 
         return new SamlResponseResult
         {

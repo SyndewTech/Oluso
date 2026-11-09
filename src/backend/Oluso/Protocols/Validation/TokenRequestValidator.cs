@@ -3,8 +3,10 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Common;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols.DPoP;
+using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
+using Oluso.Protocols.Mtls;
 
 namespace Oluso.Protocols.Validation;
 
@@ -26,6 +28,7 @@ public class TokenRequestValidator : ITokenRequestValidator
     private readonly IClientAuthenticator _clientAuthenticator;
     private readonly IScopeValidator _scopeValidator;
     private readonly IDPoPProofValidator _dpopValidator;
+    private readonly IClientCertificateExtractor _certExtractor;
     private readonly IResourceStore _resourceStore;
     private readonly ITenantSettingsProvider _tenantSettingsProvider;
     private readonly ILogger<TokenRequestValidator> _logger;
@@ -34,6 +37,7 @@ public class TokenRequestValidator : ITokenRequestValidator
         IClientAuthenticator clientAuthenticator,
         IScopeValidator scopeValidator,
         IDPoPProofValidator dpopValidator,
+        IClientCertificateExtractor certExtractor,
         IResourceStore resourceStore,
         ITenantSettingsProvider tenantSettingsProvider,
         ILogger<TokenRequestValidator> logger)
@@ -41,6 +45,7 @@ public class TokenRequestValidator : ITokenRequestValidator
         _clientAuthenticator = clientAuthenticator;
         _scopeValidator = scopeValidator;
         _dpopValidator = dpopValidator;
+        _certExtractor = certExtractor;
         _resourceStore = resourceStore;
         _tenantSettingsProvider = tenantSettingsProvider;
         _logger = logger;
@@ -79,6 +84,7 @@ public class TokenRequestValidator : ITokenRequestValidator
             // Basic info
             ClientId = client.ClientId,
             ClientName = client.ClientName,
+            TenantId = client.TenantId,
             Description = client.Description,
             ClientUri = client.ClientUri,
             LogoUri = client.LogoUri,
@@ -144,6 +150,9 @@ public class TokenRequestValidator : ITokenRequestValidator
             // Access restrictions
             AllowedRoles = client.AllowedRoles.Select(r => r.Role).ToList(),
             AllowedUsers = client.AllowedUsers.Select(u => u.SubjectId).ToList(),
+            AllowedResources = client.AllowedResources.ToList(),
+            RequiredPermission = client.RequiredPermission,
+            RequireVerifiedEmail = client.RequireVerifiedEmail,
 
             // Custom properties (includes domain_hint and other settings)
             Properties = client.Properties.ToDictionary(p => p.Key, p => p.Value),
@@ -185,6 +194,14 @@ public class TokenRequestValidator : ITokenRequestValidator
                 $"Grant type '{grantType}' is not allowed for this tenant");
         }
 
+        // OAuth 2.1 enforcement: reject Resource Owner Password Credentials
+        if (protocolSettings.EnforceOAuth21 && grantType == OidcConstants.GrantTypes.Password)
+        {
+            return ValidationResult<TokenRequest>.Failure(
+                OidcConstants.Errors.UnsupportedGrantType,
+                "Resource Owner Password Credentials grant is not allowed when OAuth 2.1 is enforced");
+        }
+
         // Check if grant type is allowed for client
         if (!tokenRequest.Client.AllowedGrantTypes.Contains(grantType))
         {
@@ -216,17 +233,32 @@ public class TokenRequestValidator : ITokenRequestValidator
                 grantValidation.ErrorDescription);
         }
 
+        if (grantType != OidcConstants.GrantTypes.RefreshToken && form.ContainsKey("tenant"))
+        {
+            return ValidationResult<TokenRequest>.Failure(
+                OidcConstants.Errors.InvalidRequest,
+                "tenant is only accepted on the refresh_token grant");
+        }
+
         // 4. Validate scope (if provided)
         var scope = form["scope"].FirstOrDefault();
         if (!string.IsNullOrEmpty(scope))
         {
             tokenRequest.Scope = scope;
-            tokenRequest.RequestedScopes = _scopeValidator.ParseScopes(scope).ToList();
+            tokenRequest.ScopesAsRequested = _scopeValidator.ParseScopes(scope).ToList();
 
-            var scopeValidation = await _scopeValidator.ValidateAsync(
-                tokenRequest.RequestedScopes,
-                tokenRequest.Client.AllowedScopes,
-                cancellationToken);
+            // Scopes the client may not have, that don't exist, or that the tenant doesn't offer are left out
+            // (RFC 6749 §3.3); the token response's scope reports what was granted. Grants that narrow an earlier
+            // grant (refresh, token exchange) check ScopesAsRequested against it, so asking for more than was
+            // granted is still invalid_scope (RFC 6749 §6).
+            var scopeValidation = await _scopeValidator.ValidateAsync(new ScopeValidationContext
+            {
+                RequestedScopes = tokenRequest.ScopesAsRequested,
+                ClientAllowedScopes = tokenRequest.Client.AllowedScopes,
+                ClientId = tokenRequest.Client.ClientId,
+                Endpoint = "token",
+                Strict = ScopeValidationContext.IsStrict(tokenRequest.Client.Properties)
+            }, cancellationToken);
 
             if (!scopeValidation.IsValid)
             {
@@ -234,6 +266,8 @@ public class TokenRequestValidator : ITokenRequestValidator
                     scopeValidation.Error!,
                     scopeValidation.ErrorDescription);
             }
+
+            tokenRequest.RequestedScopes = scopeValidation.ValidScopes.ToList();
         }
 
         // 5. Parse and validate resource parameter (RFC 8707)
@@ -254,8 +288,13 @@ public class TokenRequestValidator : ITokenRequestValidator
         }
 
         // Validate resource parameter based on tenant settings
+        // Code and refresh grants carry the resources named when the grant was made, so a
+        // required resource can come from the grant rather than this request (RFC 8707 §2.2).
+        var resourceFromGrant = grantType is OidcConstants.GrantTypes.AuthorizationCode or OidcConstants.GrantTypes.RefreshToken;
         var resourceValidation = await ValidateResourceParameterAsync(
             tokenRequest.Resource,
+            client.AllowedResources,
+            requireResource: !resourceFromGrant,
             protocolSettings,
             cancellationToken);
         if (!resourceValidation.IsValid)
@@ -288,8 +327,9 @@ public class TokenRequestValidator : ITokenRequestValidator
 
         if (!string.IsNullOrEmpty(dpopHeader))
         {
-            // Build the token endpoint URL
-            var tokenEndpointUrl = $"{request.Scheme}://{request.Host}{request.Path}";
+            // The token endpoint URL as the client addressed it (PathBase included: behind a reverse proxy
+            // that forwards a prefix, the forwarded-headers middleware puts it there).
+            var tokenEndpointUrl = $"{request.Scheme}://{request.Host}{request.PathBase}{request.Path}";
 
             var dpopValidation = await _dpopValidator.ValidateAsync(new DPoPValidationContext
             {
@@ -323,6 +363,15 @@ public class TokenRequestValidator : ITokenRequestValidator
 
             tokenRequest.DPoP = dpopHeader;
             tokenRequest.DPoPKeyThumbprint = dpopValidation.JwkThumbprint;
+        }
+
+        // Bind mTLS certificate thumbprint for certificate-bound access tokens (RFC 8705 §3)
+        if (clientAuth.Method is ClientAuthenticationMethod.TlsClientAuth
+            or ClientAuthenticationMethod.SelfSignedTlsClientAuth)
+        {
+            var cert = _certExtractor.Extract(request.HttpContext);
+            if (cert != null)
+                tokenRequest.MtlsCertificateThumbprint = ClientAuthenticator.ComputeSha256CertThumbprint(cert);
         }
 
         return ValidationResult<TokenRequest>.Success(tokenRequest);
@@ -360,6 +409,7 @@ public class TokenRequestValidator : ITokenRequestValidator
         }
 
         request.RefreshToken = refreshToken;
+        request.Tenant = form["tenant"].FirstOrDefault() is { Length: > 0 } tenant ? tenant : null;
         return ValidationResult.Success();
     }
 
@@ -453,14 +503,17 @@ public class TokenRequestValidator : ITokenRequestValidator
     /// </summary>
     private async Task<ValidationResult> ValidateResourceParameterAsync(
         ICollection<string> resources,
+        IEnumerable<string> clientAllowedResources,
+        bool requireResource,
         TenantProtocolSettings protocolSettings,
         CancellationToken cancellationToken)
     {
         var hasResources = resources != null && resources.Count > 0;
 
         // Check if resource is required
-        if (protocolSettings.ResourceValidationMode == ResourceValidationMode.Strict ||
-            protocolSettings.RequireResourceParameter)
+        if (requireResource &&
+            (protocolSettings.ResourceValidationMode == ResourceValidationMode.Strict ||
+             protocolSettings.RequireResourceParameter))
         {
             if (!hasResources)
             {
@@ -530,6 +583,15 @@ public class TokenRequestValidator : ITokenRequestValidator
                         $"Resource '{resourceUri}' is disabled.");
                 }
             }
+        }
+
+        // RFC 8707 §2: a resource this client may not use is an invalid target.
+        var notAllowed = ResourceIndicators.FirstNotAllowed(clientAllowedResources, resources);
+        if (notAllowed != null)
+        {
+            return ValidationResult.Failure(
+                OidcConstants.Errors.InvalidTarget,
+                $"This client may not request tokens for '{notAllowed}'.");
         }
 
         return ValidationResult.Success();

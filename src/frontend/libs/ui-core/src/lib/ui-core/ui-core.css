@@ -1,0 +1,281 @@
+/* ==========================================================================
+   Shared UI Core Styles
+   Import from app styles.css after Tailwind + theme definitions.
+   ========================================================================== */
+
+/* ==========================================================================
+   Form Elements
+   ========================================================================== */
+
+@layer components {
+  /* Text inputs */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="search"],
+  input[type="date"],
+  input[type="datetime-local"],
+  textarea,
+  select {
+    @apply block w-full rounded-md border-gray-300 text-sm
+           shadow-sm transition-colors
+           placeholder:text-gray-400
+           focus:border-primary-500 focus:ring-1 focus:ring-primary-500;
+  }
+
+  /* Checkbox & Radio */
+  input[type="checkbox"] {
+    @apply h-4 w-4 rounded border-gray-300 text-primary-600
+           focus:ring-2 focus:ring-primary-500 focus:ring-offset-0;
+  }
+
+  input[type="radio"] {
+    @apply h-4 w-4 border-gray-300 text-primary-600
+           focus:ring-2 focus:ring-primary-500 focus:ring-offset-0;
+  }
+
+  /* Color input */
+  input[type="color"] {
+    @apply h-8 w-8 cursor-pointer rounded border border-gray-300 p-0;
+  }
+}
+
+/* ==========================================================================
+   Alerts
+   ========================================================================== */
+
+@layer components {
+  .alert-error {
+    @apply rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700;
+  }
+
+  .alert-info {
+    @apply rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700;
+  }
+
+  .alert-success {
+    @apply rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700;
+  }
+
+  .alert-warning {
+    @apply rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-700;
+  }
+}
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:cursor-not-allowed disabled:opacity-50
+           bg-primary-600 text-white shadow-sm
+           hover:bg-primary-700 focus:ring-primary-500;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:cursor-not-allowed disabled:opacity-50
+           bg-white text-gray-700 border border-gray-300 shadow-sm
+           hover:bg-gray-50 focus:ring-primary-500;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:cursor-not-allowed disabled:opacity-50
+           bg-red-600 text-white shadow-sm
+           hover:bg-red-700 focus:ring-red-500;
+  }
+
+  .btn-warning {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:cursor-not-allowed disabled:opacity-50
+           bg-amber-600 text-white shadow-sm
+           hover:bg-amber-700 focus:ring-amber-500;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-md
+           px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:cursor-not-allowed disabled:opacity-50
+           text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+  .btn-lg {
+    @apply px-4 py-2.5 text-base;
+  }
+}
+
+/* ==========================================================================
+   Cards
+   ========================================================================== */
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-gray-200 bg-white shadow-sm;
+  }
+
+  .card-header {
+    @apply border-b border-gray-200 px-4 py-3;
+  }
+
+  .card-body {
+    @apply px-4 py-4;
+  }
+
+  .card-footer {
+    @apply border-t border-gray-100 bg-gray-50 px-4 py-3;
+  }
+}
+
+/* ==========================================================================
+   Badges
+   ========================================================================== */
+
+@layer components {
+  .badge-gray {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700;
+  }
+
+  .badge-primary {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-primary-50 text-primary-700;
+  }
+
+  .badge-success {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-green-50 text-green-700;
+  }
+
+  .badge-warning {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-yellow-50 text-yellow-700;
+  }
+
+  .badge-danger {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700;
+  }
+
+  .badge-info {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700;
+  }
+}
+
+/* ==========================================================================
+   Tables
+   ========================================================================== */
+
+@layer components {
+  .table {
+    @apply min-w-full divide-y divide-gray-200;
+  }
+
+  .table thead {
+    @apply bg-gray-50;
+  }
+
+  .table th {
+    @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500;
+  }
+
+  .table tbody {
+    @apply divide-y divide-gray-100 bg-white;
+  }
+
+  .table td {
+    @apply px-4 py-3 text-sm text-gray-700;
+  }
+
+  .table tbody tr {
+    @apply transition-colors hover:bg-gray-50;
+  }
+}
+
+/* ==========================================================================
+   Accordions (details/summary)
+   ========================================================================== */
+
+@layer components {
+  details > summary {
+    @apply list-none cursor-pointer select-none;
+  }
+
+  details > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  details > summary::after {
+    content: '';
+    display: inline-block;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M9 5l7 7-7 7'/%3E%3C/svg%3E");
+    transition: transform 0.2s ease;
+  }
+
+  details[open] > summary::after {
+    transform: rotate(90deg);
+  }
+
+  details > summary:hover {
+    @apply text-gray-900;
+  }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+
+@layer utilities {
+  /* Text truncation */
+  .line-clamp-1 { @apply truncate; }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Focus ring for accessibility */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+  }
+
+  /* Smooth scrolling */
+  .scroll-smooth {
+    scroll-behavior: smooth;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

@@ -1,58 +1,80 @@
 @page "/journey/{journeyId}/{handler?}"
+@using Microsoft.Extensions.Hosting
 @using Oluso.Core.UserJourneys
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnv
+@inject Microsoft.AspNetCore.Mvc.ViewEngines.ICompositeViewEngine ViewEngine
 @model Oluso.UI.Pages.Journey.IndexModel
 @{
     Layout = null;
     ViewData["Title"] = Model.Title ?? "Authentication";
     var partialName = !string.IsNullOrEmpty(Model.CurrentStepView) ? Model.CurrentStepView : null;
-    var layoutClass = Model.UiConfig?.Layout?.ToLowerInvariant() switch
+    // Step-level layout (set by the active step handler) wins over the
+    // policy-level setting so a single step can widen the shell without
+    // affecting the rest of the journey.
+    var layoutSource = Model.StepLayout ?? Model.UiConfig?.Layout;
+    var layoutClass = layoutSource?.ToLowerInvariant() switch
     {
         "medium" => "layout-medium",
         "wide" => "layout-wide",
         "full" => "layout-full",
         _ => "layout-narrow"
     };
+    var themeClass = Model.UiConfig?.Theme?.ToLowerInvariant() switch
+    {
+        "light" => "theme-light",
+        "dark" => "theme-dark",
+        "minimal" => "theme-minimal",
+        _ => ""
+    };
+    var progressStyle = Model.Progress?.Style ?? "horizontal";
+    var showProgress = Model.Progress?.ShowProgress == true;
+    var verticalSteps = showProgress && progressStyle == "vertical";
 }
 <!DOCTYPE html>
-<html lang="en">
+<html lang="@Model.ResolvedLocale">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - Oluso</title>
-    <link rel="stylesheet" href="/css/journey.css" />
-    @if (Model.UiConfig != null)
+    <title>@ViewData["Title"] - @Model.Brand.Name</title>
+    <partial name="_TenantFavicon" />
+    <link rel="stylesheet" href="~/_content/Oluso.UI/css/journey.css" asp-append-version="true" />
+    @* Host-app stylesheet: overrides the library default when the deployed app ships its own wwwroot/css/journey.css. Only emitted when the file exists so there's no 404. *@
+    @if (HostEnv.WebRootFileProvider.GetFileInfo("css/journey.css").Exists)
+    {
+        <link rel="stylesheet" href="~/css/journey.css" asp-append-version="true" />
+    }
+    @if (!string.IsNullOrEmpty(Model.Brand.PrimaryColor) || !string.IsNullOrEmpty(Model.Brand.BackgroundColor))
     {
         <style>
             :root {
-                @if (!string.IsNullOrEmpty(Model.UiConfig.PrimaryColor))
+                @if (!string.IsNullOrEmpty(Model.Brand.PrimaryColor))
                 {
-                    @:--primary-color: @Model.UiConfig.PrimaryColor;
-                    @:--primary-hover: color-mix(in srgb, @Model.UiConfig.PrimaryColor 85%, black);
-                    @:--primary-light: color-mix(in srgb, @Model.UiConfig.PrimaryColor 15%, transparent);
-                    @:--primary-glow: color-mix(in srgb, @Model.UiConfig.PrimaryColor 40%, transparent);
+                    @:--primary-color: @Model.Brand.PrimaryColor;
+                    @:--primary-hover: color-mix(in srgb, @Model.Brand.PrimaryColor 85%, black);
+                    @:--primary-light: color-mix(in srgb, @Model.Brand.PrimaryColor 15%, transparent);
+                    @:--primary-glow: color-mix(in srgb, @Model.Brand.PrimaryColor 40%, transparent);
                 }
-                @if (!string.IsNullOrEmpty(Model.UiConfig.BackgroundColor))
+                @if (!string.IsNullOrEmpty(Model.Brand.BackgroundColor))
                 {
-                    @:--background-start: @Model.UiConfig.BackgroundColor;
-                    @:--background-end: color-mix(in srgb, @Model.UiConfig.BackgroundColor 80%, black);
+                    @:--background-start: @Model.Brand.BackgroundColor;
+                    @:--background-end: color-mix(in srgb, @Model.Brand.BackgroundColor 80%, black);
                 }
             }
         </style>
-
-        @if (!string.IsNullOrEmpty(Model.UiConfig.CustomCss))
-        {
-            <style>@Html.Raw(Model.UiConfig.CustomCss)</style>
-        }
+    }
+    @if (!string.IsNullOrEmpty(Model.Brand.CustomCss))
+    {
+        <style>@Html.Raw(Model.Brand.CustomCss)</style>
     }
 </head>
-<body class="journey-page">
+<body class="journey-page @themeClass">
     <div class="journey-wrapper">
-        <div class="journey-container @layoutClass" role="region" aria-label="Authentication">
+        <div class="journey-container @layoutClass @(verticalSteps ? "with-vertical-steps" : "")" role="region" aria-label="Authentication">
             @* Logo or Brand *@
-            @if (!string.IsNullOrEmpty(Model.UiConfig?.LogoUrl))
+            @if (!string.IsNullOrEmpty(Model.Brand.LogoUrl))
             {
                 <div class="journey-logo">
-                    <img src="@Model.UiConfig.LogoUrl" alt="@(Model.Title ?? "Logo")" class="logo" />
+                    <img src="@Model.Brand.LogoUrl" alt="@Model.Brand.Name" class="logo" />
                 </div>
             }
             else
@@ -63,69 +85,116 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
                         </svg>
                     </div>
-                    <span class="journey-brand-text">Oluso</span>
+                    <span class="journey-brand-text">@Model.Brand.Name</span>
                 </div>
             }
 
-            @* Progress Indicator *@
-            @if (Model.Progress?.ShowProgress == true)
-            {
-                <div class="journey-progress" role="progressbar" aria-valuenow="@Model.Progress.CurrentStepIndex" aria-valuemin="0" aria-valuemax="@Model.Progress.TotalSteps">
-                    <div class="journey-progress-bar">
-                        @for (int i = 0; i < Model.Progress.TotalSteps; i++)
+            <div class="journey-body @(verticalSteps ? "has-vertical-steps" : "")">
+                @* Vertical step indicator (beside the card) *@
+                @if (verticalSteps)
+                {
+                    <ol class="journey-steps-vertical" role="list">
+                        @for (int i = 0; i < Model.Progress!.StepNames.Count; i++)
                         {
-                            @if (i > 0)
+                            var state = i < Model.Progress.CurrentStepIndex ? "completed"
+                                : (i == Model.Progress.CurrentStepIndex ? "active" : "");
+                            <li class="journey-step-v @state">
+                                <span class="journey-step-v-marker">@(i + 1)</span>
+                                <span class="journey-step-v-label">@Model.Progress.StepNames[i]</span>
+                            </li>
+                        }
+                    </ol>
+                }
+
+                <div class="journey-card-col">
+                    @* Horizontal step indicator (above the card) *@
+                    @if (showProgress && progressStyle != "vertical")
+                    {
+                        <div class="journey-progress" role="progressbar" aria-valuenow="@Model.Progress!.CurrentStepIndex" aria-valuemin="0" aria-valuemax="@Model.Progress.TotalSteps">
+                            <div class="journey-progress-bar">
+                                @for (int i = 0; i < Model.Progress.TotalSteps; i++)
+                                {
+                                    @if (i > 0)
+                                    {
+                                        <div class="journey-progress-line @(i <= Model.Progress.CurrentStepIndex ? "completed" : "")"></div>
+                                    }
+                                    <div class="journey-progress-dot @(i < Model.Progress.CurrentStepIndex ? "completed" : "") @(i == Model.Progress.CurrentStepIndex ? "active" : "")"></div>
+                                }
+                            </div>
+                            <p class="journey-progress-text">
+                                @Localizer["journey_progress_text", Model.Progress.CurrentStepIndex + 1, Model.Progress.TotalSteps, Model.Progress.CurrentStepName]
+                            </p>
+                        </div>
+                    }
+
+                    @* Error Message *@
+                    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                    {
+                        <div class="alert alert-danger" role="alert">
+                            <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                            </svg>
+                            <span>@Model.ErrorMessage</span>
+                        </div>
+                    }
+
+                    @* Journey Card *@
+                    <div class="journey-card">
+                        @if (!string.IsNullOrEmpty(partialName))
+                        {
+                            @* Resolve the partial without executing it so a misconfigured
+                               step (e.g. a custom_page templatePath that no host template
+                               matches) degrades to a clear message instead of a 500. A
+                               partial that exists but throws while rendering still surfaces
+                               its real error — we only guard the not-found case. *@
+                            var stepView = ViewEngine.GetView(executingFilePath: null, viewPath: partialName, isMainPage: false);
+                            if (!stepView.Success)
                             {
-                                <div class="journey-progress-line @(i <= Model.Progress.CurrentStepIndex ? "completed" : "")"></div>
+                                stepView = ViewEngine.FindView(ViewContext, partialName, isMainPage: false);
                             }
-                            <div class="journey-progress-dot @(i < Model.Progress.CurrentStepIndex ? "completed" : "") @(i == Model.Progress.CurrentStepIndex ? "active" : "")"></div>
+
+                            if (stepView.Success)
+                            {
+                                @await Html.PartialAsync(partialName, Model.StepViewModel)
+                            }
+                            else
+                            {
+                                <div class="alert alert-danger" role="alert">
+                                    <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                                    </svg>
+                                    <span>This step is temporarily unavailable. Please contact support if the problem persists.</span>
+                                </div>
+                                @if (HostEnv.IsDevelopment())
+                                {
+                                    <p class="text-muted mt-2"><small>Journey step view not found: <code>@partialName</code></small></p>
+                                }
+                            }
+                        }
+                        else if (Model.State?.Status == JourneyStatus.InProgress)
+                        {
+                            <div class="loading-card">
+                                <div class="loading-spinner">
+                                    <svg class="spinner" viewBox="0 0 50 50">
+                                        <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
+                                    </svg>
+                                </div>
+                                <p class="loading-text">@Localizer["journey_please_wait"]</p>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="loading-card">
+                                <div class="loading-spinner">
+                                    <svg class="spinner" viewBox="0 0 50 50">
+                                        <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
+                                    </svg>
+                                </div>
+                                <p class="loading-text">@Localizer["journey_loading"]</p>
+                            </div>
                         }
                     </div>
-                    <p class="journey-progress-text">
-                        Step @(Model.Progress.CurrentStepIndex + 1) of @Model.Progress.TotalSteps: @Model.Progress.CurrentStepName
-                    </p>
                 </div>
-            }
-
-            @* Error Message *@
-            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
-            {
-                <div class="alert alert-danger" role="alert">
-                    <svg class="alert-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                    </svg>
-                    <span>@Model.ErrorMessage</span>
-                </div>
-            }
-
-            @* Journey Card *@
-            <div class="journey-card">
-                @if (!string.IsNullOrEmpty(partialName))
-                {
-                    @await Html.PartialAsync(partialName, Model.StepViewModel)
-                }
-                else if (Model.State?.Status == JourneyStatus.InProgress)
-                {
-                    <div class="loading-card">
-                        <div class="loading-spinner">
-                            <svg class="spinner" viewBox="0 0 50 50">
-                                <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
-                            </svg>
-                        </div>
-                        <p class="loading-text">Please wait...</p>
-                    </div>
-                }
-                else
-                {
-                    <div class="loading-card">
-                        <div class="loading-spinner">
-                            <svg class="spinner" viewBox="0 0 50 50">
-                                <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
-                            </svg>
-                        </div>
-                        <p class="loading-text">Loading authentication...</p>
-                    </div>
-                }
             </div>
         </div>
     </div>

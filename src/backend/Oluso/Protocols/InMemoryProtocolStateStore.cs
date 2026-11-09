@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Oluso.Core.Protocols;
 
 namespace Oluso.Protocols;
@@ -14,7 +15,7 @@ public class InMemoryProtocolStateStore : IProtocolStateStore
 {
     private readonly IDistributedCache _cache;
     private readonly ILogger<InMemoryProtocolStateStore> _logger;
-    private readonly TimeSpan _defaultExpiration = TimeSpan.FromMinutes(10);
+    private readonly TimeSpan _defaultExpiration;
 
     private const string CacheKeyPrefix = "oluso:protocol:state:";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -25,9 +26,11 @@ public class InMemoryProtocolStateStore : IProtocolStateStore
 
     public InMemoryProtocolStateStore(
         IDistributedCache cache,
+        IOptions<OidcEndpointConfiguration> endpoints,
         ILogger<InMemoryProtocolStateStore> logger)
     {
         _cache = cache;
+        _defaultExpiration = endpoints.Value.StateExpiration;
         _logger = logger;
     }
 

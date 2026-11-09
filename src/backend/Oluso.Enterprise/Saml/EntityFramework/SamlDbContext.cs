@@ -20,6 +20,8 @@ public class SamlDbContext : PluginDbContextBase<SamlDbContext>
     /// <inheritdoc />
     protected override string PluginName => PluginIdentifier;
 
+    protected override string? TablePrefix => "";
+
     /// <inheritdoc />
     /// <remarks>
     /// SAML context has order 70 (after SCIM=50, LDAP=60, before others at 100)
@@ -45,9 +47,8 @@ public class SamlDbContext : PluginDbContextBase<SamlDbContext>
 
     public DbSet<SamlServiceProvider> SamlServiceProviders => Set<SamlServiceProvider>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
         modelBuilder.ApplySamlConfiguration();
     }
 }

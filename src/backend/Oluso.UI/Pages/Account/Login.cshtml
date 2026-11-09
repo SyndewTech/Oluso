@@ -3,7 +3,7 @@
 @using Oluso.UI.ViewModels
 @model Oluso.UI.Pages.Account.LoginModel
 @{
-    ViewData["Title"] = "Sign In";
+    ViewData["Title"] = Localizer["composite_login_title"].Value;
 }
 
 @section Styles {
@@ -34,8 +34,12 @@
     }
 
     <div class="auth-card">
-        <h1 class="auth-title">Sign In</h1>
-        <p class="auth-subtitle">Enter your credentials to continue</p>
+        <h1 class="auth-title">@Localizer["composite_login_title"]</h1>
+
+        @if (Model.EnableLocalLogin)
+        {
+            <p class="auth-subtitle">@Localizer["composite_login_subtitle"]</p>
+        }
 
         @if (!string.IsNullOrEmpty(Model.ErrorMessage))
         {
@@ -47,56 +51,108 @@
             </div>
         }
 
-        <form method="post" id="loginForm" novalidate>
-            <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+        @{
+            var hasExternalMethods = (Model.ExternalProviders?.Any() == true)
+                || (Model.DirectLoginProviders?.Any() == true)
+                || Model.PasswordlessProviders.Any()
+                || !string.IsNullOrEmpty(Model.OrgSignInUrl);
+        }
 
-            <div class="form-group">
-                <label for="username">Username or Email</label>
-                <input type="text"
-                       id="username"
-                       name="Input.Username"
-                       class="form-control @(Model.ValidationErrors.ContainsKey("username") ? "is-invalid" : "")"
-                       value="@Model.Input.Username"
-                       autofocus
-                       autocomplete="username"
-                       required />
-                @if (Model.ValidationErrors.TryGetValue("username", out var usernameError))
-                {
-                    <div class="invalid-feedback">@usernameError</div>
-                }
+        @if (!Model.EnableLocalLogin && !hasExternalMethods)
+        {
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Localizer["login_no_auth_methods"]</span>
             </div>
+        }
 
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password"
-                       id="password"
-                       name="Input.Password"
-                       class="form-control @(Model.ValidationErrors.ContainsKey("password") ? "is-invalid" : "")"
-                       autocomplete="current-password"
-                       required />
-                @if (Model.ValidationErrors.TryGetValue("password", out var passwordError))
-                {
-                    <div class="invalid-feedback">@passwordError</div>
-                }
-            </div>
+        @if (Model.AvailableOrganizations is { Count: > 1 })
+        {
+            <h1 class="auth-title">@Localizer["login_choose_organization_title"]</h1>
+            <p class="auth-subtitle">@Localizer["login_choose_organization_subtitle"]</p>
 
-            <div class="form-check">
-                <input type="checkbox"
-                       id="rememberMe"
-                       name="Input.RememberMe"
-                       class="form-check-input"
-                       value="true"
-                       @(Model.Input.RememberMe ? "checked" : "") />
-                <label class="form-check-label" for="rememberMe">Remember me</label>
-            </div>
+            <form method="post" id="organizationForm" novalidate>
+                <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+                <input type="hidden" name="Input.Username" value="@Model.Input.Username" />
 
-            <button type="submit" class="btn btn-primary btn-block">Sign In</button>
-        </form>
+                <div class="org-choices">
+                    @foreach (var org in Model.AvailableOrganizations)
+                    {
+                        <button type="submit"
+                                name="Input.OrganizationSlug"
+                                value="@org.Slug"
+                                class="btn btn-outline btn-block org-choice">
+                            <span class="org-choice-name">@org.Name</span>
+                            <span class="org-choice-slug">@org.Slug</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="auth-links">
+                    <a href="/account/login?ReturnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "/")">
+                        @Localizer["login_choose_organization_back"]
+                    </a>
+                </div>
+            </form>
+        }
+        else if (Model.EnableLocalLogin)
+        {
+            <form method="post" id="loginForm" novalidate>
+                <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl" />
+
+                <div class="form-group">
+                    <label for="username">@Localizer["composite_login_username_label"]</label>
+                    <input type="text"
+                           id="username"
+                           name="Input.Username"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("username") ? "is-invalid" : "")"
+                           value="@Model.Input.Username"
+                           autofocus
+                           autocomplete="username"
+                           required />
+                    @if (Model.ValidationErrors.TryGetValue("username", out var usernameError))
+                    {
+                        <div class="invalid-feedback">@usernameError</div>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <label for="password">@Localizer["composite_login_password_label"]</label>
+                    <input type="password"
+                           id="password"
+                           name="Input.Password"
+                           class="form-control @(Model.ValidationErrors.ContainsKey("password") ? "is-invalid" : "")"
+                           autocomplete="current-password"
+                           required />
+                    @if (Model.ValidationErrors.TryGetValue("password", out var passwordError))
+                    {
+                        <div class="invalid-feedback">@passwordError</div>
+                    }
+                </div>
+
+                <div class="form-check">
+                    <input type="checkbox"
+                           id="rememberMe"
+                           name="Input.RememberMe"
+                           class="form-check-input"
+                           value="true"
+                           @(Model.Input.RememberMe ? "checked" : "") />
+                    <label class="form-check-label" for="rememberMe">@Localizer["composite_login_remember_me"]</label>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">@Localizer["composite_login_button"]</button>
+            </form>
+        }
 
         @if (Model.PasswordlessProviders.Any())
         {
             <div class="passwordless-section">
-                <div class="divider"><span>or</span></div>
+                @if (Model.EnableLocalLogin)
+                {
+                    <div class="divider"><span>@Localizer["composite_login_divider_or"]</span></div>
+                }
                 @foreach (var provider in Model.PasswordlessProviders)
                 {
                     <a href="@provider.LoginUrl?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "/")" class="btn btn-outline btn-block btn-passwordless">
@@ -117,7 +173,7 @@
         @if (Model.DirectLoginProviders?.Any() == true)
         {
             <div class="divider">
-                <span>or sign in with</span>
+                <span>@(Model.EnableLocalLogin ? Localizer["login_or_sign_in_with"].Value : Localizer["login_sign_in_with"].Value)</span>
             </div>
 
             <div class="direct-providers">
@@ -145,21 +201,25 @@
         @if (Model.ExternalProviders?.Any() == true)
         {
             <div class="divider">
-                <span>or continue with</span>
+                <span>@(Model.EnableLocalLogin ? Localizer["login_or_continue_with"].Value : Localizer["login_continue_with"].Value)</span>
             </div>
 
             <div class="external-providers">
                 @foreach (var provider in Model.ExternalProviders)
                 {
+                    var ptype = Oluso.UI.ViewModels.ProviderCss.TypeToken(provider.ProviderType);
+                    var sslug = Oluso.UI.ViewModels.ProviderCss.SchemeSlug(provider.AuthenticationScheme);
                     <form method="post" asp-page-handler="ExternalLogin" class="external-form">
                         <input type="hidden" name="provider" value="@provider.AuthenticationScheme" />
                         <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
                         <input type="hidden" name="providerType" value="@provider.ProviderType" />
-                        <button type="submit" class="btn btn-outline btn-block btn-external">
-                            @if (!string.IsNullOrEmpty(provider.IconUrl))
+                        <button type="submit" class="btn btn-outline btn-block btn-external provider-@ptype provider-scheme-@sslug" data-provider="@ptype" data-scheme="@provider.AuthenticationScheme">
+                            @await Html.PartialAsync("Journey/_ProviderIcon", new Oluso.UI.ViewModels.ProviderIconModel
                             {
-                                <img src="@provider.IconUrl" alt="" class="provider-icon" />
-                            }
+                                ProviderType = provider.ProviderType,
+                                IconUrl = provider.IconUrl,
+                                DisplayName = provider.DisplayName
+                            })
                             @provider.DisplayName
                         </button>
                     </form>
@@ -167,323 +227,47 @@
             </div>
         }
 
-        <div class="auth-links">
-            <a href="/account/forgot-password?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Forgot your password?</a>
-        </div>
+        @if (!string.IsNullOrEmpty(Model.OrgSignInUrl) && Model.AvailableOrganizations is not { Count: > 1 })
+        {
+            @await Html.PartialAsync("_OrgSignInLink", Model.OrgSignInUrl)
+        }
 
-        @if (Model.EnableLocalRegistration)
+        @if (Model.EnableLocalLogin)
+        {
+            <div class="auth-links">
+                <a href="/account/forgot-password?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">@Localizer["composite_login_forgot_password"]</a>
+            </div>
+        }
+
+        @if (Model.EnableLocalRegistration && Model.EnableLocalLogin)
         {
             <hr class="auth-divider" />
             <p class="text-center">
-                Don't have an account? <a href="/account/register?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">Sign up</a>
+                @Localizer["local_login_signup_prefix"] <a href="/account/register?returnUrl=@Uri.EscapeDataString(Model.ReturnUrl ?? "")">@Localizer["local_login_signup_link"]</a>
             </p>
+        }
+
+        @* Tenant legal links — only when the org has set them (no platform fallback). *@
+        @if (!string.IsNullOrEmpty(Model.TermsUrl) || !string.IsNullOrEmpty(Model.PrivacyUrl))
+        {
+            <div class="auth-legal">
+                @if (!string.IsNullOrEmpty(Model.TermsUrl))
+                {
+                    <a href="@Model.TermsUrl" target="_blank" rel="noopener">@Localizer["signup_terms_link"]</a>
+                }
+                @if (!string.IsNullOrEmpty(Model.TermsUrl) && !string.IsNullOrEmpty(Model.PrivacyUrl))
+                {
+                    <span class="auth-legal-sep">@Localizer["terms_acceptance_review_and"]</span>
+                }
+                @if (!string.IsNullOrEmpty(Model.PrivacyUrl))
+                {
+                    <a href="@Model.PrivacyUrl" target="_blank" rel="noopener">@Localizer["signup_privacy_link"]</a>
+                }
+            </div>
         }
     </div>
 </div>
 
-<style>
-/* Oluṣọ Brand Colors */
-:root {
-    --oluso-primary: #f97316;
-    --oluso-primary-hover: #ea580c;
-    --oluso-primary-dark: #c2410c;
-    --oluso-primary-light: rgba(249, 115, 22, 0.1);
-    --oluso-accent: #14b8a6;
-}
-
-.auth-container {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    background: linear-gradient(135deg, var(--background-start, #0f172a) 0%, var(--background-end, #1e293b) 100%);
-}
-
-.auth-container::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-image:
-        radial-gradient(circle at 20% 30%, rgba(249, 115, 22, 0.12) 0%, transparent 45%),
-        radial-gradient(circle at 80% 70%, rgba(20, 184, 166, 0.06) 0%, transparent 45%);
-    pointer-events: none;
-    z-index: 0;
-}
-
-.auth-logo {
-    margin-bottom: 2rem;
-    position: relative;
-    z-index: 1;
-}
-
-.auth-logo img {
-    max-height: 60px;
-    width: auto;
-}
-
-.auth-card {
-    background: rgba(255, 255, 255, 0.98);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 16px;
-    padding: 2.5rem;
-    width: 100%;
-    max-width: 420px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    position: relative;
-    z-index: 1;
-    animation: cardSlideUp 0.5s ease-out;
-}
-
-@@keyframes cardSlideUp {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.auth-title {
-    font-size: 1.75rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: #1a1a2e;
-}
-
-.auth-subtitle {
-    color: #6c757d;
-    margin-bottom: 1.5rem;
-}
-
-.form-group {
-    margin-bottom: 1.25rem;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: #374151;
-}
-
-.form-control {
-    display: block;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    font-size: 1rem;
-    line-height: 1.5;
-    color: #1a1a2e;
-    background-color: #f9fafb;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: var(--primary-color, var(--oluso-primary));
-    box-shadow: 0 0 0 3px var(--primary-light, var(--oluso-primary-light));
-}
-
-.form-control.is-invalid {
-    border-color: #dc3545;
-}
-
-.invalid-feedback {
-    color: #dc3545;
-    font-size: 0.875rem;
-    margin-top: 0.25rem;
-}
-
-.form-check {
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.form-check-input {
-    width: 1.125rem;
-    height: 1.125rem;
-    accent-color: var(--primary-color, var(--oluso-primary));
-}
-
-.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 500;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.15s ease-in-out;
-    border: none;
-}
-
-.btn-block {
-    display: flex;
-    width: 100%;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--primary-color, var(--oluso-primary)) 0%, var(--oluso-primary-dark) 100%);
-    color: white;
-    box-shadow: 0 4px 14px rgba(249, 115, 22, 0.3);
-}
-
-.btn-primary:hover {
-    background: linear-gradient(135deg, var(--primary-hover, var(--oluso-primary-hover)) 0%, var(--oluso-primary-dark) 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
-}
-
-.btn-outline {
-    background: white;
-    border: 1px solid #d1d5db;
-    color: #374151;
-}
-
-.btn-outline:hover {
-    background: #f9fafb;
-    border-color: #9ca3af;
-}
-
-.auth-links {
-    text-align: center;
-    margin-top: 1rem;
-}
-
-.auth-links a {
-    color: var(--primary-color, var(--oluso-primary));
-    text-decoration: none;
-}
-
-.auth-links a:hover {
-    text-decoration: underline;
-}
-
-.auth-divider {
-    margin: 1.5rem 0;
-    border: none;
-    border-top: 1px solid #e5e7eb;
-}
-
-.text-center {
-    text-align: center;
-}
-
-.divider {
-    display: flex;
-    align-items: center;
-    text-align: center;
-    margin: 1.5rem 0;
-}
-
-.divider::before,
-.divider::after {
-    content: '';
-    flex: 1;
-    border-bottom: 1px solid #e5e7eb;
-}
-
-.divider span {
-    padding: 0 1rem;
-    color: #6c757d;
-    font-size: 0.875rem;
-}
-
-.direct-providers {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.btn-direct {
-    gap: 0.5rem;
-    text-decoration: none;
-}
-
-.btn-direct:hover {
-    text-decoration: none;
-}
-
-.provider-icon-svg {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-}
-
-.external-providers {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.external-form {
-    margin: 0;
-}
-
-.btn-external {
-    gap: 0.5rem;
-}
-
-.provider-icon {
-    width: 20px;
-    height: 20px;
-}
-
-.alert {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-bottom: 1.5rem;
-}
-
-.alert-danger {
-    background-color: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #991b1b;
-}
-
-.alert-icon {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-}
-
-.passwordless-section {
-    margin-top: 0.5rem;
-}
-
-.btn-passwordless {
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-}
-
-.btn-passwordless svg {
-    flex-shrink: 0;
-}
-
-.passwordless-hint {
-    text-align: center;
-    color: #6c757d;
-    font-size: 0.875rem;
-    margin-top: 0;
-    margin-bottom: 0.5rem;
-}
-</style>
 
 @section Scripts {
     <script>
@@ -499,7 +283,7 @@
                     var submitBtn = form.querySelector('button[type="submit"]');
                     if (submitBtn) {
                         submitBtn.disabled = true;
-                        submitBtn.innerHTML = '<span class="spinner"></span> Signing in...';
+                        submitBtn.innerHTML = '<span class="spinner"></span> @Localizer["login_signing_in"].Value';
                     }
                 });
             }

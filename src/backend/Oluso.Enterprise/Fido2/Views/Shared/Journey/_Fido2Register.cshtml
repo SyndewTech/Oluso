@@ -2,13 +2,24 @@
 @using Oluso.Enterprise.Fido2.Services
 @model Fido2RegisterViewModel
 
-<div class="fido2-register-card">
-    <h1 class="title">Register a Passkey</h1>
-    <p class="subtitle">Add a passkey for quick and secure sign-in</p>
+<div class="fido2-register-card"
+     id="fido2RegisterContainer"
+     data-msg-not-supported="@Localizer["fido2_reg_not_supported"]"
+     data-msg-not-available="@Localizer["fido2_register_not_available"]"
+     data-msg-getting-options="@Localizer["fido2_register_getting_options"]"
+     data-msg-waiting="@Localizer["fido2_register_waiting"]"
+     data-msg-registering="@Localizer["fido2_register_registering"]"
+     data-msg-err-default="@Localizer["fido2_register_err_default"]"
+     data-msg-err-cancelled="@Localizer["fido2_register_err_cancelled"]"
+     data-msg-err-already-registered="@Localizer["fido2_register_err_already_registered"]"
+     data-msg-err-security="@Localizer["fido2_register_err_security"]"
+     data-msg-err-options-failed="@Localizer["fido2_register_err_options_failed"]">
+    <h1 class="title">@Localizer["fido2_register_title"]</h1>
+    <p class="subtitle">@Localizer["fido2_register_subtitle"]</p>
 
     <div class="info-box">
-        <h4>What is a passkey?</h4>
-        <p>Passkeys are a more secure replacement for passwords. They use your device's biometrics (fingerprint or face) or a security key to verify your identity.</p>
+        <h4>@Localizer["fido2_register_what_is"]</h4>
+        <p>@Localizer["fido2_register_what_is_description"]</p>
     </div>
 
     <div class="authenticator-options">
@@ -19,8 +30,8 @@
                 </svg>
             </div>
             <div class="option-text">
-                <strong>This Device</strong>
-                <span>Use Touch ID, Face ID, or Windows Hello</span>
+                <strong>@Localizer["fido2_register_this_device"]</strong>
+                <span>@Localizer["fido2_register_this_device_hint"]</span>
             </div>
         </button>
 
@@ -31,8 +42,8 @@
                 </svg>
             </div>
             <div class="option-text">
-                <strong>Security Key</strong>
-                <span>Use a USB or NFC security key</span>
+                <strong>@Localizer["fido2_register_security_key"]</strong>
+                <span>@Localizer["fido2_register_security_key_hint"]</span>
             </div>
         </button>
     </div>
@@ -41,33 +52,35 @@
         <div class="status-icon">
             <div class="spinner-border" role="status"></div>
         </div>
-        <p id="statusMessage">Waiting for authenticator...</p>
+        <p id="statusMessage">@Localizer["fido2_register_waiting"]</p>
     </div>
 
     <div id="registrationSuccess" class="alert alert-success" style="display: none;">
-        <strong>Success!</strong> Your passkey has been registered.
+        <strong>@Localizer["fido2_register_success_label"]</strong> @Localizer["fido2_register_success"]
     </div>
 
     <div id="registrationError" class="alert alert-danger" style="display: none;"></div>
 
     <form id="displayNameForm" style="display: none;">
         <div class="form-group">
-            <label for="displayName">Name this passkey (optional)</label>
+            <label for="displayName">@Localizer["fido2_register_name_label"]</label>
             <input type="text"
                    id="displayName"
                    class="form-control"
-                   placeholder="e.g., MacBook Pro, YubiKey 5"
+                   placeholder="@Localizer["fido2_register_name_placeholder"]"
                    maxlength="50" />
         </div>
-        <button type="submit" class="btn btn-primary btn-block">Save</button>
+        <button type="submit" class="btn btn-primary btn-block">@Localizer["fido2_register_save"]</button>
     </form>
 </div>
 
 <script>
 (function() {
+    var container = document.getElementById('fido2RegisterContainer');
+
     if (!window.PublicKeyCredential) {
         document.querySelector('.authenticator-options').innerHTML =
-            '<div class="alert alert-warning">Passkeys are not supported on this browser.</div>';
+            '<div class="alert alert-warning">' + container.dataset.msgNotSupported + '</div>';
         return;
     }
 
@@ -76,7 +89,7 @@
         if (!available) {
             document.getElementById('platformAuth').classList.add('disabled');
             document.getElementById('platformAuth').querySelector('span').textContent =
-                'Not available on this device';
+                container.dataset.msgNotAvailable;
         }
     });
 
@@ -102,7 +115,7 @@
             errorEl.style.display = 'none';
 
             // Get registration options from server
-            statusMsg.textContent = 'Getting registration options...';
+            statusMsg.textContent = container.dataset.msgGettingOptions;
             const optionsResponse = await fetch('/api/fido2/register/options', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -112,7 +125,7 @@
             });
 
             if (!optionsResponse.ok) {
-                throw new Error('Failed to get registration options');
+                throw new Error(container.dataset.msgErrOptionsFailed);
             }
 
             const options = await optionsResponse.json();
@@ -164,13 +177,13 @@
             }
 
             // Call WebAuthn API
-            statusMsg.textContent = 'Waiting for authenticator...';
+            statusMsg.textContent = container.dataset.msgWaiting;
             const credential = await navigator.credentials.create({
                 publicKey: publicKeyOptions
             });
 
             // Prepare response
-            statusMsg.textContent = 'Registering credential...';
+            statusMsg.textContent = container.dataset.msgRegistering;
             const response = {
                 id: credential.id,
                 rawId: arrayBufferToBase64Url(credential.rawId),
@@ -195,7 +208,7 @@
 
             if (!completeResponse.ok) {
                 const error = await completeResponse.json();
-                throw new Error(error.error || 'Registration failed');
+                throw new Error(error.error || container.dataset.msgErrDefault);
             }
 
             // Success!
@@ -212,15 +225,15 @@
             statusEl.style.display = 'none';
             optionsEl.style.display = 'block';
 
-            let message = 'Registration failed';
+            let message = container.dataset.msgErrDefault;
             if (error.name === 'NotAllowedError') {
-                message = 'Registration was cancelled or not allowed.';
+                message = container.dataset.msgErrCancelled;
             } else if (error.name === 'InvalidStateError') {
-                message = 'This authenticator is already registered.';
+                message = container.dataset.msgErrAlreadyRegistered;
             } else if (error.name === 'SecurityError') {
-                message = 'Security error. Make sure you are on a secure connection.';
+                message = container.dataset.msgErrSecurity;
             } else {
-                message = error.message || 'Registration failed';
+                message = error.message || container.dataset.msgErrDefault;
             }
 
             errorEl.textContent = message;

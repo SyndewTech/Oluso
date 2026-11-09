@@ -21,14 +21,17 @@ public class ConsentModel : PageModel
     private readonly IClientStore _clientStore;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<ConsentModel> _logger;
+    private readonly Oluso.Protocols.IConsentDecisions _consentDecisions;
 
     public ConsentModel(
         IProtocolStateStore protocolStateStore,
         IConsentStore consentStore,
         IClientStore clientStore,
         ITenantContext tenantContext,
-        ILogger<ConsentModel> logger)
+        ILogger<ConsentModel> logger,
+        Oluso.Protocols.IConsentDecisions consentDecisions)
     {
+        _consentDecisions = consentDecisions;
         _protocolStateStore = protocolStateStore;
         _consentStore = consentStore;
         _clientStore = clientStore;
@@ -45,6 +48,8 @@ public class ConsentModel : PageModel
     public string? ErrorMessage { get; set; }
     public string? ClientName { get; set; }
     public string? ClientLogoUrl { get; set; }
+    public string? ClientPolicyUrl { get; set; }
+    public string? ClientTosUrl { get; set; }
     public string? UserEmail { get; set; }
     public IList<ScopeViewModel>? RequestedScopes { get; set; }
     public bool ShowRememberConsent { get; set; } = true;
@@ -69,6 +74,15 @@ public class ConsentModel : PageModel
         // Load client info
         ClientName = state.Properties.TryGetValue("ClientName", out var name) ? name : state.ClientId;
         ClientLogoUrl = state.Properties.TryGetValue("ClientLogoUrl", out var logo) ? logo : null;
+
+        // The registered client's own name, logo and links (RFC 7591 metadata), https only.
+        if (!string.IsNullOrEmpty(state.ClientId) && await _clientStore.FindClientByIdAsync(state.ClientId) is { } client)
+        {
+            if (!string.IsNullOrWhiteSpace(client.ClientName)) ClientName = client.ClientName;
+            ClientLogoUrl ??= Https(client.LogoUri);
+            ClientPolicyUrl = Https(client.Properties?.FirstOrDefault(p => p.Key == "policy_uri")?.Value);
+            ClientTosUrl = Https(client.Properties?.FirstOrDefault(p => p.Key == "tos_uri")?.Value);
+        }
 
         // Get user info
         UserEmail = User.FindFirst("email")?.Value ?? User.Identity?.Name;
@@ -100,7 +114,7 @@ public class ConsentModel : PageModel
             _logger.LogInformation("User denied consent for client {ClientId}", state.ClientId);
 
             // Redirect back to protocol with error
-            if (!string.IsNullOrEmpty(ReturnUrl))
+            if (!string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl))
             {
                 var separator = ReturnUrl.Contains("?") ? "&" : "?";
                 return Redirect($"{ReturnUrl}{separator}error=access_denied&error_description=User+denied+consent");
@@ -144,16 +158,24 @@ public class ConsentModel : PageModel
                 userId, state.ClientId, expiresAt?.ToString("o") ?? "never");
         }
 
-        // Redirect back to protocol callback
-        if (!string.IsNullOrEmpty(ReturnUrl))
+        // Back to /authorize with this answer, which covers this request whether or not
+        // it was remembered (and satisfies prompt=consent).
+        if (!string.IsNullOrEmpty(ReturnUrl) && Url.IsLocalUrl(ReturnUrl))
         {
-            var separator = ReturnUrl.Contains("?") ? "&" : "?";
-            var scopeParam = Uri.EscapeDataString(string.Join(" ", grantedScopes));
-            return Redirect($"{ReturnUrl}{separator}consented_scopes={scopeParam}");
+            if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(state.ClientId))
+            {
+                return RedirectToPage("/Error", new { message = "Your sign-in session has expired. Please try again." });
+            }
+            var decisionId = await _consentDecisions.RecordAsync(userId, state.ClientId, grantedScopes);
+            var separator = ReturnUrl.Contains('?') ? "&" : "?";
+            return Redirect($"{ReturnUrl}{separator}{Oluso.Protocols.ConsentDecisions.DecisionParameter}={Uri.EscapeDataString(decisionId)}");
         }
 
         return RedirectToPage("/Index");
     }
+
+    private static string? Https(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? value : null;
 
     private IList<ScopeViewModel> ParseScopes(string scopesRaw)
     {

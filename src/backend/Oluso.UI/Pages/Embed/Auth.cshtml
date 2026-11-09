@@ -1,0 +1,177 @@
+@page "/embed/auth"
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnv
+@model Oluso.UI.Pages.Embed.AuthModel
+@{
+    Layout = null;
+    var partialName = Model.CurrentStepView != null
+        ? $"~/Views/Shared/Journey/{Model.CurrentStepView}.cshtml"
+        : null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Authentication</title>
+    <partial name="_TenantFavicon" />
+    <link rel="stylesheet" href="~/_content/Oluso.UI/css/journey.css" asp-append-version="true" />
+    @* Host-app stylesheet: overrides the library default when the deployed app ships its own wwwroot/css/journey.css. Only emitted when the file exists so there's no 404. *@
+    @if (HostEnv.WebRootFileProvider.GetFileInfo("css/journey.css").Exists)
+    {
+        <link rel="stylesheet" href="~/css/journey.css" asp-append-version="true" />
+    }
+    <style>
+        /* Embed-specific overrides */
+        body {
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            min-height: auto;
+        }
+        .journey-wrapper {
+            min-height: auto;
+            padding: 0;
+            align-items: flex-start;
+        }
+        .journey-container {
+            max-width: 100%;
+            width: 100%;
+            padding: 0;
+        }
+        .journey-card {
+            border-radius: 0;
+            box-shadow: none;
+            backdrop-filter: none;
+            border: none;
+            padding: 24px;
+            background: var(--card-bg, #ffffff);
+        }
+.embed-error {
+            padding: 24px;
+            text-align: center;
+            color: var(--error-color, #dc2626);
+        }
+
+        @if (Model.UiConfig != null && !string.IsNullOrEmpty(Model.UiConfig.PrimaryColor))
+        {
+            <text>
+            :root {
+                --primary-color: @Model.UiConfig.PrimaryColor;
+            }
+            </text>
+        }
+    </style>
+</head>
+<body class="journey-page embed-mode">
+    @if (Model.IsCompleted)
+    {
+        <div class="journey-card" style="text-align:center; padding: 32px;">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color, #16a34a)" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <p style="margin-top: 12px; color: var(--text-primary);">@Localizer["embed_authenticated"]</p>
+        </div>
+
+        <script>
+            (function() {
+                var origin = @Html.Raw(Json.Serialize(Model.ParentOrigin));
+                var code = @Html.Raw(Json.Serialize(Model.AuthorizationCode));
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'oluso:auth:code',
+                        code: code
+                    }, origin);
+                }
+            })();
+        </script>
+    }
+    else if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <div class="embed-error">
+            <p>@Model.ErrorMessage</p>
+        </div>
+
+        <script>
+            (function() {
+                var origin = @Html.Raw(Json.Serialize(Model.ParentOrigin ?? "*"));
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'oluso:auth:error',
+                        error: @Html.Raw(Json.Serialize(Model.ErrorMessage))
+                    }, origin);
+                }
+            })();
+        </script>
+    }
+    else if (partialName != null)
+    {
+        <div class="journey-wrapper">
+            <div class="journey-container layout-narrow">
+                <div class="journey-card">
+                    <form method="post">
+                        @await Html.PartialAsync(partialName, Model.StepViewModel)
+                    </form>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="journey-card" style="text-align: center; padding: 32px;">
+            <div class="loading-spinner">
+                <svg viewBox="0 0 50 50" width="24" height="24">
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="var(--primary-color)" stroke-width="4" stroke-dasharray="90,150" stroke-linecap="round">
+                        <animateTransform attributeName="transform" type="rotate" values="0 25 25;360 25 25" dur="1s" repeatCount="indefinite"/>
+                    </circle>
+                </svg>
+            </div>
+            <p style="margin-top: 8px; color: var(--text-muted);">@Localizer["embed_loading"]</p>
+        </div>
+    }
+
+    <script>
+        // Auto-focus first input
+        document.addEventListener('DOMContentLoaded', function() {
+            var input = document.querySelector('input:not([type=hidden]):not([type=submit])');
+            if (input) input.focus();
+
+            var origin = @Html.Raw(Json.Serialize(Model.ParentOrigin ?? "*"));
+
+            // Notify parent of branding preference
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'oluso:auth:ready',
+                    hideBranding: @(Model.HideEmbedBranding ? "true" : "false")
+                }, origin);
+            }
+
+            // Notify parent of height changes for dynamic iframe resizing
+            function reportHeight() {
+                var height = document.body.scrollHeight;
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'oluso:auth:resize',
+                        height: height
+                    }, origin);
+                }
+            }
+            reportHeight();
+            new MutationObserver(reportHeight).observe(document.body, { childList: true, subtree: true });
+
+            // Loading state for submit buttons
+            var forms = document.querySelectorAll('form');
+            forms.forEach(function(form) {
+                form.addEventListener('submit', function() {
+                    var btn = form.querySelector('button[type=submit], input[type=submit]');
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.dataset.originalText = btn.textContent;
+                        btn.textContent = '@Localizer["embed_please_wait"].Value';
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

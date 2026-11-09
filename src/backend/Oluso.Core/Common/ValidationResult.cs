@@ -45,7 +45,7 @@ public class ValidationResult<T> : ValidationResult
         ErrorDescription = description
     };
 
-    public static ValidationResult<T> Failure(string error, string? description, IDictionary<string, string> headers) => new()
+    public new static ValidationResult<T> Failure(string error, string? description, IDictionary<string, string> headers) => new()
     {
         Error = error,
         ErrorDescription = description,

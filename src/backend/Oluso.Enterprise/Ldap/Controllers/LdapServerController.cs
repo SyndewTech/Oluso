@@ -1,3 +1,4 @@
+using Oluso.Core.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -47,6 +48,7 @@ public class LdapServerController : AdminBaseController
     /// Get LDAP Server info including connection details and status.
     /// </summary>
     [HttpGet("server-info")]
+    [RequirePermission("ldap.read")]
     public async Task<ActionResult<LdapServerInfoResponse>> GetServerInfo(CancellationToken cancellationToken)
     {
         var globalOptions = _options.Value;
@@ -82,7 +84,7 @@ public class LdapServerController : AdminBaseController
             AllowAnonymousBind = tenantSettings.AllowAnonymousBind || globalOptions.AllowAnonymousBind,
             MaxSearchResults = tenantSettings.MaxSearchResults ?? globalOptions.MaxSearchResults,
             TenantIsolation = globalOptions.TenantIsolation,
-            AdminDn = tenantSettings.AdminDn ?? globalOptions.AdminDn ?? $"cn=admin,{effectiveBaseDn}"
+            AdminDn = tenantSettings.AdminDn ?? $"cn=admin,{effectiveBaseDn}"
         });
     }
 
@@ -90,6 +92,7 @@ public class LdapServerController : AdminBaseController
     /// Get LDAP Server settings for the current tenant.
     /// </summary>
     [HttpGet("settings")]
+    [RequirePermission("ldap.read")]
     public async Task<ActionResult<TenantLdapSettings>> GetSettings(CancellationToken cancellationToken)
     {
         var settings = await _ldapSettings.GetSettingsAsync(cancellationToken);
@@ -101,8 +104,9 @@ public class LdapServerController : AdminBaseController
     /// Settings are stored in the tenant's Configuration JSON.
     /// </summary>
     [HttpPut("settings")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult<TenantLdapSettings>> UpdateSettings(
-        [FromBody] UpdateLdapServerSettingsRequest request,
+        [FromBody] TenantLdapSettings request,
         CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -110,27 +114,35 @@ public class LdapServerController : AdminBaseController
             return BadRequest(new { error = "Tenant context required to update settings" });
         }
 
-        var settings = new TenantLdapSettings
-        {
-            Enabled = request.Enabled,
-            BaseDn = request.BaseDn,
-            Organization = request.Organization,
-            AllowAnonymousBind = request.AllowAnonymousBind,
-            MaxSearchResults = request.MaxSearchResults,
-            AdminDn = request.AdminDn
-        };
+        // Get existing settings to preserve password hash and certificate if not changing
+        var existingSettings = await _ldapSettings.GetSettingsAsync(TenantId, cancellationToken);
 
-        await _ldapSettings.UpdateSettingsAsync(TenantId, settings, cancellationToken);
+        request.AdminPasswordHash = existingSettings.AdminPasswordHash;
+        request.TlsCertificate = existingSettings.TlsCertificate;
+
+        // Only update password hash if a new password is provided
+        if (!string.IsNullOrEmpty(request.AdminPassword))
+        {
+            var passwordHasher = new PasswordHasher<object>();
+            request.AdminPasswordHash = passwordHasher.HashPassword(null!, request.AdminPassword);
+            _logger.LogInformation("Updated admin password for tenant {TenantId}", TenantId);
+        }
+
+        await _ldapSettings.UpdateSettingsAsync(TenantId, request, cancellationToken);
 
         _logger.LogInformation("Updated LDAP Server settings for tenant {TenantId}", TenantId);
 
-        return Ok(settings);
+        // Don't return sensitive fields
+        request.AdminPasswordHash = null;
+        request.AdminPassword = null;
+        return Ok(request);
     }
 
     /// <summary>
     /// Test LDAP connection with admin credentials.
     /// </summary>
     [HttpPost("test-connection")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult<TestConnectionResponse>> TestConnection(CancellationToken cancellationToken)
     {
         var globalOptions = _options.Value;
@@ -168,6 +180,7 @@ public class LdapServerController : AdminBaseController
     /// Get TLS certificate info for this tenant.
     /// </summary>
     [HttpGet("certificate")]
+    [RequirePermission("ldap.read")]
     public async Task<ActionResult<LdapCertificateInfoResponse>> GetTlsCertificate(CancellationToken cancellationToken)
     {
         if (_certificateService == null)
@@ -222,6 +235,7 @@ public class LdapServerController : AdminBaseController
     /// Generate a new self-signed TLS certificate for this tenant.
     /// </summary>
     [HttpPost("certificate/generate")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult<LdapCertificateInfoResponse>> GenerateTlsCertificate(CancellationToken cancellationToken)
     {
         if (_certificateService == null)
@@ -273,8 +287,9 @@ public class LdapServerController : AdminBaseController
     /// Upload a TLS certificate for this tenant.
     /// </summary>
     [HttpPost("certificate/upload")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult<LdapCertificateInfoResponse>> UploadTlsCertificate(
-        [FromBody] UploadCertificateRequest request,
+        [FromBody] LdapUploadCertificateRequest request,
         CancellationToken cancellationToken)
     {
         if (_certificateService == null)
@@ -333,6 +348,7 @@ public class LdapServerController : AdminBaseController
     /// Reset to use global TLS certificate.
     /// </summary>
     [HttpPost("certificate/reset")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult> ResetTlsCertificate(CancellationToken cancellationToken)
     {
         if (TenantId == null)
@@ -361,6 +377,7 @@ public class LdapServerController : AdminBaseController
     /// Get all service accounts for this tenant.
     /// </summary>
     [HttpGet("service-accounts")]
+    [RequirePermission("ldap.read")]
     public async Task<ActionResult<IEnumerable<ServiceAccountResponse>>> GetServiceAccounts(CancellationToken cancellationToken)
     {
         if (_serviceAccountStore == null)
@@ -382,6 +399,7 @@ public class LdapServerController : AdminBaseController
     /// Get a service account by ID.
     /// </summary>
     [HttpGet("service-accounts/{id}")]
+    [RequirePermission("ldap.read")]
     public async Task<ActionResult<ServiceAccountResponse>> GetServiceAccount(string id, CancellationToken cancellationToken)
     {
         if (_serviceAccountStore == null)
@@ -407,6 +425,7 @@ public class LdapServerController : AdminBaseController
     /// Create a new service account.
     /// </summary>
     [HttpPost("service-accounts")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult<ServiceAccountResponse>> CreateServiceAccount(
         [FromBody] CreateServiceAccountRequest request,
         CancellationToken cancellationToken)
@@ -463,9 +482,10 @@ public class LdapServerController : AdminBaseController
     /// Update a service account.
     /// </summary>
     [HttpPut("service-accounts/{id}")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult<ServiceAccountResponse>> UpdateServiceAccount(
         string id,
-        [FromBody] UpdateServiceAccountRequest request,
+        [FromBody] ServiceAccountResponse request,
         CancellationToken cancellationToken)
     {
         if (_serviceAccountStore == null)
@@ -484,16 +504,15 @@ public class LdapServerController : AdminBaseController
             return NotFound(new { error = "Service account not found" });
         }
 
-        // Update fields
-        if (request.Name != null) account.Name = request.Name;
-        if (request.Description != null) account.Description = request.Description;
-        if (request.IsEnabled.HasValue) account.IsEnabled = request.IsEnabled.Value;
-        if (request.Permission.HasValue) account.Permission = request.Permission.Value;
-        if (request.AllowedOus != null) account.AllowedOus = string.Join(",", request.AllowedOus);
-        if (request.AllowedIpRanges != null) account.AllowedIpRanges = string.Join(",", request.AllowedIpRanges);
-        if (request.MaxSearchResults.HasValue) account.MaxSearchResults = request.MaxSearchResults.Value;
-        if (request.RateLimitPerMinute.HasValue) account.RateLimitPerMinute = request.RateLimitPerMinute.Value;
-        if (request.ExpiresAt.HasValue) account.ExpiresAt = request.ExpiresAt;
+        account.Name = request.Name;
+        account.Description = request.Description;
+        account.IsEnabled = request.IsEnabled;
+        account.Permission = Enum.Parse<LdapServiceAccountPermission>(request.Permission, ignoreCase: true);
+        account.AllowedOus = request.AllowedOus.Count > 0 ? string.Join(",", request.AllowedOus) : null;
+        account.AllowedIpRanges = request.AllowedIpRanges.Count > 0 ? string.Join(",", request.AllowedIpRanges) : null;
+        account.MaxSearchResults = request.MaxSearchResults ?? 0;
+        account.RateLimitPerMinute = request.RateLimitPerMinute ?? 0;
+        account.ExpiresAt = request.ExpiresAt;
 
         var updated = await _serviceAccountStore.UpdateAsync(account, cancellationToken);
 
@@ -506,6 +525,7 @@ public class LdapServerController : AdminBaseController
     /// Reset service account password.
     /// </summary>
     [HttpPost("service-accounts/{id}/reset-password")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult> ResetServiceAccountPassword(
         string id,
         [FromBody] ResetServiceAccountPasswordRequest request,
@@ -539,6 +559,7 @@ public class LdapServerController : AdminBaseController
     /// Delete a service account.
     /// </summary>
     [HttpDelete("service-accounts/{id}")]
+    [RequirePermission("ldap.write")]
     public async Task<ActionResult> DeleteServiceAccount(string id, CancellationToken cancellationToken)
     {
         if (_serviceAccountStore == null)
@@ -608,16 +629,6 @@ public class LdapServerInfoResponse
     public string AdminDn { get; set; } = null!;
 }
 
-public class UpdateLdapServerSettingsRequest
-{
-    public bool Enabled { get; set; }
-    public string? BaseDn { get; set; }
-    public string? Organization { get; set; }
-    public bool AllowAnonymousBind { get; set; }
-    public int? MaxSearchResults { get; set; }
-    public string? AdminDn { get; set; }
-}
-
 public class TestConnectionResponse
 {
     public bool Success { get; set; }
@@ -637,7 +648,7 @@ public class LdapCertificateInfoResponse
     public bool IsExpiringSoon { get; set; }
 }
 
-public class UploadCertificateRequest
+public class LdapUploadCertificateRequest
 {
     public string Base64Pfx { get; set; } = null!;
     public string? Password { get; set; }
@@ -668,19 +679,6 @@ public class CreateServiceAccountRequest
     public string? Description { get; set; }
     public string Password { get; set; } = null!;
     public LdapServiceAccountPermission Permission { get; set; } = LdapServiceAccountPermission.ReadOnly;
-    public List<string>? AllowedOus { get; set; }
-    public List<string>? AllowedIpRanges { get; set; }
-    public int? MaxSearchResults { get; set; }
-    public int? RateLimitPerMinute { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-}
-
-public class UpdateServiceAccountRequest
-{
-    public string? Name { get; set; }
-    public string? Description { get; set; }
-    public bool? IsEnabled { get; set; }
-    public LdapServiceAccountPermission? Permission { get; set; }
     public List<string>? AllowedOus { get; set; }
     public List<string>? AllowedIpRanges { get; set; }
     public int? MaxSearchResults { get; set; }

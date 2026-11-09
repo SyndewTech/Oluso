@@ -1,8 +1,14 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Oluso.Core.Authorization;
 using Oluso.Core.Data;
+using Oluso.Core.Events;
+using Oluso.Core.Services;
+using Oluso.Core.UserJourneys;
 using Oluso.Enterprise.Scim.EntityFramework;
+using Oluso.Enterprise.Scim.Outbound;
 using Oluso.Enterprise.Scim.Services;
 using Oluso.Enterprise.Scim.Stores;
 
@@ -27,14 +33,55 @@ public static class ScimExtensions
         configure?.Invoke(options);
 
         services.AddSingleton(options);
+
+        PermissionRegistry.Instance.RegisterPermissions(new[]
+        {
+            new PermissionDefinition("scim.read", "View SCIM settings", "SCIM", "View SCIM provisioning configuration"),
+            new PermissionDefinition("scim.write", "Manage SCIM settings", "SCIM", "Configure SCIM provisioning settings"),
+        });
         services.AddScoped<IScimContextAccessor, ScimContextAccessor>();
+        services.AddSingleton<ScimExpressionEngine>();
+        services.AddSingleton<ScimInboundMapper>();
         services.AddScoped<IScimUserMapper, DefaultScimUserMapper>();
+        services.AddScoped<IScimProvisioningService, ScimProvisioningService>();
+        services.AddScoped<IUserDeletionParticipant, ScimUserDeletionParticipant>();
 
         // Register EF stores
         services.AddScoped<IScimClientStore, ScimClientStore>();
         services.AddScoped<IScimProvisioningLogStore, ScimProvisioningLogStore>();
         services.AddScoped<IScimResourceMappingStore, ScimResourceMappingStore>();
         services.AddScoped<IScimAttributeMappingStore, ScimAttributeMappingStore>();
+
+        // Outbound provisioning: this tenant pushing to downstream SCIM providers
+        services.AddScoped<IScimProviderStore, ScimProviderStore>();
+        services.AddScoped<IScimProviderResourceMappingStore, ScimProviderResourceMappingStore>();
+        services.AddScoped<IScimProviderAttributeMappingStore, ScimProviderAttributeMappingStore>();
+        services.AddScoped<IScimProviderOutboxStore, ScimProviderOutboxStore>();
+        services.AddScoped<IScimProviderLogStore, ScimProviderLogStore>();
+        services.AddScoped<IScimProviderSecretStore, ScimProviderSecretStore>();
+        services.Configure<TenantConfigurationOptions>(o =>
+            o.EncryptedSectionPrefixes.Add(ScimProviderCredentials.SectionKeyPrefix));
+
+        services.AddHttpClient(ScimProviderHttpClient.ClientName, client =>
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Oluso-Scim/1.0"));
+        services.TryAddSingleton<IClientCredentialsTokenCache, ClientCredentialsTokenCache>();
+
+        services.AddSingleton<IScimOutboundMapper, ScimOutboundMapper>();
+        services.AddScoped<IScimGroupSource, RoleScimGroupSource>();
+        services.AddScoped<IScimGroupSource, TeamScimGroupSource>();
+        services.AddScoped<ScimGroupSourceRegistry>();
+        services.AddSingleton(ScimProviderFlavorProfiles.Generic);
+        services.AddSingleton(ScimProviderFlavorProfiles.Stalwart);
+        services.TryAddSingleton<ScimProviderFlavorRegistry>();
+        services.AddScoped<IScimProviderHttpClient, ScimProviderHttpClient>();
+        services.AddScoped<IScimProviderEnqueuer, ScimProviderEnqueuer>();
+        services.AddScoped<IScimOutboundProvisioningService, ScimOutboundProvisioningService>();
+        services.AddScoped<IScimProviderReconcileService, ScimProviderReconcileService>();
+        services.AddScoped<IScimProviderConnectionTester, ScimProviderConnectionTester>();
+        services.AddEventSink<ScimOutboundEventSink>();
+
+        if (options.Outbound.Enabled)
+            services.AddHostedService<ScimOutboundWorker>();
 
         return services;
     }
@@ -117,12 +164,13 @@ public static class ScimExtensions
     }
 
     /// <summary>
-    /// Map SCIM 2.0 endpoints
+    /// Wire SCIM request authentication. Must run after UseAuthentication so a
+    /// client-credentials JWT validated by the host's access-token scheme is
+    /// available. The SCIM controllers themselves are auto-discovered by MVC.
     /// </summary>
     public static IApplicationBuilder UseScim(this IApplicationBuilder app)
     {
-        // The SCIM controllers are auto-discovered by MVC
-        // This method is for any middleware that needs to run before SCIM endpoints
+        app.UseMiddleware<Authentication.ScimAuthenticationMiddleware>();
         return app;
     }
 }
@@ -136,6 +184,13 @@ public class ScimOptions
     /// Base path for SCIM endpoints (default: /scim/v2)
     /// </summary>
     public string BasePath { get; set; } = ScimConstants.DefaultBasePath;
+
+    /// <summary>
+    /// Name of the host's JWT access-token authentication scheme, used to
+    /// validate OAuth 2.0 client-credentials tokens presented to SCIM
+    /// endpoints. Defaults to the platform's "AccessToken" scheme.
+    /// </summary>
+    public string AccessTokenScheme { get; set; } = "AccessToken";
 
     /// <summary>
     /// Maximum number of resources returned in a single response
@@ -158,7 +213,51 @@ public class ScimOptions
     public bool LogRequestBodies { get; set; } = false;
 
     /// <summary>
-    /// How long to retain provisioning logs (null = forever)
+    /// How long to retain provisioning logs (null = forever). Applies to
+    /// inbound client logs and outbound provider logs alike.
     /// </summary>
     public TimeSpan? LogRetention { get; set; } = TimeSpan.FromDays(90);
+
+    /// <summary>
+    /// Outbound provisioning (pushing to downstream SCIM providers).
+    /// </summary>
+    public ScimOutboundOptions Outbound { get; set; } = new();
+}
+
+/// <summary>
+/// Options for the outbound provisioning queue and worker.
+/// </summary>
+public class ScimOutboundOptions
+{
+    /// <summary>
+    /// Runs the in-process queue worker. Turn off on hosts that must not do
+    /// background work; queue items then wait for a host that does.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    public TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>How often the worker looks for due items when the queue is idle.</summary>
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long a claimed item stays locked before another worker may take it over.</summary>
+    public TimeSpan LockDuration { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Attempts before a retryable failure is abandoned.</summary>
+    public int MaxAttempts { get; set; } = 8;
+
+    /// <summary>Providers processed at the same time. Items within a provider run in order.</summary>
+    public int MaxConcurrentProviders { get; set; } = 4;
+
+    /// <summary>Items taken from one provider's queue per cycle before yielding to others.</summary>
+    public int MaxItemsPerProviderPerCycle { get; set; } = 100;
+
+    /// <summary>Per-request timeout for calls to a provider.</summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Page size used when a reconcile enumerates a tenant's users.</summary>
+    public int ReconcilePageSize { get; set; } = 200;
+
+    /// <summary>How long succeeded and superseded queue items are kept for inspection.</summary>
+    public TimeSpan CompletedItemRetention { get; set; } = TimeSpan.FromDays(7);
 }

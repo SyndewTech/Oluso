@@ -1,9 +1,13 @@
+using Oluso.Admin.Authorization;
+using Oluso.Core.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
+using Oluso.Core.Storage;
+using Oluso.Admin.Dto.SigningKeys;
 
 namespace Oluso.Admin.Controllers;
 
@@ -13,6 +17,9 @@ namespace Oluso.Admin.Controllers;
 [Route("api/admin/signing-keys")]
 public class SigningKeysController : AdminBaseController
 {
+    private const string DataProtectionKeyLocked =
+        "This key encrypts stored data. It cannot be rotated, revoked, changed or deleted, or that data could no longer be read.";
+
     private readonly ISigningKeyStore _keyStore;
     private readonly ISigningKeyService _signingKeyService;
     private readonly ITenantContext _tenantContext;
@@ -34,6 +41,7 @@ public class SigningKeysController : AdminBaseController
     /// Get all signing keys for the current tenant
     /// </summary>
     [HttpGet]
+    [RequirePermission(AdminPermissions.SigningKeysRead)]
     public async Task<ActionResult<IEnumerable<SigningKeyDto>>> GetKeys(
         [FromQuery] string? clientId = null,
         CancellationToken cancellationToken = default)
@@ -52,6 +60,7 @@ public class SigningKeysController : AdminBaseController
     /// Get a specific key by ID
     /// </summary>
     [HttpGet("{id}")]
+    [RequirePermission(AdminPermissions.SigningKeysRead)]
     public async Task<ActionResult<SigningKeyDto>> GetKey(
         string id,
         CancellationToken cancellationToken = default)
@@ -75,6 +84,7 @@ public class SigningKeysController : AdminBaseController
     /// Generate a new signing key
     /// </summary>
     [HttpPost]
+    [RequirePermission(AdminPermissions.SigningKeysWrite)]
     public async Task<ActionResult<SigningKeyDto>> GenerateKey(
         [FromBody] GenerateKeyRequestDto request,
         CancellationToken cancellationToken = default)
@@ -107,10 +117,16 @@ public class SigningKeysController : AdminBaseController
     /// Rotate keys - generates a new key and marks old ones for expiration
     /// </summary>
     [HttpPost("rotate")]
+    [RequirePermission(AdminPermissions.SigningKeysRotate)]
     public async Task<ActionResult<SigningKeyDto>> RotateKeys(
         [FromQuery] string? clientId = null,
         CancellationToken cancellationToken = default)
     {
+        if (DataProtectionKeys.IsDataProtectionKey(clientId))
+        {
+            return BadRequest(new { error = DataProtectionKeyLocked });
+        }
+
         var tenantId = _tenantContext.TenantId;
 
         await _signingKeyService.RotateKeysAsync(clientId, cancellationToken);
@@ -134,6 +150,7 @@ public class SigningKeysController : AdminBaseController
     /// Revoke a key
     /// </summary>
     [HttpPost("{id}/revoke")]
+    [RequirePermission(AdminPermissions.SigningKeysWrite)]
     public async Task<ActionResult> RevokeKey(
         string id,
         [FromBody] RevokeKeyRequestDto? request = null,
@@ -150,6 +167,11 @@ public class SigningKeysController : AdminBaseController
             return Forbid();
         }
 
+        if (DataProtectionKeys.IsDataProtectionKey(key.ClientId))
+        {
+            return BadRequest(new { error = DataProtectionKeyLocked });
+        }
+
         await _signingKeyService.RevokeKeyAsync(key.Id, request?.Reason ?? "Revoked by admin", cancellationToken);
 
         _logger.LogWarning(
@@ -163,6 +185,7 @@ public class SigningKeysController : AdminBaseController
     /// Update key status (activate, expire, archive)
     /// </summary>
     [HttpPatch("{id}/status")]
+    [RequirePermission(AdminPermissions.SigningKeysWrite)]
     public async Task<ActionResult<SigningKeyDto>> UpdateKeyStatus(
         string id,
         [FromBody] UpdateKeyStatusDto request,
@@ -177,6 +200,11 @@ public class SigningKeysController : AdminBaseController
         if (key.TenantId != _tenantContext.TenantId)
         {
             return Forbid();
+        }
+
+        if (DataProtectionKeys.IsDataProtectionKey(key.ClientId))
+        {
+            return BadRequest(new { error = DataProtectionKeyLocked });
         }
 
         if (!string.IsNullOrEmpty(request.Status))
@@ -208,6 +236,7 @@ public class SigningKeysController : AdminBaseController
     /// Delete a key permanently
     /// </summary>
     [HttpDelete("{id}")]
+    [RequirePermission(AdminPermissions.SigningKeysWrite)]
     public async Task<ActionResult> DeleteKey(
         string id,
         CancellationToken cancellationToken = default)
@@ -221,6 +250,11 @@ public class SigningKeysController : AdminBaseController
         if (key.TenantId != _tenantContext.TenantId)
         {
             return Forbid();
+        }
+
+        if (DataProtectionKeys.IsDataProtectionKey(key.ClientId))
+        {
+            return BadRequest(new { error = DataProtectionKeyLocked });
         }
 
         // Don't allow deleting active keys
@@ -240,6 +274,7 @@ public class SigningKeysController : AdminBaseController
     /// Get rotation configuration
     /// </summary>
     [HttpGet("rotation-config")]
+    [RequirePermission(AdminPermissions.SigningKeysRead)]
     public async Task<ActionResult<KeyRotationConfigDto>> GetRotationConfig(
         [FromQuery] string? clientId = null,
         CancellationToken cancellationToken = default)
@@ -270,6 +305,7 @@ public class SigningKeysController : AdminBaseController
     /// Update rotation configuration
     /// </summary>
     [HttpPut("rotation-config")]
+    [RequirePermission(AdminPermissions.SigningKeysWrite)]
     public async Task<ActionResult<KeyRotationConfigDto>> UpdateRotationConfig(
         [FromBody] KeyRotationConfigDto request,
         CancellationToken cancellationToken = default)
@@ -300,6 +336,7 @@ public class SigningKeysController : AdminBaseController
     /// Get keys that are expiring soon
     /// </summary>
     [HttpGet("expiring")]
+    [RequirePermission(AdminPermissions.SigningKeysRead)]
     public async Task<ActionResult<IEnumerable<SigningKeyDto>>> GetExpiringKeys(
         [FromQuery] int daysUntilExpiration = 14,
         CancellationToken cancellationToken = default)
@@ -355,77 +392,3 @@ public class SigningKeysController : AdminBaseController
         NextRotationAt = config.NextRotationAt
     };
 }
-
-#region DTOs
-
-/// <summary>
-/// Signing key metadata - NEVER contains actual key material
-/// </summary>
-public class SigningKeyDto
-{
-    public string Id { get; set; } = null!;
-    public string Name { get; set; } = null!;
-    public string KeyId { get; set; } = null!;
-    public string KeyType { get; set; } = null!;
-    public string Algorithm { get; set; } = null!;
-    public string Use { get; set; } = null!;
-    public int KeySize { get; set; }
-    public string? ClientId { get; set; }
-    public string Status { get; set; } = null!;
-    public string StorageProvider { get; set; } = null!;
-    public DateTime CreatedAt { get; set; }
-    public DateTime? ActivatedAt { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-    public DateTime? RevokedAt { get; set; }
-    public string? RevocationReason { get; set; }
-    public DateTime? LastUsedAt { get; set; }
-    public long SignatureCount { get; set; }
-    public int Priority { get; set; }
-    public bool IncludeInJwks { get; set; }
-    public bool CanSign { get; set; }
-    public bool CanVerify { get; set; }
-    public bool IsExpiringSoon { get; set; }
-    public bool IsExpired { get; set; }
-}
-
-public class UpdateKeyStatusDto
-{
-    public string? Status { get; set; }
-    public int? Priority { get; set; }
-    public bool? IncludeInJwks { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-}
-
-public class KeyRotationConfigDto
-{
-    public string? ClientId { get; set; }
-    public bool? Enabled { get; set; }
-    public string? KeyType { get; set; }
-    public string? Algorithm { get; set; }
-    public int? KeySize { get; set; }
-    public int? KeyLifetimeDays { get; set; }
-    public int? RotationLeadDays { get; set; }
-    public int? GracePeriodDays { get; set; }
-    public int? MaxKeys { get; set; }
-    public DateTime? LastRotationAt { get; set; }
-    public DateTime? NextRotationAt { get; set; }
-}
-
-public class GenerateKeyRequestDto
-{
-    public string? ClientId { get; set; }
-    public string? Name { get; set; }
-    public string? KeyType { get; set; }
-    public string? Algorithm { get; set; }
-    public int? KeySize { get; set; }
-    public int? LifetimeDays { get; set; }
-    public bool? ActivateImmediately { get; set; }
-    public int? Priority { get; set; }
-}
-
-public class RevokeKeyRequestDto
-{
-    public string? Reason { get; set; }
-}
-
-#endregion

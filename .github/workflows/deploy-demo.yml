@@ -1,5 +1,23 @@
 name: Deploy Demo
 
+# Deploys samples/Oluso.Sample to demo.oluso.io (IIS hosting) over Web Deploy.
+#
+# The demo's settings are deploy/demo/appsettings.Production.json; the deploy adds the connection string and
+# the Data Protection key path to it.
+#
+# Repository secrets:
+#   WEBDEPLOY_URL        from the host's publish profile: publishUrl as the full endpoint,
+#                        e.g. https://server.example.com:8172/msdeploy.axd
+#   WEBDEPLOY_SITE       msdeploySite
+#   WEBDEPLOY_USERNAME   userName
+#   WEBDEPLOY_PASSWORD   userPWD
+#   OLUSO_DB_CONNECTION_STRING   the SQL Server connection string
+#
+# Repository variable DEMO_DEPLOY_ENABLED=true turns the job on; until then it is skipped, not failed.
+#
+# The Data Protection key ring (it encrypts the signing keys) lives in App_Data/dataprotection-keys on the
+# site. App_Data is never deleted or overwritten by a deploy, so the keys survive redeploys.
+
 on:
   workflow_dispatch:
   push:
@@ -8,13 +26,20 @@ on:
     paths:
       - 'samples/Oluso.Sample/**'
       - 'src/backend/**'
+      - 'deploy/demo/**'
+      - '.github/workflows/deploy-demo.yml'
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
 
 env:
-  DOTNET_VERSION: '8.0.x'
+  DOTNET_VERSION: '10.0.x'
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    if: vars.DEMO_DEPLOY_ENABLED == 'true'
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -25,28 +50,51 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore dependencies
-        run: dotnet restore samples/Oluso.Sample/Oluso.Sample.csproj
-
-      - name: Build
-        run: dotnet build samples/Oluso.Sample/Oluso.Sample.csproj --configuration Release --no-restore
-
       - name: Publish
-        run: dotnet publish samples/Oluso.Sample/Oluso.Sample.csproj --configuration Release --no-build --output ./publish
+        run: dotnet publish samples/Oluso.Sample/Oluso.Sample.csproj --configuration Release --output publish
 
-      - name: Update secrets in config
+      - name: Write appsettings.Production.json
+        shell: pwsh
+        env:
+          CONNECTION_STRING: ${{ secrets.OLUSO_DB_CONNECTION_STRING }}
         run: |
-          cd publish
-          # Replace placeholders with secrets
-          sed -i 's|"OlusoDb": ""|"OlusoDb": "${{ secrets.SQLSERVER_CONNECTION_STRING }}"|g' appsettings.Production.json
-          sed -i 's|"Key": ""|"Key": "${{ secrets.JWT_SIGNING_KEY }}"|g' appsettings.Production.json
+          if ([string]::IsNullOrWhiteSpace($env:CONNECTION_STRING)) { throw "Set the repository secret OLUSO_DB_CONNECTION_STRING." }
+          $settings = Get-Content -Raw deploy/demo/appsettings.Production.json | ConvertFrom-Json -AsHashtable
+          $settings.ConnectionStrings = @{ OlusoDb = $env:CONNECTION_STRING }
+          $settings.DataProtection = @{ KeysPath = 'App_Data/dataprotection-keys' }
+          $settings | ConvertTo-Json -Depth 32 | Set-Content -Path publish/appsettings.Production.json -Encoding utf8
+          Write-Host "appsettings.Production.json written for $($settings.Oluso.IssuerUri)"
 
-      - name: Deploy via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./publish/
-          server-dir: ${{ secrets.FTP_SERVER_DIR }}
-          dangerous-clean-slate: false
+      - name: Install Web Deploy
+        shell: pwsh
+        run: |
+          $msdeploy = "$env:ProgramFiles\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+          if (-not (Test-Path $msdeploy)) { choco install webdeploy --no-progress -y | Out-Null }
+          if (-not (Test-Path $msdeploy)) { throw "msdeploy.exe not found after installing Web Deploy." }
+          "MSDEPLOY=$msdeploy" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Deploy over Web Deploy
+        shell: pwsh
+        env:
+          WEBDEPLOY_URL: ${{ secrets.WEBDEPLOY_URL }}
+          WEBDEPLOY_SITE: ${{ secrets.WEBDEPLOY_SITE }}
+          WEBDEPLOY_USERNAME: ${{ secrets.WEBDEPLOY_USERNAME }}
+          WEBDEPLOY_PASSWORD: ${{ secrets.WEBDEPLOY_PASSWORD }}
+        run: |
+          foreach ($name in 'WEBDEPLOY_URL', 'WEBDEPLOY_SITE', 'WEBDEPLOY_USERNAME', 'WEBDEPLOY_PASSWORD') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Set the repository secret $name (from the host's publish profile)." }
+          }
+          $source = (Resolve-Path publish).Path
+          $endpoint = "$($env:WEBDEPLOY_URL)?site=$([uri]::EscapeDataString($env:WEBDEPLOY_SITE))"
+          # AppOffline takes the site down for the copy, so the running app's files aren't locked.
+          # The skip keeps App_Data (the Data Protection key ring) out of the sync: never deleted or replaced.
+          & $env:MSDEPLOY `
+            -verb:sync `
+            "-source:contentPath=$source" `
+            "-dest:contentPath=$($env:WEBDEPLOY_SITE),computerName=$endpoint,userName=$($env:WEBDEPLOY_USERNAME),password=$($env:WEBDEPLOY_PASSWORD),authType=Basic" `
+            "-skip:objectName=dirPath,absolutePath=\\App_Data$" `
+            "-skip:objectName=filePath,absolutePath=\\App_Data\\" `
+            -enableRule:AppOffline `
+            -allowUntrusted `
+            -retryAttempts:3
+          if ($LASTEXITCODE -ne 0) { throw "Web Deploy failed with exit code $LASTEXITCODE." }

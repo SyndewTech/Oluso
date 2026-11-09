@@ -190,7 +190,11 @@ public class FileSystemPluginWatcher : IPluginWatcher
 /// </summary>
 public class NullPluginWatcher : IPluginWatcher
 {
-    public event EventHandler<PluginChangedEventArgs>? OnPluginChanged;
+    public event EventHandler<PluginChangedEventArgs>? OnPluginChanged
+    {
+        add { }
+        remove { }
+    }
 
     public bool IsWatching => false;
 

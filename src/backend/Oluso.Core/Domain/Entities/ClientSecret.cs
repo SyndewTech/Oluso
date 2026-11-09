@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Oluso.Core.Domain.Entities;
 
 // Client-related entities
-public class ClientSecret
+public class ClientSecret : TenantEntity
 {
     public int Id { get; set; }
     public int ClientId { get; set; }

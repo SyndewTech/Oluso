@@ -90,6 +90,7 @@ public static class ResponseModes
     public const string Query = "query";
     public const string Fragment = "fragment";
     public const string FormPost = "form_post";
+    public const string WebMessage = "web_message";
     public const string Jwt = "jwt";
     public const string QueryJwt = "query.jwt";
     public const string FragmentJwt = "fragment.jwt";

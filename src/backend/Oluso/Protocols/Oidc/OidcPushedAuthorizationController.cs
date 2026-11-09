@@ -15,8 +15,7 @@ namespace Oluso.Protocols.Oidc;
 /// OAuth 2.0 Pushed Authorization Requests (PAR) Endpoint - RFC 9126.
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
-
-public class OidcPushedAuthorizationController : ControllerBase
+public class OidcPushedAuthorizationController : OidcControllerBase
 {
     private readonly IClientAuthenticator _clientAuthenticator;
     private readonly IAuthorizeRequestValidator _authorizeValidator;
@@ -66,7 +65,7 @@ public class OidcPushedAuthorizationController : ControllerBase
         {
             ClientId = client.ClientId,
             RedirectUri = form["redirect_uri"].FirstOrDefault(),
-            ResponseType = form["response_type"].FirstOrDefault(),
+            ResponseType = form["response_type"].FirstOrDefault() ?? "",
             Scope = form["scope"].FirstOrDefault(),
             State = form["state"].FirstOrDefault(),
             Nonce = form["nonce"].FirstOrDefault(),
@@ -80,7 +79,10 @@ public class OidcPushedAuthorizationController : ControllerBase
             AcrValues = form["acr_values"].FirstOrDefault(),
             UiLocales = form["ui_locales"].FirstOrDefault(),
             Request = form["request"].FirstOrDefault(),
-            RequestUri = form["request_uri"].FirstOrDefault()
+            RequestUri = form["request_uri"].FirstOrDefault(),
+            // RFC 8707: one resource parameter per resource.
+            Resource = OidcResourceParameters.Read(form["resource"]),
+            DPoPKeyThumbprint = form["dpop_jkt"].FirstOrDefault()
         };
 
         return await ProcessPushedAuthorizationAsync(client, request, cancellationToken);
@@ -174,7 +176,7 @@ public class OidcPushedAuthorizationController : ControllerBase
             "PAR stored for client {ClientId}, request_uri {RequestUri}, expires in {Lifetime}s",
             client.ClientId, requestUri, lifetime);
 
-        return Ok(new ParResponse
+        return StatusCode(201, new ParResponse
         {
             RequestUri = requestUri,
             ExpiresIn = lifetime

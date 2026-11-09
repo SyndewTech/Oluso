@@ -147,7 +147,6 @@ public class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         builder.Property(t => t.DisplayName).HasMaxLength(200);
         builder.Property(t => t.Identifier).IsRequired().HasMaxLength(100);
         builder.Property(t => t.Description).HasMaxLength(1000);
-        builder.Property(t => t.Configuration);
         builder.Property(t => t.ConnectionString).HasMaxLength(2000);
         builder.Property(t => t.CustomDomain).HasMaxLength(500);
         builder.Property(t => t.PlanId).HasMaxLength(100);
@@ -169,16 +168,11 @@ public class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         // Index for querying by environment within an organization
         builder.HasIndex(t => new { t.OrganizationId, t.Environment });
 
-        // Configure TenantBranding as owned entity
-        builder.OwnsOne(t => t.Branding, branding =>
-        {
-            branding.Property(b => b.LogoUrl).HasMaxLength(2000);
-            branding.Property(b => b.FaviconUrl).HasMaxLength(2000);
-            branding.Property(b => b.PrimaryColor).HasMaxLength(20);
-            branding.Property(b => b.SecondaryColor).HasMaxLength(20);
-            branding.Property(b => b.BackgroundColor).HasMaxLength(20);
-            branding.Property(b => b.CustomCss);
-        });
+        // Configure TenantBranding as owned entity. Visual branding moved
+        // entirely to the BrandingSettings tenant-config section — only
+        // HideEmbedBranding (SuperAdmin-only platform-licensing toggle)
+        // remains on the entity.
+        builder.OwnsOne(t => t.Branding);
 
         // Configure TenantPasswordPolicy as owned entity
         builder.OwnsOne(t => t.PasswordPolicy, policy =>
@@ -201,11 +195,33 @@ public class TenantConfiguration : IEntityTypeConfiguration<Tenant>
     }
 }
 
+public class TenantMembershipConfiguration : IEntityTypeConfiguration<TenantMembership>
+{
+    public void Configure(EntityTypeBuilder<TenantMembership> builder)
+    {
+        builder.ToTable("TenantMemberships");
+        builder.HasKey(tm => tm.Id);
+
+        builder.Property(tm => tm.Id).HasMaxLength(128);
+        builder.Property(tm => tm.TenantId).IsRequired().HasMaxLength(128);
+        builder.Property(tm => tm.UserId).IsRequired().HasMaxLength(128);
+        builder.Property(tm => tm.InvitedByUserId).HasMaxLength(128);
+
+        builder.HasIndex(tm => new { tm.TenantId, tm.UserId }).IsUnique();
+        builder.HasIndex(tm => tm.UserId);
+
+        builder.HasOne(tm => tm.Tenant)
+            .WithMany()
+            .HasForeignKey(tm => tm.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public class OlusoUserConfiguration : IEntityTypeConfiguration<OlusoUser>
 {
     public void Configure(EntityTypeBuilder<OlusoUser> builder)
     {
-        builder.Property(u => u.TenantId).HasMaxLength(128);
+        builder.Property(u => u.TenantId).HasMaxLength(128).IsRequired();
         builder.Property(u => u.FirstName).HasMaxLength(100);
         builder.Property(u => u.LastName).HasMaxLength(100);
         builder.Property(u => u.DisplayName).HasMaxLength(200);
@@ -256,7 +272,7 @@ public class OlusoRoleConfiguration : IEntityTypeConfiguration<OlusoRole>
         builder.Property(r => r.TenantId).HasMaxLength(128);
         builder.Property(r => r.DisplayName).HasMaxLength(200);
         builder.Property(r => r.Description).HasMaxLength(1000);
-        builder.Property(r => r.Permissions).HasMaxLength(4000);
+        // Permissions are now stored in RoleClaims with claim type "permission"
         builder.Property(r => r.Category).HasMaxLength(50);
         builder.Property(r => r.ManagedByRole).HasMaxLength(100);
 
@@ -309,6 +325,12 @@ public class OlusoUserRoleConfiguration : IEntityTypeConfiguration<OlusoUserRole
     {
         builder.Property(ur => ur.AssignedBy).HasMaxLength(128);
 
+        // An assignment applies in one tenant, so the tenant is part of the key:
+        // the same platform-wide role can be held in one tenant and not another.
+        builder.Property(ur => ur.TenantId).HasMaxLength(128).IsRequired();
+        builder.HasKey(ur => new { ur.UserId, ur.RoleId, ur.TenantId });
+        builder.HasIndex(ur => new { ur.TenantId, ur.RoleId });
+
         // Index for querying role assignments by date
         builder.HasIndex(ur => ur.AssignedAt);
     }
@@ -360,6 +382,10 @@ public class JourneyPolicyEntityConfiguration : IEntityTypeConfiguration<Journey
         builder.HasKey(p => p.Id);
 
         builder.Property(p => p.Id).HasMaxLength(64);
+        builder.Property(p => p.Slug).HasMaxLength(64);
+        // Unique per tenant. Global policies (null tenant) are kept distinct from every
+        // tenant's slugs by JourneyPolicyStore, since providers differ on NULLs in unique indexes.
+        builder.HasIndex(p => new { p.TenantId, p.Slug }).IsUnique();
         builder.Property(p => p.TenantId).HasMaxLength(128);
         builder.Property(p => p.Name).IsRequired().HasMaxLength(200);
         builder.Property(p => p.Type).IsRequired().HasMaxLength(50);
@@ -370,6 +396,8 @@ public class JourneyPolicyEntityConfiguration : IEntityTypeConfiguration<Journey
         builder.Property(p => p.SessionConfig);
         builder.Property(p => p.UiConfig);
         builder.Property(p => p.Tags).HasMaxLength(500);
+        builder.Property(p => p.OwnerModule).HasMaxLength(64);
+        builder.HasIndex(p => new { p.TenantId, p.OwnerModule });
 
         // Data collection journey properties
         builder.Property(p => p.SubmissionCollection).HasMaxLength(200);
@@ -436,7 +464,63 @@ public class JourneySubmissionEntityConfiguration : IEntityTypeConfiguration<Jou
 
         builder.HasIndex(s => new { s.TenantId, s.PolicyId });
         builder.HasIndex(s => new { s.TenantId, s.PolicyId, s.Status });
+        builder.HasIndex(s => s.JourneyId);
         builder.HasIndex(s => s.CreatedAt);
         builder.HasIndex(s => s.Status);
+    }
+}
+
+public class CustomDomainVerificationConfiguration : IEntityTypeConfiguration<CustomDomainVerification>
+{
+    public void Configure(EntityTypeBuilder<CustomDomainVerification> builder)
+    {
+        builder.ToTable("CustomDomainVerifications");
+        builder.HasKey(d => d.Id);
+
+        builder.Property(d => d.Id).HasMaxLength(128);
+        builder.Property(d => d.TenantId).IsRequired().HasMaxLength(128);
+        builder.Property(d => d.Domain).IsRequired().HasMaxLength(500);
+        builder.Property(d => d.VerificationToken).IsRequired().HasMaxLength(200);
+        builder.Property(d => d.TxtRecordName).IsRequired().HasMaxLength(600);
+        builder.Property(d => d.TxtRecordValue).IsRequired().HasMaxLength(300);
+        builder.Property(d => d.Status).HasConversion<string>().HasMaxLength(50);
+        builder.Property(d => d.FailureReason).HasMaxLength(2000);
+
+        builder.HasOne(d => d.Tenant)
+            .WithMany()
+            .HasForeignKey(d => d.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasIndex(d => d.Domain).IsUnique();
+        builder.HasIndex(d => d.TenantId);
+        builder.HasIndex(d => d.Status);
+    }
+}
+
+public class TenantEmailDomainConfiguration : IEntityTypeConfiguration<TenantEmailDomain>
+{
+    public void Configure(EntityTypeBuilder<TenantEmailDomain> builder)
+    {
+        builder.ToTable("TenantEmailDomains");
+        builder.HasKey(d => d.Id);
+
+        builder.Property(d => d.Id).HasMaxLength(128);
+        builder.Property(d => d.TenantId).IsRequired().HasMaxLength(128);
+        builder.Property(d => d.Domain).IsRequired().HasMaxLength(253);
+        builder.Property(d => d.VerificationToken).IsRequired().HasMaxLength(200);
+        builder.Property(d => d.TxtRecordName).IsRequired().HasMaxLength(300);
+        builder.Property(d => d.TxtRecordValue).IsRequired().HasMaxLength(300);
+        builder.Property(d => d.Status).HasConversion<string>().HasMaxLength(50);
+        builder.Property(d => d.FailureReason).HasMaxLength(2000);
+
+        builder.HasOne(d => d.Tenant)
+            .WithMany()
+            .HasForeignKey(d => d.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // A tenant claims a domain once (a removed claim is reopened); several tenants may claim the same domain,
+        // but only one can hold it verified, which the admin API enforces on verification.
+        builder.HasIndex(d => new { d.TenantId, d.Domain }).IsUnique();
+        builder.HasIndex(d => new { d.Domain, d.Status });
     }
 }

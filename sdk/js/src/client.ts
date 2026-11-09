@@ -30,16 +30,13 @@ import type {
  * ```
  */
 export class OlusoClient {
-  private config: Required<Pick<OlusoConfig, 'serverUrl' | 'tenant'>> & OlusoConfig;
+  private config: Required<Pick<OlusoConfig, 'serverUrl'>> & OlusoConfig;
   private fetchFn: typeof fetch;
   private listeners: Map<OlusoEventType | '*', Set<OlusoEventListener>> = new Map();
 
   constructor(config: OlusoConfig) {
     if (!config.serverUrl) {
       throw new Error('serverUrl is required');
-    }
-    if (!config.tenant) {
-      throw new Error('tenant is required');
     }
 
     this.config = {
@@ -50,10 +47,10 @@ export class OlusoClient {
   }
 
   /**
-   * Get journey information including form fields
+   * Get journey information including form fields. Journeys are named by slug.
    */
-  async getJourney(policyId: string): Promise<JourneyInfo> {
-    const response = await this.request(`/api/public/journeys/${policyId}`);
+  async getJourney(slug: string): Promise<JourneyInfo> {
+    const response = await this.request<JourneyInfo>(`/api/public/journeys/${encodeURIComponent(slug)}`);
     return response;
   }
 
@@ -61,7 +58,7 @@ export class OlusoClient {
    * Submit data to a data collection journey (waitlist, contact, survey, etc.)
    */
   async submit(
-    policyId: string,
+    slug: string,
     data: Record<string, unknown>,
     options?: {
       /** Client-side metadata */
@@ -71,7 +68,7 @@ export class OlusoClient {
     }
   ): Promise<SubmissionResult> {
     try {
-      const result = await this.request(`/api/public/journeys/${policyId}/submit`, {
+      const result = await this.request<SubmissionResult>(`/api/public/journeys/${encodeURIComponent(slug)}/submit`, {
         method: 'POST',
         body: {
           data,
@@ -86,7 +83,7 @@ export class OlusoClient {
 
       this.emit({
         type: 'submission:success',
-        journeyId: policyId,
+        slug,
         data: result,
       });
 
@@ -94,7 +91,7 @@ export class OlusoClient {
     } catch (error) {
       this.emit({
         type: 'submission:error',
-        journeyId: policyId,
+        slug,
         error: error instanceof Error ? error : new Error(String(error)),
       });
       throw error;
@@ -102,16 +99,19 @@ export class OlusoClient {
   }
 
   /**
-   * Start a multi-step journey session
+   * Start a multi-step journey and run its first step. Without data the session's `step`
+   * is the first step to render; with data, that is the first step's input.
    */
-  async startJourney(policyId: string): Promise<JourneySession> {
-    const session = await this.request(`/api/public/journeys/${policyId}/start`, {
-      method: 'POST',
-    });
+  async startJourney(slug: string, data?: Record<string, unknown>): Promise<JourneySession> {
+    const session = await this.request<JourneySession>(
+      `/api/public/journeys/${encodeURIComponent(slug)}/start`,
+      { method: 'POST', body: { data } }
+    );
 
     this.emit({
       type: 'journey:started',
-      journeyId: policyId,
+      slug: session.slug,
+      sessionId: session.sessionId,
       data: session,
     });
 
@@ -119,20 +119,41 @@ export class OlusoClient {
   }
 
   /**
-   * Submit data for the current step in a multi-step journey
+   * Start a sign-in (or any authentication) journey for a public client. When the session completes it carries an
+   * authorization code, redeemed at the token endpoint with the PKCE verifier and redirect_uri "postmessage". Use
+   * this when your app keeps its own tokens; OlusoAuth.mountSignIn does the whole round trip for you.
+   */
+  async startAuthJourney(slug: string, auth: { clientId: string; codeChallenge: string; scope?: string }, data?: Record<string, unknown>): Promise<JourneySession> {
+    const session = await this.request<JourneySession>(
+      `/api/public/journeys/${encodeURIComponent(slug)}/start`,
+      {
+        method: 'POST',
+        body: { data, clientId: auth.clientId, codeChallenge: auth.codeChallenge, codeChallengeMethod: 'S256', scope: auth.scope },
+      }
+    );
+
+    this.emit({ type: 'journey:started', slug: session.slug, sessionId: session.sessionId, data: session });
+    return session;
+  }
+
+  /**
+   * Submit input (or an action such as "resend") for the session's current step.
+   * The result is the session afterwards: the next step to render, or the completion.
    */
   async submitStep(
     sessionId: string,
-    data: Record<string, unknown>
+    data?: Record<string, unknown>,
+    action?: string
   ): Promise<StepResult> {
-    const result = await this.request(`/api/public/journeys/sessions/${sessionId}/step`, {
-      method: 'POST',
-      body: { data },
-    });
+    const result = await this.request<StepResult>(
+      `/api/public/journeys/sessions/${encodeURIComponent(sessionId)}/step`,
+      { method: 'POST', body: { data, action } }
+    );
 
     this.emit({
-      type: result.completed ? 'journey:completed' : 'journey:step',
-      journeyId: sessionId,
+      type: result.completed ? 'journey:completed' : result.success ? 'journey:step' : 'journey:error',
+      slug: result.slug,
+      sessionId,
       data: result,
     });
 
@@ -140,22 +161,47 @@ export class OlusoClient {
   }
 
   /**
-   * Get current session state
+   * Submit the current step the way a form posts it: every field, files under their field's name, and the
+   * clicked button's name and value. Use this for steps with file fields; `action` is a step action such as "init".
    */
-  async getSession(sessionId: string): Promise<JourneySession> {
-    return this.request(`/api/public/journeys/sessions/${sessionId}`);
+  async submitStepForm(sessionId: string, form: FormData, action?: string): Promise<StepResult> {
+    if (action) form.set('__journey_action', action);
+    const result = await this.request<StepResult>(
+      `/api/public/journeys/sessions/${encodeURIComponent(sessionId)}/step`,
+      { method: 'POST', body: form }
+    );
+
+    this.emit({
+      type: result.completed ? 'journey:completed' : result.success ? 'journey:step' : 'journey:error',
+      slug: result.slug,
+      sessionId,
+      data: result,
+    });
+
+    return result;
+  }
+
+  /** The server this client talks to */
+  get serverUrl(): string {
+    return this.config.serverUrl;
   }
 
   /**
-   * Generate URL for redirect-based journey (for auth flows)
+   * Get where a multi-step session stands (status, current step), without running it
    */
-  getJourneyUrl(policyId: string, options?: {
+  async getSession(sessionId: string): Promise<JourneySession> {
+    return this.request<JourneySession>(`/api/public/journeys/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  /**
+   * URL of the hosted journey page (/journey/start/{slug}) to redirect to
+   */
+  getJourneyUrl(slug: string, options?: {
     redirectUri?: string;
     state?: string;
   }): string {
-    const params = new URLSearchParams({
-      tenant: this.config.tenant,
-    });
+    const params = new URLSearchParams();
+    if (this.config.tenant) params.set('tenant', this.config.tenant);
 
     if (options?.redirectUri) {
       params.set('redirect_uri', options.redirectUri);
@@ -164,20 +210,18 @@ export class OlusoClient {
       params.set('state', options.state);
     }
 
-    return `${this.config.serverUrl}/journey/${policyId}?${params}`;
+    return `${this.config.serverUrl}/journey/start/${encodeURIComponent(slug)}?${params}`;
   }
 
   /**
-   * Generate iframe embed URL
+   * URL of the hosted journey page (/journey/start/{slug}) for an iframe
    */
-  getEmbedUrl(policyId: string, options?: {
+  getEmbedUrl(slug: string, options?: {
     theme?: 'light' | 'dark';
     hideHeader?: boolean;
   }): string {
-    const params = new URLSearchParams({
-      tenant: this.config.tenant,
-      embed: 'true',
-    });
+    const params = new URLSearchParams({ embed: 'true' });
+    if (this.config.tenant) params.set('tenant', this.config.tenant);
 
     if (options?.theme) {
       params.set('theme', options.theme);
@@ -186,7 +230,7 @@ export class OlusoClient {
       params.set('hideHeader', 'true');
     }
 
-    return `${this.config.serverUrl}/journey/${policyId}?${params}`;
+    return `${this.config.serverUrl}/journey/start/${encodeURIComponent(slug)}?${params}`;
   }
 
   /**
@@ -226,19 +270,29 @@ export class OlusoClient {
     }
   ): Promise<T> {
     const url = `${this.config.serverUrl}${path}`;
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Tenant-ID': this.config.tenant,
-    };
+    const method = options?.method || 'GET';
+    const isForm = typeof FormData !== 'undefined' && options?.body instanceof FormData;
+    const headers: Record<string, string> = {};
+    if (this.config.tenant) {
+      headers['X-Tenant-ID'] = this.config.tenant;
+    }
+    // A form sets its own multipart boundary.
+    if (!isForm) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (this.config.apiKey) {
       headers['X-API-Key'] = this.config.apiKey;
     }
 
+    if (this.config.headers) {
+      Object.assign(headers, await this.config.headers({ method, url }));
+    }
+
     const response = await this.fetchFn(url, {
-      method: options?.method || 'GET',
+      method,
       headers,
-      body: options?.body ? JSON.stringify(options.body) : undefined,
+      body: options?.body === undefined ? undefined : isForm ? (options.body as FormData) : JSON.stringify(options.body),
       credentials: 'include', // Include cookies for session management
     });
 

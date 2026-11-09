@@ -51,6 +51,10 @@ public interface IJourneySubmissionStore
         DateTime? from = null,
         DateTime? to = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>The submission a journey run produced, or null (also for stores that don't support the lookup).</summary>
+    Task<JourneySubmission?> GetByJourneyAsync(string journeyId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<JourneySubmission?>(null);
 }
 
 /// <summary>
@@ -149,29 +153,3 @@ public class SubmissionMetadata
     public string? Locale { get; set; }
 }
 
-/// <summary>
-/// Status of a submission
-/// </summary>
-public enum SubmissionStatus
-{
-    /// <summary>New unreviewed submission</summary>
-    New,
-
-    /// <summary>Submission has been reviewed</summary>
-    Reviewed,
-
-    /// <summary>Submission is being processed</summary>
-    Processing,
-
-    /// <summary>Submission has been approved/accepted</summary>
-    Approved,
-
-    /// <summary>Submission has been rejected</summary>
-    Rejected,
-
-    /// <summary>Submission requires follow-up</summary>
-    FollowUp,
-
-    /// <summary>Submission has been archived</summary>
-    Archived
-}

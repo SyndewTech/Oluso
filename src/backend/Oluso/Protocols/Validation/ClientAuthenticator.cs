@@ -1,9 +1,10 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Core.Domain.Entities;
@@ -11,6 +12,8 @@ using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
+using Oluso.Core.Services;
+using Oluso.Protocols.Mtls;
 
 namespace Oluso.Protocols.Validation;
 
@@ -20,11 +23,12 @@ namespace Oluso.Protocols.Validation;
 public class ClientAuthenticator : IClientAuthenticator
 {
     private readonly IClientStore _clientStore;
-    private readonly ITenantContext _tenantContext;
-    private readonly IConfiguration _configuration;
+    private readonly IIssuerResolver _issuerResolver;
     private readonly OidcEndpointConfiguration _endpointConfig;
     private readonly IDistributedCache _cache;
-    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IClientCertificateExtractor _certExtractor;
+    private readonly MtlsOptions _mtlsOptions;
+    private readonly ILogger<ClientAuthenticator> _logger;
 
     // Cache for JTI replay protection (5 minute window)
     private const string JtiCachePrefix = "oluso:client:jwt:jti:";
@@ -32,18 +36,20 @@ public class ClientAuthenticator : IClientAuthenticator
 
     public ClientAuthenticator(
         IClientStore clientStore,
-        ITenantContext tenantContext,
-        IConfiguration configuration,
+        IIssuerResolver issuerResolver,
         IOptions<OidcEndpointConfiguration> endpointConfig,
         IDistributedCache cache,
-        IHttpContextAccessor httpContextAccessor)
+        IClientCertificateExtractor certExtractor,
+        MtlsOptions mtlsOptions,
+        ILogger<ClientAuthenticator> logger)
     {
         _clientStore = clientStore;
-        _tenantContext = tenantContext;
-        _configuration = configuration;
+        _issuerResolver = issuerResolver;
         _endpointConfig = endpointConfig.Value;
         _cache = cache;
-        _httpContextAccessor = httpContextAccessor;
+        _certExtractor = certExtractor;
+        _mtlsOptions = mtlsOptions;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -120,7 +126,12 @@ public class ClientAuthenticator : IClientAuthenticator
         if (jwtResult != null)
             return jwtResult;
 
-        // 4. Try public client (client_id only, no secret)
+        // 4. Try tls_client_auth / self_signed_tls_client_auth (mTLS)
+        var mtlsResult = await TryMtlsClientAuthAsync(request, cancellationToken);
+        if (mtlsResult != null)
+            return mtlsResult;
+
+        // 5. Try public client (client_id only, no secret)
         var publicResult = await TryPublicClientAsync(request, cancellationToken);
         if (publicResult != null)
             return publicResult;
@@ -152,6 +163,13 @@ public class ClientAuthenticator : IClientAuthenticator
 
             var clientId = Uri.UnescapeDataString(credentials.Substring(0, separatorIndex));
             var clientSecret = Uri.UnescapeDataString(credentials.Substring(separatorIndex + 1));
+
+            // RFC 6749 §2.3.1: an empty password means the client presented no secret.
+            // IdentityModel's OidcClient uses this form (Basic base64("client_id:")) for
+            // public clients under its default AuthorizationHeader credential style. Treat
+            // it as a public-client attempt rather than a failed client_secret_basic.
+            if (string.IsNullOrEmpty(clientSecret))
+                return await ValidatePublicClientAsync(clientId, cancellationToken);
 
             return await ValidateClientSecretAsync(clientId, clientSecret, ClientAuthenticationMethod.ClientSecretBasic, cancellationToken);
         }
@@ -264,7 +282,7 @@ public class ClientAuthenticator : IClientAuthenticator
         }
 
         // 4. Validate 'aud' claim - must contain token endpoint URL or issuer
-        var issuer = GetIssuer();
+        var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
         var tokenEndpoint = $"{issuer}{_endpointConfig.TokenEndpoint}";
         var validAudiences = new[] { issuer, tokenEndpoint };
 
@@ -288,27 +306,10 @@ public class ClientAuthenticator : IClientAuthenticator
             };
         }
 
-        // 6. Validate 'jti' for replay protection
+        // 6. JTI replay protection is performed after signature validation (step 8b)
+        //    per RFC 7523: only cache JTIs from cryptographically verified JWTs
+        //    to prevent replay-cache poisoning attacks with forged tokens.
         var jti = jwt.Id;
-        if (!string.IsNullOrEmpty(jti))
-        {
-            var jtiCacheKey = $"{JtiCachePrefix}{clientId}:{jti}";
-            var existing = await _cache.GetAsync(jtiCacheKey, cancellationToken);
-            if (existing != null)
-            {
-                return new ClientAuthenticationResult
-                {
-                    Error = OidcConstants.Errors.InvalidClient,
-                    ErrorDescription = "JWT has already been used (replay detected)"
-                };
-            }
-            // Store JTI to prevent replay
-            var options = new DistributedCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = JtiCacheDuration
-            };
-            await _cache.SetAsync(jtiCacheKey, new byte[] { 1 }, options, cancellationToken);
-        }
 
         // 7. Get signing key and validate signature
         var algorithm = jwt.Header.Alg;
@@ -329,6 +330,15 @@ public class ClientAuthenticator : IClientAuthenticator
                 try
                 {
                     var jwk = new JsonWebKey(secret.Value);
+
+                    // Ensure the JWK has the algorithm set for CryptoProviderFactory resolution.
+                    // Per RFC 7517 Section 4.4, "alg" is optional on the JWK — when absent,
+                    // infer it from the JWT header's "alg" claim so signature validation works.
+                    if (string.IsNullOrEmpty(jwk.Alg) && !string.IsNullOrEmpty(algorithm))
+                    {
+                        jwk.Alg = algorithm;
+                    }
+
                     var kid = jwt.Header.Kid;
                     if (string.IsNullOrEmpty(kid) || jwk.Kid == kid)
                     {
@@ -348,7 +358,7 @@ public class ClientAuthenticator : IClientAuthenticator
                 try
                 {
                     var certBytes = Convert.FromBase64String(secret.Value);
-                    var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(certBytes);
+                    var cert = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(certBytes);
                     var certKey = new X509SecurityKey(cert);
                     var kid = jwt.Header.Kid;
                     if (string.IsNullOrEmpty(kid) || certKey.KeyId == kid)
@@ -413,6 +423,27 @@ public class ClientAuthenticator : IClientAuthenticator
             };
         }
 
+        // 8b. JTI replay protection — only after signature is cryptographically verified.
+        //     Caching JTIs from unvalidated JWTs would allow replay-cache poisoning.
+        if (!string.IsNullOrEmpty(jti))
+        {
+            var jtiCacheKey = $"{JtiCachePrefix}{clientId}:{jti}";
+            var existing = await _cache.GetAsync(jtiCacheKey, cancellationToken);
+            if (existing != null)
+            {
+                return new ClientAuthenticationResult
+                {
+                    Error = OidcConstants.Errors.InvalidClient,
+                    ErrorDescription = "JWT has already been used (replay detected)"
+                };
+            }
+            var cacheOptions = new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = JtiCacheDuration
+            };
+            await _cache.SetAsync(jtiCacheKey, new byte[] { 1 }, cacheOptions, cancellationToken);
+        }
+
         return new ClientAuthenticationResult
         {
             Client = client,
@@ -420,23 +451,186 @@ public class ClientAuthenticator : IClientAuthenticator
         };
     }
 
-    private string GetIssuer()
-    {
-        var request = _httpContextAccessor.HttpContext?.Request;
-        var baseUrl = _configuration["Oluso:IssuerUri"]
-            ?? (request != null ? $"{request.Scheme}://{request.Host}" : "https://localhost");
-
-        if (_tenantContext.HasTenant)
-        {
-            return $"{baseUrl.TrimEnd('/')}/{_tenantContext.Tenant!.Identifier}";
-        }
-
-        return baseUrl;
-    }
-
     private static bool IsSymmetricAlgorithm(string algorithm)
     {
         return algorithm.StartsWith("HS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<ClientAuthenticationResult?> TryMtlsClientAuthAsync(
+        HttpRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!_mtlsOptions.Enabled)
+            return null;
+
+        var cert = _certExtractor.Extract(request.HttpContext);
+        if (cert == null)
+            return null;
+
+        if (!request.HasFormContentType)
+            return null;
+
+        var form = await request.ReadFormAsync(cancellationToken);
+        var clientId = form["client_id"].FirstOrDefault();
+        if (string.IsNullOrEmpty(clientId))
+            return null;
+
+        var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
+        if (client == null)
+            return null;
+
+        if (client.TokenEndpointAuthMethod is not ("tls_client_auth" or "self_signed_tls_client_auth"))
+            return null;
+
+        if (!client.Enabled)
+        {
+            return new ClientAuthenticationResult
+            {
+                Error = OidcConstants.Errors.InvalidClient,
+                ErrorDescription = "Client is disabled"
+            };
+        }
+
+        return client.TokenEndpointAuthMethod == "tls_client_auth"
+            ? ValidatePkiCert(client, cert)
+            : ValidateSelfSignedCert(client, cert);
+    }
+
+    private ClientAuthenticationResult ValidatePkiCert(Client client, X509Certificate2 cert)
+    {
+        bool matched;
+
+        if (!string.IsNullOrEmpty(client.TlsClientAuthSubjectDn))
+        {
+            var presentedDn = new X500DistinguishedName(cert.SubjectName.RawData).Format(true);
+            var expectedDn = new X500DistinguishedName(client.TlsClientAuthSubjectDn).Format(true);
+            matched = string.Equals(presentedDn, expectedDn, StringComparison.OrdinalIgnoreCase);
+        }
+        else if (!string.IsNullOrEmpty(client.TlsClientAuthSanDns))
+        {
+            matched = CertHasSan(cert, client.TlsClientAuthSanDns, SanType.DnsName);
+        }
+        else if (!string.IsNullOrEmpty(client.TlsClientAuthSanUri))
+        {
+            matched = CertHasSan(cert, client.TlsClientAuthSanUri, SanType.UniformResourceIdentifier);
+        }
+        else if (!string.IsNullOrEmpty(client.TlsClientAuthSanEmail))
+        {
+            matched = CertHasSan(cert, client.TlsClientAuthSanEmail, SanType.Rfc822Name);
+        }
+        else if (!string.IsNullOrEmpty(client.TlsClientAuthSanIp))
+        {
+            matched = CertHasSan(cert, client.TlsClientAuthSanIp, SanType.IpAddress);
+        }
+        else
+        {
+            return new ClientAuthenticationResult
+            {
+                Error = OidcConstants.Errors.InvalidClient,
+                ErrorDescription = "Client is configured for tls_client_auth but has no certificate identity registered"
+            };
+        }
+
+        if (!matched)
+        {
+            _logger.LogWarning("mTLS certificate identity mismatch for client {ClientId}", client.ClientId);
+            return new ClientAuthenticationResult
+            {
+                Error = OidcConstants.Errors.InvalidClient,
+                ErrorDescription = "Client certificate does not match registered identity"
+            };
+        }
+
+        return new ClientAuthenticationResult
+        {
+            Client = client,
+            Method = ClientAuthenticationMethod.TlsClientAuth
+        };
+    }
+
+    private ClientAuthenticationResult ValidateSelfSignedCert(Client client, X509Certificate2 cert)
+    {
+        var presentedThumbprint = ComputeSha256CertThumbprint(cert);
+
+        foreach (var secret in client.ClientSecrets)
+        {
+            if (secret.Type != "X509CertificateBase64")
+                continue;
+            if (secret.Expiration.HasValue && secret.Expiration.Value < DateTime.UtcNow)
+                continue;
+
+            try
+            {
+                var storedCertBytes = Convert.FromBase64String(secret.Value);
+                var storedCert = new X509Certificate2(storedCertBytes);
+                if (ComputeSha256CertThumbprint(storedCert) == presentedThumbprint)
+                {
+                    return new ClientAuthenticationResult
+                    {
+                        Client = client,
+                        Method = ClientAuthenticationMethod.SelfSignedTlsClientAuth
+                    };
+                }
+            }
+            catch
+            {
+                // skip malformed stored certs
+            }
+        }
+
+        _logger.LogWarning("mTLS self-signed certificate thumbprint mismatch for client {ClientId}", client.ClientId);
+        return new ClientAuthenticationResult
+        {
+            Error = OidcConstants.Errors.InvalidClient,
+            ErrorDescription = "Client certificate does not match any registered certificate"
+        };
+    }
+
+    internal static string ComputeSha256CertThumbprint(X509Certificate2 cert)
+    {
+        var hash = SHA256.HashData(cert.RawData);
+        return Convert.ToBase64String(hash)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
+    }
+
+    private enum SanType { DnsName, Rfc822Name, UniformResourceIdentifier, IpAddress }
+
+    private static bool CertHasSan(X509Certificate2 cert, string expected, SanType type)
+    {
+        var sanExtension = cert.Extensions["2.5.29.17"];
+        if (sanExtension == null) return false;
+
+        var san = new X509SubjectAlternativeNameExtension(sanExtension.RawData, sanExtension.Critical);
+
+        return type switch
+        {
+            SanType.DnsName => san.EnumerateDnsNames().Any(d =>
+                string.Equals(d, expected, StringComparison.OrdinalIgnoreCase)),
+            SanType.IpAddress => san.EnumerateIPAddresses().Any(ip =>
+                string.Equals(ip.ToString(), expected, StringComparison.OrdinalIgnoreCase)),
+            _ => EnumerateSanStrings(san, type).Any(v =>
+                string.Equals(v, expected, StringComparison.OrdinalIgnoreCase))
+        };
+    }
+
+    private static IEnumerable<string> EnumerateSanStrings(X509SubjectAlternativeNameExtension san, SanType type)
+    {
+        var formatted = san.Format(true);
+        var prefix = type switch
+        {
+            SanType.Rfc822Name => "RFC822 Name=",
+            SanType.UniformResourceIdentifier => "URL=",
+            _ => null
+        };
+        if (prefix == null) yield break;
+
+        foreach (var line in formatted.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                yield return line[prefix.Length..];
+        }
     }
 
     private async Task<ClientAuthenticationResult?> TryPublicClientAsync(
@@ -461,6 +655,13 @@ public class ClientAuthenticator : IClientAuthenticator
         if (string.IsNullOrEmpty(clientId))
             return null;
 
+        return await ValidatePublicClientAsync(clientId, cancellationToken);
+    }
+
+    private async Task<ClientAuthenticationResult?> ValidatePublicClientAsync(
+        string clientId,
+        CancellationToken cancellationToken)
+    {
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
         if (client == null)
         {

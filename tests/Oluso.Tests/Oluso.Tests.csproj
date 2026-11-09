@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -9,19 +9,31 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
-    <PackageReference Include="xunit" Version="2.6.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.4" />
-    <PackageReference Include="Moq" Version="4.20.70" />
-    <PackageReference Include="FluentAssertions" Version="6.12.0" />
-    <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Shared\DataMigrations\*.cs" LinkBase="Shared\DataMigrations" />
+    <Compile Include="..\Shared\ProviderMigrations\*.cs" LinkBase="Shared\ProviderMigrations" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\backend\Oluso.Core.Generators\Oluso.Core.Generators.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
     <ProjectReference Include="..\..\src\backend\Oluso\Oluso.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.EntityFramework\Oluso.EntityFramework.csproj" />
     <ProjectReference Include="..\..\src\backend\Oluso.Admin\Oluso.Admin.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.Account\Oluso.Account.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.Imaging\Oluso.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\backend\Oluso.UI\Oluso.UI.csproj" />
   </ItemGroup>
 
 </Project>

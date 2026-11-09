@@ -1,0 +1,287 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Teams</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Tenant-managed groups of users. Used by approval workflows, billing
+        subscriptions, and any module that needs to address a set of people.
+      </p>
+    </div>
+    <ui-button variant="primary" (clicked)="openCreateModal()">
+      <ui-icon name="plus" class="h-4 w-4 mr-2" />
+      Add Team
+    </ui-button>
+  </div>
+
+  <!-- Type filter chips -->
+  <div class="flex items-center gap-2 flex-wrap">
+    <button
+      type="button"
+      class="px-3 py-1 text-sm rounded-full border transition-colors"
+      [class.bg-blue-600]="typeFilter() === ''"
+      [class.text-white]="typeFilter() === ''"
+      [class.border-blue-600]="typeFilter() === ''"
+      [class.bg-white]="typeFilter() !== ''"
+      [class.text-gray-700]="typeFilter() !== ''"
+      [class.border-gray-300]="typeFilter() !== ''"
+      (click)="setTypeFilter('')"
+    >
+      All types
+    </button>
+    @for (t of types; track t) {
+      <button
+        type="button"
+        class="px-3 py-1 text-sm rounded-full border transition-colors"
+        [class.bg-blue-600]="typeFilter() === t"
+        [class.text-white]="typeFilter() === t"
+        [class.border-blue-600]="typeFilter() === t"
+        [class.bg-white]="typeFilter() !== t"
+        [class.text-gray-700]="typeFilter() !== t"
+        [class.border-gray-300]="typeFilter() !== t"
+        (click)="setTypeFilter(t)"
+      >
+        {{ t }}
+      </button>
+    }
+    <div class="ml-auto flex items-center gap-2 text-sm text-gray-600">
+      <input
+        type="checkbox"
+        id="show-archived"
+        [checked]="includeArchived()"
+        (change)="toggleArchivedFilter()"
+        class="rounded border-gray-300"
+      />
+      <label for="show-archived" class="cursor-pointer">Show archived</label>
+    </div>
+  </div>
+
+  <!-- Teams Table -->
+  <ui-data-table
+    [loading]="loading()"
+    [empty]="teams().length === 0"
+    emptyMessage="No teams yet. Create one to start grouping users."
+    [searchable]="true"
+    searchPlaceholder="Search by code, name, or description..."
+    [paginated]="true"
+    [page]="currentPage()"
+    [pageSize]="pageSize"
+    [totalCount]="totalCount()"
+    [totalPages]="totalPages()"
+    [initialSearch]="searchTerm"
+    (searchChange)="onSearch($event)"
+    (pageChange)="onPageChange($event)"
+  >
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Members</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Visibility</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+          <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="bg-white divide-y divide-gray-200">
+        @for (team of teams(); track team.id) {
+          <tr
+            class="hover:bg-gray-50 cursor-pointer"
+            [class.opacity-60]="!team.isActive"
+            (click)="goToDetail(team)"
+          >
+            <td class="px-6 py-4">
+              <div class="font-medium text-gray-900">{{ team.name }}</div>
+              <div class="flex items-center gap-2 mt-0.5">
+                <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{{ team.code }}</code>
+                @if (team.parentTeamId) {
+                  <ui-icon name="chevron-up" class="h-3 w-3 text-gray-400" />
+                  <span class="text-xs text-gray-500">nested</span>
+                }
+                @if (team.managedBy) {
+                  <ui-badge variant="info">Managed by {{ managedByLabel(team) }}</ui-badge>
+                }
+              </div>
+              @if (team.description) {
+                <div class="text-xs text-gray-500 mt-1 line-clamp-1">{{ team.description }}</div>
+              }
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <ui-badge [variant]="typeBadgeVariant(team.type)">{{ team.type }}</ui-badge>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+              {{ team.memberCount }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              {{ team.visibility === 'Private' ? 'Private' : 'Tenant-wide' }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              @if (team.isActive) {
+                <ui-badge variant="success">Active</ui-badge>
+              } @else {
+                <ui-badge variant="default">Archived</ui-badge>
+              }
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right">
+              <div class="flex items-center justify-end gap-2">
+                <button
+                  (click)="goToDetail(team); $event.stopPropagation()"
+                  class="p-1 text-gray-400 hover:text-blue-600"
+                  title="Manage"
+                >
+                  <ui-icon name="cog" class="h-4 w-4" />
+                </button>
+                @if (team.managedBy) {
+                  <!-- A module maintains this team: no archive or restore here. -->
+                } @else if (team.isActive) {
+                  <button
+                    (click)="openArchiveModal(team); $event.stopPropagation()"
+                    class="p-1 text-gray-400 hover:text-amber-600"
+                    title="Archive team"
+                  >
+                    <ui-icon name="archive-box" class="h-4 w-4" />
+                  </button>
+                } @else {
+                  <button
+                    (click)="restoreTeam(team); $event.stopPropagation()"
+                    class="p-1 text-gray-400 hover:text-green-600"
+                    title="Restore team"
+                  >
+                    <ui-icon name="arrow-uturn-left" class="h-4 w-4" />
+                  </button>
+                }
+              </div>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </ui-data-table>
+
+  <!-- Create modal -->
+  <ui-modal
+    [open]="showCreateModal()"
+    title="Add Team"
+    size="md"
+    (closeClicked)="closeCreateModal()"
+  >
+    <form (ngSubmit)="createTeam()" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Code <span class="text-red-500">*</span></label>
+        <input
+          type="text"
+          [(ngModel)]="formData.code"
+          name="code"
+          required
+          maxlength="50"
+          placeholder="FINANCE, AUDIT-LAGOS"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        />
+        <p class="text-xs text-gray-500 mt-1">
+          Stable identifier. Unique per tenant. Used by integrations + workflow definitions.
+        </p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Name <span class="text-red-500">*</span></label>
+        <input
+          type="text"
+          [(ngModel)]="formData.name"
+          name="name"
+          required
+          maxlength="200"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Description</label>
+        <textarea
+          [(ngModel)]="formData.description"
+          name="description"
+          rows="2"
+          maxlength="2000"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        ></textarea>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Type</label>
+          <select
+            [(ngModel)]="formData.type"
+            name="type"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          >
+            @for (t of types; track t) {
+              <option [value]="t">{{ t }}</option>
+            }
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700">Visibility</label>
+          <select
+            [(ngModel)]="formData.visibility"
+            name="visibility"
+            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          >
+            <option value="TenantWide">Tenant-wide</option>
+            <option value="Private">Private (members + admins only)</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700">Parent team (optional)</label>
+        <select
+          [(ngModel)]="formData.parentTeamId"
+          name="parentTeamId"
+          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        >
+          <option value="">— None (top-level team) —</option>
+          @for (p of parentOptions(); track p.id) {
+            <option [value]="p.id">{{ p.name }} ({{ p.code }})</option>
+          }
+        </select>
+        <p class="text-xs text-gray-500 mt-1">
+          Nesting is unlimited. A subscription on the parent covers all descendants.
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-4 border-t">
+        <ui-button type="button" variant="secondary" (clicked)="closeCreateModal()">Cancel</ui-button>
+        <ui-button type="submit" variant="primary" [disabled]="saving() || !formData.code || !formData.name">
+          {{ saving() ? 'Creating...' : 'Create Team' }}
+        </ui-button>
+      </div>
+    </form>
+  </ui-modal>
+
+  <!-- Archive confirmation -->
+  <ui-modal
+    [open]="showArchiveModal()"
+    title="Archive Team"
+    size="sm"
+    (closeClicked)="closeArchiveModal()"
+  >
+    @if (selectedTeam(); as team) {
+      <p class="text-sm text-gray-700">
+        Archive <strong>{{ team.name }}</strong>? It'll stop appearing in pickers but
+        historical references (approvals, subscriptions) will still resolve so reports
+        stay intact.
+      </p>
+      <p class="text-xs text-gray-500 mt-2">
+        Use <em>Restore</em> later if needed.
+      </p>
+      <div class="flex justify-end gap-3 pt-4 border-t mt-4">
+        <ui-button variant="secondary" (clicked)="closeArchiveModal()">Cancel</ui-button>
+        <ui-button variant="danger" (clicked)="confirmArchive(true)" [disabled]="saving()">
+          Archive incl. children
+        </ui-button>
+        <ui-button variant="danger" (clicked)="confirmArchive(false)" [disabled]="saving()">
+          Archive only this
+        </ui-button>
+      </div>
+    }
+  </ui-modal>
+</div>

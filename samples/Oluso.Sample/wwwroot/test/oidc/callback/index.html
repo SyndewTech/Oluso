@@ -13,33 +13,71 @@
             align-items: center;
             justify-content: center;
             margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
             color: #fff;
         }
         .container {
             background: rgba(255,255,255,0.98);
             border-radius: 16px;
             padding: 2.5rem;
-            max-width: 500px;
-            width: 90%;
+            max-width: 800px;
+            width: 100%;
             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
             color: #1a1a2e;
         }
-        h2 { margin-top: 0; }
-        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 1rem; border-radius: 8px; }
+        h2 { margin-top: 0; color: #1e293b; }
+        h3 { color: #334155; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
         .error { background: #f8d7da; border: 1px solid #f5c6cb; padding: 1rem; border-radius: 8px; }
+        .info { background: #e7f3ff; border: 1px solid #b6d4fe; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
         code {
             display: block;
-            background: #f1f5f9;
+            background: #1e293b;
+            color: #e2e8f0;
             padding: 0.75rem;
             border-radius: 6px;
             word-break: break-all;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             margin: 0.5rem 0;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .token-section {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        .token-section h4 {
+            margin: 0 0 0.5rem 0;
+            color: #475569;
+            font-size: 0.9rem;
+        }
+        .claims-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .claims-table th, .claims-table td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .claims-table th {
+            background: #f1f5f9;
+            font-weight: 600;
+            color: #475569;
+        }
+        .claims-table td:first-child {
+            font-family: monospace;
+            color: #7c3aed;
         }
         .btn {
             display: inline-block;
             padding: 0.75rem 1.5rem;
-            background: linear-gradient(135deg, #f97316 0%, #c2410c 100%);
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
             color: white;
             border: none;
             border-radius: 8px;
@@ -47,19 +85,34 @@
             text-decoration: none;
             font-weight: 500;
             margin-top: 1rem;
+            margin-right: 0.5rem;
         }
         .btn:hover { opacity: 0.9; }
+        .btn.secondary {
+            background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+        }
         .spinner {
             width: 40px;
             height: 40px;
             border: 3px solid #e5e7eb;
-            border-top-color: #f97316;
+            border-top-color: #3b82f6;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 1rem;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         .loading { text-align: center; }
+        .copy-btn {
+            background: #64748b;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            float: right;
+        }
+        .copy-btn:hover { background: #475569; }
     </style>
 </head>
 <body>
@@ -72,61 +125,219 @@
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            var urlParams = new URLSearchParams(window.location.search);
-            var code = urlParams.get('code');
-            var state = urlParams.get('state');
-            var error = urlParams.get('error');
-            var errorDesc = urlParams.get('error_description');
+        const config = {
+            tokenEndpoint: '/connect/token',
+            clientId: 'test-client',
+            clientSecret: 'test-secret',
+            redirectUri: window.location.origin + '/test/oidc/callback'
+        };
 
-            var loading = document.getElementById('loading');
-            var result = document.getElementById('result');
+        document.addEventListener('DOMContentLoaded', async function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const state = urlParams.get('state');
+            const error = urlParams.get('error');
+            const errorDesc = urlParams.get('error_description');
 
-            setTimeout(function() {
-                loading.style.display = 'none';
-                result.style.display = 'block';
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
 
-                if (error) {
-                    result.innerHTML = '<div class="error">' +
-                        '<h2>Authorization Failed</h2>' +
-                        '<p><strong>Error:</strong> ' + error + '</p>' +
-                        '<p><strong>Description:</strong> ' + (errorDesc || 'Unknown error') + '</p>' +
-                        '</div>' +
-                        '<a href="/test/oidc.html" class="btn">Try Again</a>';
-                    return;
-                }
+            if (error) {
+                showError(error, errorDesc);
+                return;
+            }
 
-                if (code) {
-                    // Validate state
-                    var savedState = sessionStorage.getItem('oidc_state');
-                    if (state !== savedState) {
-                        result.innerHTML = '<div class="error">' +
-                            '<h2>State Mismatch</h2>' +
-                            '<p>The state parameter does not match. This could indicate a CSRF attack.</p>' +
-                            '<p><strong>Expected:</strong> ' + (savedState || 'none') + '</p>' +
-                            '<p><strong>Received:</strong> ' + state + '</p>' +
-                            '</div>' +
-                            '<a href="/test/oidc.html" class="btn">Try Again</a>';
-                        return;
-                    }
+            if (!code) {
+                showError('no_code', 'No authorization code was received in the callback.');
+                return;
+            }
 
-                    result.innerHTML = '<div class="success">' +
-                        '<h2>Authorization Successful!</h2>' +
-                        '<p><strong>Authorization Code:</strong></p>' +
-                        '<code>' + code + '</code>' +
-                        '<p><strong>State:</strong> ' + state + '</p>' +
-                        '<p style="color: #666; margin-top: 1rem;">Next step: Exchange this code for tokens at the token endpoint.</p>' +
-                        '</div>' +
-                        '<a href="/test/oidc.html" class="btn">Start Over</a>';
-                } else {
-                    result.innerHTML = '<div class="error">' +
-                        '<h2>No Authorization Code</h2>' +
-                        '<p>No authorization code was received in the callback.</p>' +
-                        '</div>' +
-                        '<a href="/test/oidc.html" class="btn">Try Again</a>';
-                }
-            }, 500);
+            // Validate state
+            const savedState = sessionStorage.getItem('oidc_state');
+            if (state !== savedState) {
+                showError('state_mismatch', `State parameter does not match. Expected: ${savedState || 'none'}, Received: ${state}`);
+                return;
+            }
+
+            // Exchange code for tokens
+            try {
+                const tokens = await exchangeCodeForTokens(code);
+                showSuccess(code, state, tokens);
+            } catch (e) {
+                showError('token_exchange_failed', e.message);
+            }
         });
+
+        async function exchangeCodeForTokens(code) {
+            const body = new URLSearchParams();
+            body.append('grant_type', 'authorization_code');
+            body.append('code', code);
+            body.append('redirect_uri', config.redirectUri);
+            body.append('client_id', config.clientId);
+            body.append('client_secret', config.clientSecret);
+
+            const response = await fetch(config.tokenEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: body.toString()
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error_description || errorData.error || `HTTP ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        function decodeJwt(token) {
+            try {
+                const parts = token.split('.');
+                if (parts.length !== 3) return null;
+
+                const payload = parts[1];
+                const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+                return JSON.parse(decoded);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function formatTimestamp(ts) {
+            if (!ts) return 'N/A';
+            const date = new Date(ts * 1000);
+            return date.toLocaleString();
+        }
+
+        function showError(error, description) {
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+
+            loading.style.display = 'none';
+            result.style.display = 'block';
+            result.innerHTML = `
+                <div class="error">
+                    <h2>Authorization Failed</h2>
+                    <p><strong>Error:</strong> ${error}</p>
+                    <p><strong>Description:</strong> ${description || 'Unknown error'}</p>
+                </div>
+                <a href="/test/oidc.html" class="btn">Try Again</a>
+            `;
+        }
+
+        function showSuccess(code, state, tokens) {
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+
+            loading.style.display = 'none';
+            result.style.display = 'block';
+
+            // Decode ID token
+            const idTokenClaims = tokens.id_token ? decodeJwt(tokens.id_token) : null;
+            const accessTokenClaims = tokens.access_token ? decodeJwt(tokens.access_token) : null;
+
+            let html = `
+                <div class="success">
+                    <h2>Authentication Successful!</h2>
+                    <p>Successfully exchanged authorization code for tokens.</p>
+                </div>
+
+                <div class="info">
+                    <strong>Authorization Code:</strong>
+                    <code>${code}</code>
+                    <strong>State:</strong> ${state}
+                </div>
+            `;
+
+            // Access Token
+            if (tokens.access_token) {
+                html += `
+                    <div class="token-section">
+                        <h4>Access Token <button class="copy-btn" onclick="copyToClipboard('${tokens.access_token}')">Copy</button></h4>
+                        <code>${tokens.access_token}</code>
+                        <p style="margin: 0.5rem 0 0; font-size: 0.85rem; color: #64748b;">
+                            Expires in: ${tokens.expires_in} seconds |
+                            Token Type: ${tokens.token_type || 'Bearer'}
+                        </p>
+                    </div>
+                `;
+            }
+
+            // ID Token
+            if (tokens.id_token) {
+                html += `
+                    <div class="token-section">
+                        <h4>ID Token <button class="copy-btn" onclick="copyToClipboard('${tokens.id_token}')">Copy</button></h4>
+                        <code>${tokens.id_token}</code>
+                    </div>
+                `;
+
+                // ID Token Claims
+                if (idTokenClaims) {
+                    html += `
+                        <h3>ID Token Claims</h3>
+                        <table class="claims-table">
+                            <tr><th>Claim</th><th>Value</th></tr>
+                    `;
+                    for (const [key, value] of Object.entries(idTokenClaims)) {
+                        let displayValue = value;
+                        if (key === 'iat' || key === 'exp' || key === 'auth_time' || key === 'nbf') {
+                            displayValue = `${value} (${formatTimestamp(value)})`;
+                        } else if (typeof value === 'object') {
+                            displayValue = JSON.stringify(value);
+                        }
+                        html += `<tr><td>${key}</td><td>${displayValue}</td></tr>`;
+                    }
+                    html += '</table>';
+                }
+            }
+
+            // Access Token Claims (if JWT)
+            if (accessTokenClaims) {
+                html += `
+                    <h3>Access Token Claims</h3>
+                    <table class="claims-table">
+                        <tr><th>Claim</th><th>Value</th></tr>
+                `;
+                for (const [key, value] of Object.entries(accessTokenClaims)) {
+                    let displayValue = value;
+                    if (key === 'iat' || key === 'exp' || key === 'auth_time' || key === 'nbf') {
+                        displayValue = `${value} (${formatTimestamp(value)})`;
+                    } else if (typeof value === 'object') {
+                        displayValue = JSON.stringify(value);
+                    }
+                    html += `<tr><td>${key}</td><td>${displayValue}</td></tr>`;
+                }
+                html += '</table>';
+            }
+
+            // Refresh Token
+            if (tokens.refresh_token) {
+                html += `
+                    <div class="token-section">
+                        <h4>Refresh Token <button class="copy-btn" onclick="copyToClipboard('${tokens.refresh_token}')">Copy</button></h4>
+                        <code>${tokens.refresh_token}</code>
+                    </div>
+                `;
+            }
+
+            html += `
+                <a href="/test/oidc.html" class="btn">Start Over</a>
+                <a href="/test/oidc.html" class="btn secondary" onclick="sessionStorage.clear()">Clear Session & Start Over</a>
+            `;
+
+            result.innerHTML = html;
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
     </script>
 </body>
 </html>

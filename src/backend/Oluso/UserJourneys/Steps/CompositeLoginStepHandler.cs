@@ -10,12 +10,20 @@ namespace Oluso.UserJourneys.Steps;
 /// Composite login step that combines local, passkey, and external login options in a single UI.
 /// Shows username/password form, passkey button, and external provider buttons.
 /// </summary>
-public class CompositeLoginStepHandler : IStepHandler
+public class CompositeLoginStepHandler : IPrimaryAuthenticationStep, IStepConfigurationTester
 {
+    public Task<StepConfigurationTestResult> TestConfigurationAsync(StepExecutionContext context, CancellationToken cancellationToken = default) =>
+        StepTestSupport.TestExternalProvidersAsync(context, "externalProviders", cancellationToken);
+
     public string StepType => "composite_login";
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
     {
+        if (await OrganizationSignInStep.TryCompleteAsync(context, cancellationToken) is { } organizationResult)
+        {
+            return organizationResult;
+        }
+
         var userService = context.ServiceProvider.GetRequiredService<IOlusoUserService>();
         var externalAuthService = context.ServiceProvider.GetService<IExternalAuthService>();
         var fido2Service = context.ServiceProvider.GetService<IFido2Service>();
@@ -29,6 +37,36 @@ public class CompositeLoginStepHandler : IStepHandler
         // Client setting can only disable if tenant allows; cannot enable if tenant disables
         var clientEnableLocalLogin = context.GetData<bool?>("enable_local_login") ?? true;
         var enableLocalLogin = tenantEnableLocalLogin && clientEnableLocalLogin;
+
+        if (ExpiredPasswordChange.IsPending(context))
+        {
+            var (changedUser, pending) = await ExpiredPasswordChange.CompleteAsync(context, userService, logger, cancellationToken);
+            if (pending != null)
+            {
+                return pending;
+            }
+
+            context.UserId = changedUser!.Id;
+            context.SetData("authenticated_at", DateTime.UtcNow);
+            context.SetData("auth_method", "pwd");
+            if (!string.IsNullOrEmpty(changedUser.TenantId))
+                context.SetData("tenant_id", changedUser.TenantId);
+            await userService.RecordLoginAsync(changedUser.Id, cancellationToken);
+            return StepHandlerResult.SuccessOrBranch(context, BuildOutputClaims(changedUser), "auth_local");
+        }
+
+        // An external sign-in waiting for the person to confirm the account its email belongs to. Once linked, the
+        // external sign-in (still held) finds the account by its login below.
+        if (externalAuthService != null
+            && ExistingAccountLink.PendingProvider(context) is { } pendingProvider
+            && !pendingProvider.StartsWith("saml:", StringComparison.OrdinalIgnoreCase))
+        {
+            var outcome = await ExistingAccountLink.ContinueAsync(context, cancellationToken);
+            if (outcome.Result != null)
+            {
+                return outcome.Result;
+            }
+        }
 
         // Check if this is an external provider callback
         if (externalAuthService != null)
@@ -113,7 +151,8 @@ public class CompositeLoginStepHandler : IStepHandler
             {
                 Scheme = p.Scheme,
                 DisplayName = p.DisplayName ?? p.Scheme,
-                IconUrl = p.IconUrl
+                IconUrl = p.IconUrl,
+                ProviderType = p.ProviderType
             }).ToList();
         }
 
@@ -123,6 +162,9 @@ public class CompositeLoginStepHandler : IStepHandler
 
         // Respect client's EnableLocalLogin setting AND step-level config
         var showLocalLogin = enableLocalLogin && context.GetConfig("showLocalLogin", true);
+
+        var settingsProvider = context.ServiceProvider.GetRequiredService<ITenantSettingsProvider>();
+        var branding = await settingsProvider.GetBrandingSettingsAsync(cancellationToken);
 
         var viewModel = new CompositeLoginViewModel
         {
@@ -138,9 +180,14 @@ public class CompositeLoginStepHandler : IStepHandler
             AllowForgotPassword = context.GetConfig("allowForgotPassword", true),
             ExternalProviders = externalProviders,
             TenantName = tenantContext.Tenant?.Name,
-            TenantLogo = tenantContext.Tenant?.Branding?.LogoUrl,
+            TenantLogo = branding.LogoUrl,
             RegistrationUrl = context.GetConfig<string>("registrationUrl", null),
-            ForgotPasswordUrl = context.GetConfig<string>("forgotPasswordUrl", null)
+            ForgotPasswordUrl = context.GetConfig<string>("forgotPasswordUrl", null),
+            // primaryAction tells the view which sign-in path to make
+            // visually dominant on screens that show all three (local /
+            // external / passkey). The view treats it as a CSS hint.
+            PrimaryAction = context.GetConfig("primaryAction", "local")!,
+            LoginLayout = context.GetConfig("loginLayout", "standard")!
         };
 
         return StepHandlerResult.ShowUi("Journey/_CompositeLogin", viewModel);
@@ -179,7 +226,7 @@ public class CompositeLoginStepHandler : IStepHandler
                     cancellationToken);
             }
 
-            context.SetData("fido2_assertion_id", options.AssertionId);
+            JourneyPasskeyAssertion.Remember(context, options.AssertionId);
 
             logger.LogDebug("Created FIDO2 assertion options for passkey login");
 
@@ -211,7 +258,8 @@ public class CompositeLoginStepHandler : IStepHandler
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        var assertionId = context.GetInput("assertionId") ?? context.GetData<string>("fido2_assertion_id");
+        // Only the assertion this journey asked for, once.
+        var assertionId = JourneyPasskeyAssertion.Take(context);
 
         if (string.IsNullOrEmpty(assertionId))
         {
@@ -248,12 +296,15 @@ public class CompositeLoginStepHandler : IStepHandler
 
             context.UserId = user.Id;
             context.SetData("authenticated_at", DateTime.UtcNow);
+            context.SetData("remember_me", context.GetInput("rememberMe") is "true" or "on");
             context.SetData("auth_method", "fido2");
+            if (!string.IsNullOrEmpty(user.TenantId))
+                context.SetData("tenant_id", user.TenantId);
 
             await userService.RecordLoginAsync(user.Id, cancellationToken);
             logger.LogInformation("User {UserId} authenticated via passkey", user.Id);
 
-            return BuildSuccessResult(user, "passkey");
+            return StepHandlerResult.SuccessOrBranch(context, BuildOutputClaims(user, "passkey"), "auth_passkey");
         }
         catch (Fido2Exception ex)
         {
@@ -279,6 +330,12 @@ public class CompositeLoginStepHandler : IStepHandler
             return StepHandlerResult.ShowUi("Journey/_Lockout", null);
         }
 
+        if (result.PasswordExpired)
+        {
+            logger.LogInformation("Password expired for user {UserId}; requiring a change before sign-in", result.User!.Id);
+            return await ExpiredPasswordChange.BeginAsync(context, userService, result.User, cancellationToken);
+        }
+
         if (!result.Succeeded)
         {
             logger.LogWarning("Login failed: {Error} for {Username}", result.Error, username);
@@ -286,7 +343,8 @@ public class CompositeLoginStepHandler : IStepHandler
             var externalAuthService = context.ServiceProvider.GetService<IExternalAuthService>();
             var fido2Service = context.ServiceProvider.GetService<IFido2Service>();
             var enableLocalLoginOnFail = context.GetData<bool?>("enable_local_login") ?? true;
-            return await ShowLoginUiAsync(context, externalAuthService, fido2Service, tenantContext, enableLocalLoginOnFail, cancellationToken);
+            return (await ShowLoginUiAsync(context, externalAuthService, fido2Service, tenantContext, enableLocalLoginOnFail, cancellationToken))
+                .AsFailedAttempt();
         }
 
         var user = result.User!;
@@ -300,12 +358,19 @@ public class CompositeLoginStepHandler : IStepHandler
 
         context.UserId = user.Id;
         context.SetData("authenticated_at", DateTime.UtcNow);
+        context.SetData("remember_me", context.GetInput("rememberMe") is "true" or "on");
         context.SetData("auth_method", "pwd");
+        if (!string.IsNullOrEmpty(user.TenantId))
+            context.SetData("tenant_id", user.TenantId);
 
         await userService.RecordLoginAsync(user.Id, cancellationToken);
         logger.LogInformation("User {UserId} authenticated via local login", user.Id);
 
-        return BuildSuccessResult(user);
+        var outputClaims = BuildOutputClaims(user);
+        if (result.RequiresMfa)
+            return StepHandlerResult.SuccessOrBranch(context, outputClaims, "mfa_required", "auth_local");
+
+        return StepHandlerResult.SuccessOrBranch(context, outputClaims, "auth_local");
     }
 
     private async Task<StepHandlerResult> InitiateExternalLoginAsync(
@@ -318,7 +383,9 @@ public class CompositeLoginStepHandler : IStepHandler
         logger.LogInformation("Initiating external login with provider {Provider}", provider);
 
         var callbackUrl = $"/journey/{context.JourneyId}/callback";
-        var challengeResult = await authService.ChallengeAsync(provider, callbackUrl, cancellationToken);
+
+        var extraParams = ExternalLoginStepHandler.BuildExternalProviderParams(context);
+        var challengeResult = await authService.ChallengeAsync(provider, callbackUrl, extraParams, cancellationToken);
 
         if (!challengeResult.Succeeded)
         {
@@ -346,13 +413,41 @@ public class CompositeLoginStepHandler : IStepHandler
         var userId = await authService.FindUserByLoginAsync(provider, providerKey, cancellationToken);
         OlusoUserInfo? user = null;
 
+        var emailTrusted = await ExternalEmailTrust.IsTrustedAsync(
+            provider,
+            type => result.Claims?.FirstOrDefault(c => string.Equals(c.Key, type, StringComparison.Ordinal)).Value,
+            result.Email,
+            tenantContext.TenantId,
+            context.ServiceProvider.GetService<IExternalProviderConfigStore>(),
+            context.ServiceProvider.GetRequiredService<ITenantEmailDomainStore>(),
+            cancellationToken);
+
         if (userId != null)
         {
             user = await userService.FindByIdAsync(userId, cancellationToken);
         }
         else if (!string.IsNullOrEmpty(result.Email))
         {
-            user = await userService.FindByEmailAsync(result.Email, cancellationToken);
+            // The account with this email joins only when the provider can vouch for the address and the account's
+            // own was proven; otherwise the person confirms it with a code first.
+            var owner = await userService.FindByEmailAsync(result.Email, cancellationToken);
+            if (owner != null)
+            {
+                if (!emailTrusted || !owner.EmailVerified)
+                {
+                    logger.LogInformation(
+                        "External login from {Provider} matches account {UserId} by email; asking them to confirm it", provider, owner.Id);
+                    return await ExistingAccountLink.BeginAsync(context, owner.Id, provider, providerKey, cancellationToken);
+                }
+
+                var linked = await authService.LinkLoginAsync(owner.Id, provider, providerKey, provider, cancellationToken);
+                if (!linked.Succeeded)
+                {
+                    await authService.SignOutExternalAsync(cancellationToken);
+                    return StepHandlerResult.Fail("link_failed", "Failed to link external account");
+                }
+                user = owner;
+            }
         }
 
         // Auto-provision if configured
@@ -366,13 +461,17 @@ public class CompositeLoginStepHandler : IStepHandler
                 FirstName = result.FirstName,
                 LastName = result.LastName,
                 TenantId = tenantContext.TenantId,
-                RequireEmailVerification = false
+                ClientId = context.ClientId
             }, cancellationToken);
 
             if (createResult.Succeeded)
             {
                 await authService.LinkLoginAsync(createResult.UserId!, provider, providerKey, provider, cancellationToken);
-                user = createResult.User;
+                if (emailTrusted)
+                {
+                    await userService.SetEmailVerifiedAsync(createResult.UserId!, true, cancellationToken);
+                }
+                user = await userService.FindByIdAsync(createResult.UserId!, cancellationToken);
                 logger.LogInformation("Created new user {UserId} from external provider {Provider}", user?.Id, provider);
             }
         }
@@ -391,23 +490,27 @@ public class CompositeLoginStepHandler : IStepHandler
 
         context.UserId = user.Id;
         context.SetData("authenticated_at", DateTime.UtcNow);
+        context.SetData("remember_me", context.GetInput("rememberMe") is "true" or "on");
         context.SetData("auth_method", provider.ToLower());
         context.SetData("idp", provider);
+        if (!string.IsNullOrEmpty(user.TenantId))
+            context.SetData("tenant_id", user.TenantId);
 
         await userService.RecordLoginAsync(user.Id, cancellationToken);
         logger.LogInformation("User {UserId} authenticated via external provider {Provider}", user.Id, provider);
 
-        return BuildSuccessResult(user, provider);
+        return StepHandlerResult.SuccessOrBranch(context, BuildOutputClaims(user, provider),
+            $"auth_{provider.ToLowerInvariant()}", "auth_external");
     }
 
-    private static StepHandlerResult BuildSuccessResult(ValidatedUser user)
+    private static IDictionary<string, object> BuildOutputClaims(ValidatedUser user)
     {
         var outputData = new Dictionary<string, object>
         {
             ["sub"] = user.Id,
             ["name"] = user.DisplayName ?? user.UserName,
             ["email"] = user.Email ?? "",
-            ["email_verified"] = true // Assume verified for local login
+            ["email_verified"] = user.EmailVerified
         };
 
         if (!string.IsNullOrEmpty(user.FirstName))
@@ -415,10 +518,10 @@ public class CompositeLoginStepHandler : IStepHandler
         if (!string.IsNullOrEmpty(user.LastName))
             outputData["family_name"] = user.LastName;
 
-        return StepHandlerResult.Success(outputData);
+        return outputData;
     }
 
-    private static StepHandlerResult BuildSuccessResult(OlusoUserInfo user, string? idp = null)
+    private static IDictionary<string, object> BuildOutputClaims(OlusoUserInfo user, string? idp = null)
     {
         var outputData = new Dictionary<string, object>
         {
@@ -435,7 +538,7 @@ public class CompositeLoginStepHandler : IStepHandler
         if (!string.IsNullOrEmpty(idp))
             outputData["idp"] = idp;
 
-        return StepHandlerResult.Success(outputData);
+        return outputData;
     }
 }
 
@@ -457,4 +560,19 @@ public class CompositeLoginViewModel
     public string? TenantName { get; set; }
     public string? TenantLogo { get; set; }
     public List<ExternalProviderViewModel> ExternalProviders { get; set; } = new();
+
+    /// <summary>
+    /// Which sign-in action the view should emphasise when multiple are
+    /// shown. Values: "local" (default), "external", "passkey". The view
+    /// uses this to add a primary-button class to the matching block.
+    /// </summary>
+    public string PrimaryAction { get; set; } = "local";
+
+    /// <summary>
+    /// Order the sign-in method blocks render in. Values: "standard"
+    /// (default — password, passkey, social), "social-first",
+    /// "passkey-first". The view applies a login-layout-{value} class and
+    /// CSS flex ordering does the rest.
+    /// </summary>
+    public string LoginLayout { get; set; } = "standard";
 }

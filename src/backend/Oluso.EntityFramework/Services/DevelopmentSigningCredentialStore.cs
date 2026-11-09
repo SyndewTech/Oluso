@@ -20,8 +20,18 @@ public class DevelopmentSigningCredentialStore : ISigningCredentialStore
         return Task.FromResult<SigningCredentials?>(_signingCredentials);
     }
 
+    // One in-memory key serves every tenant.
+    public Task<SigningCredentials?> GetSigningCredentialsAsync(string tenantId, CancellationToken cancellationToken) =>
+        GetSigningCredentialsAsync(cancellationToken);
+
     public Task<IEnumerable<SecurityKeyInfo>> GetValidationKeysAsync(CancellationToken cancellationToken = default)
+        => GetValidationKeysAsync(tenantId: null, cancellationToken);
+
+    public Task<IEnumerable<SecurityKeyInfo>> GetValidationKeysAsync(string? tenantId, CancellationToken cancellationToken = default)
     {
+        // Dev store uses a single in-memory key across all tenants — there's
+        // only ever one key to return, regardless of which tenant the token
+        // claims it was issued for.
         EnsureKeyExists();
 
         var keys = new List<SecurityKeyInfo>

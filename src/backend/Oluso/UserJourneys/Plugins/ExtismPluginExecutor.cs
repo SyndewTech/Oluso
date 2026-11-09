@@ -1,9 +1,14 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Extism.Sdk;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.UserJourneys;
+using NetworkAccessMode = Oluso.Core.Domain.Entities.NetworkAccessMode;
+using PluginMetadata = Oluso.Core.Domain.Entities.PluginMetadata;
+using PluginNetworkConfig = Oluso.Core.Domain.Entities.PluginNetworkConfig;
 
 namespace Oluso.UserJourneys.Plugins;
 
@@ -24,19 +29,8 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
     private readonly IPluginStore? _pluginStore;
     private readonly ILogger<ExtismPluginExecutor> _logger;
     private readonly PluginExecutorOptions _options;
+    private readonly string? _platformIssuerHost;
     private bool _disposed;
-
-    /// <summary>
-    /// Fields that should never be passed to plugins for security reasons
-    /// </summary>
-    private static readonly HashSet<string> SensitiveFields = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "password", "pwd", "pass", "passwd", "secret", "credential",
-        "token", "access_token", "refresh_token", "id_token",
-        "code", "mfa_code", "otp", "totp", "hotp", "verification_code",
-        "pin", "cvv", "cvc", "ssn", "social_security",
-        "private_key", "api_key", "apikey", "auth_code"
-    };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -48,13 +42,21 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
         IPluginWatcher pluginWatcher,
         ILogger<ExtismPluginExecutor> logger,
         IPluginStore? pluginStore = null,
-        PluginExecutorOptions? options = null)
+        PluginExecutorOptions? options = null,
+        IConfiguration? configuration = null)
     {
         _managedPluginRegistry = managedPluginRegistry;
         _pluginWatcher = pluginWatcher;
         _pluginStore = pluginStore;
         _logger = logger;
         _options = options ?? new PluginExecutorOptions();
+
+        // Used to resolve the "Self" network access mode to the platform's
+        // own host. Per-tenant custom domains are not granted via Self —
+        // admins should add them explicitly to the Whitelist if a tenant
+        // plugin needs to call its own custom domain.
+        var issuerUri = configuration?["Oluso:IssuerUri"];
+        _platformIssuerHost = Uri.TryCreate(issuerUri, UriKind.Absolute, out var uri) ? uri.Host : null;
 
         // Subscribe to plugin file changes for hot-reload
         _pluginWatcher.OnPluginChanged += OnPluginFileChanged;
@@ -66,12 +68,40 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
         PluginExecutionContext context,
         CancellationToken cancellationToken = default)
     {
-        // First check for managed (.NET) plugins
+        // First check for managed (.NET) plugins. These are 1st-party code
+        // registered at startup via OlusoBuilder.AddPlugin<T>() — we trust
+        // them and don't gate by metadata.
         var managedPlugin = _managedPluginRegistry.Get(pluginName);
         if (managedPlugin != null)
         {
             _logger.LogDebug("Executing managed plugin: {PluginName}.{FunctionName}", pluginName, functionName);
             return await managedPlugin.ExecuteAsync(functionName, context, cancellationToken);
+        }
+
+        // Gate WASM plugins by their metadata before either loading from
+        // store or executing an already-loaded one. A plugin disabled via
+        // the admin UI must stop executing immediately, even if the WASM
+        // module is still cached in _plugins from a prior run.
+        PluginMetadata? metadata = null;
+        if (_pluginStore != null)
+        {
+            metadata = await _pluginStore.GetPluginInfoAsync(pluginName, context.TenantId, cancellationToken);
+            if (metadata != null && !metadata.Enabled)
+            {
+                // Hot-disable: drop the cached module so a re-enable forces
+                // a fresh load (and therefore re-verifies the content hash).
+                if (_plugins.TryRemove(pluginName, out var disabled))
+                {
+                    disabled.Dispose();
+                }
+                _logger.LogWarning("Refusing to execute disabled plugin {PluginName}", pluginName);
+                return new PluginExecutionResult
+                {
+                    Success = false,
+                    Error = $"Plugin '{pluginName}' is disabled",
+                    Action = PluginAction.Fail
+                };
+            }
         }
 
         // Check for loaded WASM plugins
@@ -86,19 +116,44 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
             var wasmBytes = await _pluginStore.GetPluginBytesAsync(pluginName, context.TenantId, cancellationToken);
             if (wasmBytes != null)
             {
-                await LoadPluginAsync(pluginName, wasmBytes, cancellationToken);
+                // Pull the network policy alongside the bytes so the manifest
+                // we hand to Extism reflects the admin's whitelist, not the
+                // wide-open default.
+                var networkConfig = metadata != null
+                    ? await _pluginStore.GetNetworkConfigAsync(metadata.Id, cancellationToken)
+                    : null;
+
+                try
+                {
+                    await LoadPluginAsync(pluginName, wasmBytes, metadata?.ContentHash, networkConfig, cancellationToken);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // Hash mismatch and similar load-time refusals come back
+                    // here. Surface as a structured execution failure rather
+                    // than propagating an exception to the journey runner.
+                    return new PluginExecutionResult
+                    {
+                        Success = false,
+                        Error = ex.Message,
+                        Action = PluginAction.Fail
+                    };
+                }
                 return await ExecuteAsync(pluginName, functionName, context, cancellationToken);
             }
         }
 
-        // Try to load from plugin directory
+        // Try to load from plugin directory. Filesystem plugins are
+        // operator-supplied (not user-loaded) so they don't have a
+        // metadata record — load without the hash check and with the
+        // safe-default network policy (no hosts allowed).
         if (_options.PluginDirectory != null)
         {
             var pluginPath = Path.Combine(_options.PluginDirectory, $"{pluginName}.wasm");
             if (File.Exists(pluginPath))
             {
                 var wasmBytes = await File.ReadAllBytesAsync(pluginPath, cancellationToken);
-                await LoadPluginAsync(pluginName, wasmBytes, cancellationToken);
+                await LoadPluginAsync(pluginName, wasmBytes, expectedContentHash: null, networkConfig: null, cancellationToken);
                 return await ExecuteAsync(pluginName, functionName, context, cancellationToken);
             }
         }
@@ -111,10 +166,34 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
         };
     }
 
-    public Task LoadPluginAsync(string pluginName, byte[] wasmBytes, CancellationToken cancellationToken = default)
+    public Task LoadPluginAsync(string pluginName, byte[] wasmBytes, CancellationToken cancellationToken = default) =>
+        LoadPluginAsync(pluginName, wasmBytes, expectedContentHash: null, networkConfig: null, cancellationToken);
+
+    private Task LoadPluginAsync(
+        string pluginName,
+        byte[] wasmBytes,
+        string? expectedContentHash,
+        PluginNetworkConfig? networkConfig,
+        CancellationToken cancellationToken)
     {
         try
         {
+            // Verify the bytes match the metadata hash before loading. Catches
+            // tampering at the storage layer and prevents executing whatever
+            // ended up on disk if the WASM file was swapped under us.
+            if (!string.IsNullOrEmpty(expectedContentHash))
+            {
+                var actualHash = ComputeSha256(wasmBytes);
+                if (!string.Equals(actualHash, expectedContentHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError(
+                        "Refusing to load plugin {PluginName}: content hash mismatch (expected {Expected}, got {Actual})",
+                        pluginName, expectedContentHash, actualHash);
+                    throw new InvalidOperationException(
+                        $"Plugin '{pluginName}' content hash does not match metadata — refusing to load");
+                }
+            }
+
             // Unload existing plugin if present
             if (_plugins.TryRemove(pluginName, out var existing))
             {
@@ -127,15 +206,24 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
             var tempPath = Path.Combine(tempDir, $"{pluginName}.wasm");
             File.WriteAllBytes(tempPath, wasmBytes);
 
-            // Create Extism plugin with WASI support
+            var allowedHosts = ResolveAllowedHosts(pluginName, networkConfig);
+
+            // Create Extism plugin with WASI support. Note: Extism's manifest
+            // AllowedHosts gates extism_http_request — empty array means the
+            // plugin's HTTP calls all fail at the host boundary.
             var manifest = new Manifest(new PathWasmSource(tempPath))
             {
                 Config = new Dictionary<string, string>
                 {
                     { "plugin_name", pluginName }
                 },
-                AllowedHosts = new[] { "*" } // Allow network access if needed
+                AllowedHosts = allowedHosts
             };
+
+            if (networkConfig != null && networkConfig.HttpTimeoutMs > 0)
+            {
+                manifest.Timeout = TimeSpan.FromMilliseconds(networkConfig.HttpTimeoutMs);
+            }
 
             var plugin = new Plugin(manifest, new HostFunction[] { }, withWasi: true);
 
@@ -158,6 +246,80 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
         {
             _logger.LogError(ex, "Failed to load plugin: {PluginName}", pluginName);
             throw;
+        }
+    }
+
+    private static string ComputeSha256(byte[] bytes)
+    {
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Translates the admin-set network policy into the host whitelist
+    /// passed to Extism's manifest. Falls through to the safe default
+    /// (no hosts allowed) when no policy has been set.
+    /// </summary>
+    private string[] ResolveAllowedHosts(string pluginName, PluginNetworkConfig? config)
+    {
+        if (config == null)
+        {
+            // No policy row — deny network entirely. Operator-supplied
+            // filesystem plugins land here too; if they need network
+            // access, persist a metadata row + policy.
+            return Array.Empty<string>();
+        }
+
+        switch (config.AccessMode)
+        {
+            case NetworkAccessMode.None:
+                return Array.Empty<string>();
+
+            case NetworkAccessMode.Self:
+                if (string.IsNullOrEmpty(_platformIssuerHost))
+                {
+                    _logger.LogWarning(
+                        "Plugin {PluginName} requests Self network access but Oluso:IssuerUri is not configured — denying all hosts",
+                        pluginName);
+                    return Array.Empty<string>();
+                }
+                return new[] { _platformIssuerHost };
+
+            case NetworkAccessMode.Whitelist:
+                if (string.IsNullOrEmpty(config.AllowedHosts))
+                {
+                    return Array.Empty<string>();
+                }
+                try
+                {
+                    var hosts = JsonSerializer.Deserialize<List<string>>(config.AllowedHosts);
+                    return hosts != null && hosts.Count > 0
+                        ? hosts.Where(h => !string.IsNullOrWhiteSpace(h)).ToArray()
+                        : Array.Empty<string>();
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogError(ex,
+                        "Plugin {PluginName} has malformed AllowedHosts JSON — denying all hosts",
+                        pluginName);
+                    return Array.Empty<string>();
+                }
+
+            case NetworkAccessMode.All:
+                // "All" is intentionally not honoured. Sandboxed WASM
+                // plugins shouldn't have unrestricted egress — that's a
+                // platform decision, not a tenant decision, and the only
+                // legitimate "needs all egress" case is 1st-party code
+                // which should be a managed plugin (registered via
+                // OlusoBuilder.AddPlugin<T>()) and bypasses this gate
+                // entirely. The enum value is kept for migration safety.
+                _logger.LogWarning(
+                    "Plugin {PluginName} requests All network access — refused. Use Whitelist with explicit hosts, or implement as a managed (.NET) plugin if unrestricted egress is required.",
+                    pluginName);
+                return Array.Empty<string>();
+
+            default:
+                return Array.Empty<string>();
         }
     }
 
@@ -259,14 +421,19 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
                 existing.Dispose();
             }
 
-            // Create Extism plugin with WASI support from file path
+            // Hot-reloaded filesystem plugins are operator-supplied with no
+            // metadata record, so they get the safe-default network policy
+            // (no hosts allowed). Operators who need network egress should
+            // register the plugin in the database and configure a policy.
+            var allowedHosts = ResolveAllowedHosts(pluginName, config: null);
+
             var manifest = new Manifest(new PathWasmSource(filePath))
             {
                 Config = new Dictionary<string, string>
                 {
                     { "plugin_name", pluginName }
                 },
-                AllowedHosts = new[] { "*" }
+                AllowedHosts = allowedHosts
             };
 
             var plugin = new Plugin(manifest, new HostFunction[] { }, withWasi: true);
@@ -311,16 +478,16 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
 
         try
         {
-            // Prepare input - sanitize to prevent leaking sensitive data
-            var sanitizedInput = SanitizeInput(context.Input);
-
+            // Strip credentials from both input *and* journey data — the
+            // long-lived data bag can carry tokens or password-derived
+            // secrets that would otherwise leak into the WASM sandbox.
             var input = new PluginInput
             {
                 Function = functionName,
                 UserId = context.UserId,
                 TenantId = context.TenantId,
-                Input = sanitizedInput ?? new Dictionary<string, object>(),
-                JourneyData = context.JourneyData ?? new Dictionary<string, object>()
+                Input = SensitiveInputs.RedactCopy(context.Input),
+                JourneyData = SensitiveInputs.RedactCopy(context.JourneyData)
             };
 
             var inputJson = JsonSerializer.Serialize(input, JsonOptions);
@@ -411,15 +578,6 @@ public class ExtismPluginExecutor : IPluginExecutor, IDisposable
         public string? Error { get; set; }
         public string? Action { get; set; }
         public IDictionary<string, object>? Data { get; set; }
-    }
-
-    private static IDictionary<string, object>? SanitizeInput(IDictionary<string, object>? input)
-    {
-        if (input == null) return null;
-
-        return input
-            .Where(kv => !SensitiveFields.Contains(kv.Key))
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
     }
 
     /// <summary>

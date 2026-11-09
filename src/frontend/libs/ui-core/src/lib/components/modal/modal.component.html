@@ -1,0 +1,45 @@
+@if (open()) {
+  <div
+    class="fixed inset-0 z-[200] overflow-y-auto"
+    role="dialog"
+    aria-modal="true"
+  >
+    <!-- Backdrop -->
+    <div
+      class="fixed inset-0 bg-black/50 transition-opacity"
+      (click)="onBackdropClick()"
+    ></div>
+
+    <!-- Modal container -->
+    <div class="flex min-h-full items-center justify-center p-4">
+      <div [class]="modalClasses()" (click)="$event.stopPropagation()">
+        <!-- Header -->
+        @if (title()) {
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <h3 class="text-lg font-semibold text-gray-900">
+              {{ title() }}
+            </h3>
+            @if (showCloseButton()) {
+              <button
+                type="button"
+                class="rounded-md text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                (click)="close()"
+              >
+                <span class="sr-only">Close</span>
+                <ui-icon name="x-mark" class="h-6 w-6" />
+              </button>
+            }
+          </div>
+        }
+
+        <!-- Body -->
+        <div [class]="bodyClasses()">
+          <ng-content></ng-content>
+        </div>
+
+        <!-- Footer -->
+        <ng-content select="[modal-footer]"></ng-content>
+      </div>
+    </div>
+  </div>
+}

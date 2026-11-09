@@ -2,8 +2,8 @@
 @model MfaSetupViewModel
 
 <div class="mfa-card">
-    <h1 class="title">Set Up Two-Factor Authentication</h1>
-    <p class="subtitle">Add an extra layer of security to your account</p>
+    <h1 class="title">@Localizer["mfa_setup_title"]</h1>
+    <p class="subtitle">@Localizer["mfa_setup_subtitle"]</p>
 
     @if (!string.IsNullOrEmpty(Model?.ErrorMessage))
     {
@@ -23,8 +23,8 @@
                         </svg>
                     </div>
                     <div class="setup-content">
-                        <h3>Authenticator App</h3>
-                        <p>Use an app like Google Authenticator, Authy, or 1Password</p>
+                        <h3>@Localizer["mfa_setup_totp_heading"]</h3>
+                        <p>@Localizer["mfa_setup_totp_description"]</p>
                     </div>
                     <div class="setup-arrow">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -47,8 +47,8 @@
                         </svg>
                     </div>
                     <div class="setup-content">
-                        <h3>Email</h3>
-                        <p>Receive verification codes via email</p>
+                        <h3>@Localizer["mfa_setup_email_heading"]</h3>
+                        <p>@Localizer["mfa_setup_email_description"]</p>
                     </div>
                     <div class="setup-arrow">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -70,8 +70,8 @@
                         </svg>
                     </div>
                     <div class="setup-content">
-                        <h3>Text Message (SMS)</h3>
-                        <p>Receive verification codes via text message</p>
+                        <h3>@Localizer["mfa_setup_sms_heading"]</h3>
+                        <p>@Localizer["mfa_setup_sms_description"]</p>
                     </div>
                     <div class="setup-arrow">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

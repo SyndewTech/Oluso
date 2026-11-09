@@ -1,11 +1,14 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Web;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
 using Oluso.Core.Protocols.Models;
+using Oluso.Core.Protocols.Validation;
 using Oluso.Core.Services;
 
 namespace Oluso.Protocols.Oidc;
@@ -14,10 +17,11 @@ namespace Oluso.Protocols.Oidc;
 /// OpenID Connect End Session Endpoint (RP-Initiated Logout).
 /// Route is configured via OidcEndpointRouteConvention.
 /// </summary>
-public class OidcEndSessionController : ControllerBase
+public class OidcEndSessionController : OidcControllerBase
 {
     private readonly IClientStore _clientStore;
     private readonly IPersistedGrantStore _grantStore;
+    private readonly IRedirectUriValidator _redirectUriValidator;
     private readonly IServerSideSessionStore? _sessionStore;
     private readonly IBackchannelLogoutService? _backchannelLogoutService;
     private readonly ITenantContext _tenantContext;
@@ -27,6 +31,7 @@ public class OidcEndSessionController : ControllerBase
     public OidcEndSessionController(
         IClientStore clientStore,
         IPersistedGrantStore grantStore,
+        IRedirectUriValidator redirectUriValidator,
         ITenantContext tenantContext,
         ILogger<OidcEndSessionController> logger,
         IServerSideSessionStore? sessionStore = null,
@@ -35,6 +40,7 @@ public class OidcEndSessionController : ControllerBase
     {
         _clientStore = clientStore;
         _grantStore = grantStore;
+        _redirectUriValidator = redirectUriValidator;
         _sessionStore = sessionStore;
         _backchannelLogoutService = backchannelLogoutService;
         _tenantContext = tenantContext;
@@ -78,47 +84,48 @@ public class OidcEndSessionController : ControllerBase
         {
             if (string.IsNullOrEmpty(clientId))
             {
-                return BadRequest(new TokenErrorResponse
-                {
-                    Error = OidcConstants.Errors.InvalidRequest,
-                    ErrorDescription = "client_id or id_token_hint required when post_logout_redirect_uri is specified"
-                });
+                _logger.LogWarning("End session request with post_logout_redirect_uri but no client_id or id_token_hint");
+                return Redirect($"/error?error=invalid_request&message={Uri.EscapeDataString("client_id or id_token_hint is required when post_logout_redirect_uri is specified")}");
             }
 
             var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
             if (client == null)
             {
-                return BadRequest(new TokenErrorResponse
-                {
-                    Error = OidcConstants.Errors.InvalidRequest,
-                    ErrorDescription = "Unknown client"
-                });
+                _logger.LogWarning("End session request for unknown client {ClientId}", clientId);
+                return Redirect($"/error?error=invalid_request&message={Uri.EscapeDataString("The application that initiated logout could not be found")}");
             }
 
-            var validUri = client.PostLogoutRedirectUris
-                .Any(u => u.PostLogoutRedirectUri == postLogoutRedirectUri);
+            var postLogoutValidation = await _redirectUriValidator.ValidatePostLogoutAsync(
+                postLogoutRedirectUri,
+                client.PostLogoutRedirectUris.Select(u => u.PostLogoutRedirectUri!));
 
-            if (!validUri)
+            if (!postLogoutValidation.IsValid)
             {
-                _logger.LogWarning("Invalid post_logout_redirect_uri {Uri} for client {ClientId}",
-                    postLogoutRedirectUri, clientId);
+                _logger.LogWarning("Invalid post_logout_redirect_uri {Uri} for client {ClientId}. Registered URIs: {RegisteredUris}",
+                    postLogoutRedirectUri, clientId,
+                    string.Join(", ", client.PostLogoutRedirectUris.Select(u => u.PostLogoutRedirectUri)));
                 postLogoutRedirectUri = null;
             }
         }
 
-        // Get subject from current session
-        var subjectId = User.FindFirst("sub")?.Value;
+        // Explicitly authenticate from cookie to get user claims
+        // (this endpoint doesn't have [Authorize] so User may not be populated)
+        var authResult = await HttpContext.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        var principal = authResult.Principal;
+        var isAuthenticated = authResult.Succeeded && principal?.Identity?.IsAuthenticated == true;
 
-        // Sign out the user (application must configure authentication scheme signout)
-        if (User.Identity?.IsAuthenticated ?? false)
+        // Get subject and session from authenticated user
+        var subjectId = principal?.FindFirst("sub")?.Value;
+        var sessionId = principal?.FindFirst("sid")?.Value;
+
+        // Sign out the user from the authentication system
+        if (isAuthenticated)
         {
-            // The actual sign-out should be handled by the application's authentication system
-            // This endpoint signals intent to logout
-            _logger.LogInformation("Logout requested for user {SubjectId}", subjectId);
-        }
+            _logger.LogInformation("Signing out user {SubjectId}", subjectId);
 
-        // Get session ID from claims
-        var sessionId = User.FindFirst("sid")?.Value;
+            // Sign out from Identity cookie authentication
+            await HttpContext.SignOutAsync(IdentityConstants.ApplicationScheme);
+        }
 
         // Revoke tokens for this user/client combination
         if (!string.IsNullOrEmpty(subjectId) && !string.IsNullOrEmpty(clientId))
@@ -218,8 +225,10 @@ public class OidcEndSessionController : ControllerBase
             }
 
             var jwt = handler.ReadJwtToken(idToken);
+            // Try azp first (authorized party), then client_id, then aud (audience)
             return jwt.Claims.FirstOrDefault(c => c.Type == "azp")?.Value
-                ?? jwt.Claims.FirstOrDefault(c => c.Type == "client_id")?.Value;
+                ?? jwt.Claims.FirstOrDefault(c => c.Type == "client_id")?.Value
+                ?? jwt.Audiences.FirstOrDefault();
         }
         catch
         {

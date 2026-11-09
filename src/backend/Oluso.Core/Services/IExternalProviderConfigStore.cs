@@ -7,14 +7,24 @@ namespace Oluso.Core.Services;
 public interface IExternalProviderConfigStore
 {
     /// <summary>
-    /// Gets all enabled external providers for the current tenant
+    /// Gets all enabled external providers visible to the current tenant.
+    /// When <paramref name="includeTenantOverrides"/> is false, only providers
+    /// with a null TenantId (global) are returned.
     /// </summary>
-    Task<IReadOnlyList<ExternalProviderDefinition>> GetEnabledProvidersAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ExternalProviderDefinition>> GetEnabledProvidersAsync(
+        bool includeTenantOverrides = true,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Gets a specific provider by scheme name for the current tenant
+    /// Gets a specific provider by scheme name. When
+    /// <paramref name="includeTenantOverrides"/> is true (the default),
+    /// tenant-specific rows take precedence over global rows for the same
+    /// scheme; when false, only the global row is returned.
     /// </summary>
-    Task<ExternalProviderDefinition?> GetBySchemeAsync(string scheme, CancellationToken cancellationToken = default);
+    Task<ExternalProviderDefinition?> GetBySchemeAsync(
+        string scheme,
+        bool includeTenantOverrides = true,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a provider by its unique ID
@@ -100,7 +110,16 @@ public class ExternalProviderDefinition
     public string? UserInfoEndpoint { get; init; }
 
     /// <summary>
-    /// OIDC discovery/metadata endpoint
+    /// OIDC issuer / authority root (e.g. "https://tenant.auth0.com").
+    /// The OIDC handler appends "/.well-known/openid-configuration" automatically.
+    /// </summary>
+    public string? Authority { get; init; }
+
+    /// <summary>
+    /// Full OIDC discovery/metadata URL (e.g.
+    /// "https://tenant.auth0.com/.well-known/openid-configuration"). Set this only
+    /// when the IdP exposes the discovery doc at a non-standard path; for normal
+    /// providers, set <see cref="Authority"/> instead.
     /// </summary>
     public string? MetadataAddress { get; init; }
 
@@ -173,8 +192,71 @@ public class ExternalProviderDefinition
 
     #endregion
 
+    #region Access Control & Role Assignment
+
+    /// <summary>
+    /// Oluso role names assigned to users provisioned via this IdP. Applied
+    /// on first provision only — additive, never removed on subsequent
+    /// logins so admin-granted local roles aren't stripped if the IdP's
+    /// defaultRoles list is later edited.
+    /// </summary>
+    public IReadOnlyList<string> DefaultRoles { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Access-control gate evaluated against the external principal before
+    /// provisioning or sign-in completes. <see cref="ExternalAccessControl.Mode"/>
+    /// = "open" (default) imposes no gate.
+    /// </summary>
+    public ExternalAccessControl? AccessControl { get; init; }
+
+    #endregion
+
     /// <summary>
     /// Additional custom properties
     /// </summary>
     public IDictionary<string, string>? Properties { get; init; }
+}
+
+/// <summary>
+/// Pre-sign-in gate applied to the external principal returned by the IdP.
+/// Mirrors the structure persisted in <c>IdentityProvider.Properties</c>
+/// JSON so the admin UI, store, and runtime gate share one shape.
+/// </summary>
+public class ExternalAccessControl
+{
+    /// <summary>
+    /// "open" (default — no gate), "emailAllowlist", or "claimGate".
+    /// </summary>
+    public string Mode { get; init; } = "open";
+
+    /// <summary>
+    /// External email addresses allowed when <see cref="Mode"/> = "emailAllowlist".
+    /// Comparison is case-insensitive on the entire address.
+    /// </summary>
+    public IReadOnlyList<string> AllowedEmails { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Claim-based gate applied when <see cref="Mode"/> = "claimGate".
+    /// User passes if the claim at <see cref="ClaimGate.ClaimPath"/> contains
+    /// any value in <see cref="ClaimGate.AnyOf"/>.
+    /// </summary>
+    public ClaimGate? ClaimGate { get; init; }
+}
+
+/// <summary>
+/// "User must have <c>claimPath</c> claim with at least one value in <c>anyOf</c>."
+/// Matches a single string claim or any element of a multi-valued claim.
+/// </summary>
+public class ClaimGate
+{
+    /// <summary>
+    /// Claim type to match. Accepts both short JWT names ("groups", "roles")
+    /// and long ClaimTypes URIs — the gate checks both.
+    /// </summary>
+    public string ClaimPath { get; init; } = "";
+
+    /// <summary>
+    /// Acceptable values. User passes if the claim contains any of these.
+    /// </summary>
+    public IReadOnlyList<string> AnyOf { get; init; } = Array.Empty<string>();
 }

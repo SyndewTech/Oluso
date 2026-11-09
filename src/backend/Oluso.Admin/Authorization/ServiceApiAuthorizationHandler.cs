@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Authorization;
+using Oluso.Admin.Controllers.Service;
 
 namespace Oluso.Admin.Authorization;
 
 /// <summary>
 /// Requirement for Service API access (machine-to-machine).
-/// Validates that the client has the "service" scope.
+/// Validates that the client has the base service scope.
 /// </summary>
 public class ServiceApiRequirement : IAuthorizationRequirement
 {
@@ -14,9 +16,9 @@ public class ServiceApiRequirement : IAuthorizationRequirement
     /// </summary>
     public string RequiredScope { get; }
 
-    public ServiceApiRequirement(string requiredScope = "service")
+    public ServiceApiRequirement(string? requiredScope = null)
     {
-        RequiredScope = requiredScope;
+        RequiredScope = requiredScope ?? ServiceScopes.ServiceApi;
     }
 }
 
@@ -24,7 +26,7 @@ public class ServiceApiRequirement : IAuthorizationRequirement
 /// Handler for Service API authorization.
 /// Validates that:
 /// 1. Request is from a client (has client_id claim)
-/// 2. Client has the required "service" scope
+/// 2. Client has the required base service scope
 /// </summary>
 public class ServiceApiAuthorizationHandler : AuthorizationHandler<ServiceApiRequirement>
 {
@@ -47,40 +49,7 @@ public class ServiceApiAuthorizationHandler : AuthorizationHandler<ServiceApiReq
             return Task.CompletedTask;
         }
 
-        // Check for required scope
-        // OAuth2 scopes can be:
-        // 1. Multiple "scope" claims with single values
-        // 2. Single "scope" claim with space-separated values
-        var hasScope = false;
-
-        // Check multiple scope claims
-        var scopeClaims = context.User.FindAll("scope").ToList();
-        if (scopeClaims.Any())
-        {
-            foreach (var claim in scopeClaims)
-            {
-                // Handle space-separated scopes in a single claim
-                var scopes = claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (scopes.Contains(requirement.RequiredScope))
-                {
-                    hasScope = true;
-                    break;
-                }
-            }
-        }
-
-        // Also check "scp" claim (Microsoft Azure AD style)
-        if (!hasScope)
-        {
-            var scpClaim = context.User.FindFirst("scp")?.Value;
-            if (!string.IsNullOrEmpty(scpClaim))
-            {
-                var scopes = scpClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                hasScope = scopes.Contains(requirement.RequiredScope);
-            }
-        }
-
-        if (!hasScope)
+        if (!context.User.HasGrantedScope(requirement.RequiredScope))
         {
             _logger.LogDebug("ServiceApi auth failed: client {ClientId} missing required scope '{Scope}'",
                 clientId, requirement.RequiredScope);

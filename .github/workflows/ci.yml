@@ -1,0 +1,61 @@
+name: CI
+
+# Runs the public backend tests (Oluso.sln), and builds and tests the frontend
+# and the JavaScript SDK, on pull requests into main.
+# Gates merges: enable a branch-protection rule on main requiring these checks.
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore Oluso.sln
+
+      - name: Build
+        run: dotnet build Oluso.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Oluso.sln -c Release --no-build --verbosity normal
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test the JavaScript SDK
+        working-directory: sdk/js
+        run: npm ci --no-audit --no-fund && npm test -- --run
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci --no-audit --no-fund
+
+      # journey-ui's build builds the SDK first (its build-sdk target).
+      - name: Build
+        working-directory: src/frontend
+        run: npx nx run-many --target=build --all --outputStyle=static
+
+      - name: Test
+        working-directory: src/frontend
+        run: npx nx run-many --target=test --all --watch=false --outputStyle=static

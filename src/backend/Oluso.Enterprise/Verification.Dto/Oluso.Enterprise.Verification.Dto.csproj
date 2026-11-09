@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Oluso.Enterprise.Verification.Dto</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Oluso.Enterprise.Verification.Dto</PackageId>
+    <Authors>Oluso</Authors>
+    <Description>Wire-contract DTOs for Oluso business (KYB) verification. Shared by backend controllers and clients.</Description>
+    <PackageTags>oluso;kyb;verification;dto;contracts</PackageTags>
+  </PropertyGroup>
+
+</Project>

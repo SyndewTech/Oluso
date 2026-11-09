@@ -1,0 +1,123 @@
+<div class="space-y-6">
+  <!-- Page header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Platform Clients</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        System-level OAuth clients available across all tenants
+      </p>
+    </div>
+    <ui-button (clicked)="navigateToCreate()">
+      <ui-icon name="plus" class="h-4 w-4 mr-2" />
+      Add Platform Client
+    </ui-button>
+  </div>
+
+  <!-- Platform clients table -->
+  <ui-card [padding]="false">
+    <div class="overflow-hidden">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+          <tr>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Client ID
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Name
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Status
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Grant Types
+            </th>
+            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Created
+            </th>
+            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          @if (loading()) {
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center">
+                <div class="flex justify-center">
+                  <svg
+                    class="animate-spin h-8 w-8 text-primary-600"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      class="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      stroke-width="4"
+                    ></circle>
+                    <path
+                      class="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                </div>
+              </td>
+            </tr>
+          } @else if (clients().length === 0) {
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center text-sm text-gray-500">
+                No platform clients configured yet
+              </td>
+            </tr>
+          } @else {
+            @for (client of clients(); track client.clientId) {
+              <tr class="hover:bg-gray-50 cursor-pointer" (click)="navigateToEdit(client)">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {{ client.clientId }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ client.clientName || '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="client.enabled ? 'success' : 'danger'">
+                    {{ client.enabled ? 'Enabled' : 'Disabled' }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
+                  {{ formatGrantTypes(client.allowedGrantTypes) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(client.created) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2" (click)="$event.stopPropagation()">
+                  <ui-button variant="secondary" size="sm" (clicked)="navigateToEdit(client)">
+                    Edit
+                  </ui-button>
+                  <ui-button variant="danger" size="sm" (clicked)="confirmDelete(client)">
+                    Delete
+                  </ui-button>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </ui-card>
+</div>
+
+<!-- Delete Confirmation -->
+<ui-confirm-dialog
+  [open]="showDeleteConfirm()"
+  title="Delete Platform Client"
+  [message]="'Are you sure you want to delete the platform client \'' + (deletingClient()?.clientId ?? '') + '\'? This action cannot be undone.'"
+  confirmText="Delete"
+  confirmVariant="danger"
+  [loading]="saving()"
+  (confirmed)="deleteClient()"
+  (cancelled)="cancelDelete()"
+/>

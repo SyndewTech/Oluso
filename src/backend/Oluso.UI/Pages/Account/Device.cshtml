@@ -1,0 +1,129 @@
+@page "/device"
+@model Oluso.UI.Pages.Account.DeviceModel
+@using Oluso.Protocols.Device
+@{
+    ViewData["Title"] = Localizer["device_page_title"].Value;
+    var request = Model.Request;
+    var status = request?.Status;
+}
+
+<main class="auth-container">
+    <div class="auth-card">
+        @if (status == DeviceVerificationStatus.Approved)
+        {
+            <div class="success-state" role="status">
+                <h1 class="auth-title">@Localizer["device_approved_title"]</h1>
+                <p class="auth-subtitle">@Localizer["device_approved_message"]</p>
+            </div>
+        }
+        else if (status == DeviceVerificationStatus.Denied)
+        {
+            <div role="status">
+                <h1 class="auth-title">@Localizer["device_denied_title"]</h1>
+                <p class="auth-subtitle">@Localizer["device_denied_message"]</p>
+            </div>
+        }
+        else if (status == DeviceVerificationStatus.Pending)
+        {
+            <div class="text-center">
+                @if (!string.IsNullOrEmpty(request!.LogoUri))
+                {
+                    <div class="auth-logo">
+                        <img src="@request.LogoUri" alt="" style="max-width: 96px; max-height: 64px;" />
+                    </div>
+                }
+                <h1 class="auth-title">@Localizer["device_page_title"]</h1>
+                <p class="auth-subtitle">@Localizer["device_confirm_subtitle", request.ClientName ?? string.Empty]</p>
+                @if (!string.IsNullOrEmpty(request.ClientUri))
+                {
+                    <p class="help-text"><a href="@request.ClientUri" target="_blank" rel="noopener noreferrer">@(new Uri(request.ClientUri).Host)</a></p>
+                }
+            </div>
+
+            <p>@Localizer["device_check_code"]</p>
+            <p class="text-center" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 1.5rem; letter-spacing: 0.15em; font-weight: 600;">@request.UserCode</p>
+
+            @if (!string.IsNullOrEmpty(request.MatrixDeviceId))
+            {
+                <p class="help-text text-center">@Localizer["device_matrix_device_id", request.MatrixDeviceId]</p>
+            }
+
+            @if (request.Scopes.Count > 0)
+            {
+                <h2 style="font-size: 1rem; margin-top: 1rem;">@Localizer["device_allow_label"]</h2>
+                <ul>
+                    @foreach (var scope in request.Scopes)
+                    {
+                        <li>
+                            <strong>@scope.DisplayName</strong>
+                            @if (!string.IsNullOrEmpty(scope.Description))
+                            {
+                                <br /><span class="help-text">@scope.Description</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+
+            <div class="info-box" role="note">@Localizer["device_another_device_note"]</div>
+
+            <form method="post">
+                <input type="hidden" name="user_code" value="@request.UserCode" />
+                <div class="form-group" style="display: flex; gap: 0.75rem;">
+                    <button type="submit" name="button" value="deny" class="btn btn-outline btn-block">@Localizer["device_deny_button"]</button>
+                    <button type="submit" name="button" value="approve" class="btn btn-primary btn-block">@Localizer["device_approve_button"]</button>
+                </div>
+            </form>
+
+            @if (!string.IsNullOrEmpty(request.PolicyUri) || !string.IsNullOrEmpty(request.TosUri))
+            {
+                <p class="auth-legal">
+                    @if (!string.IsNullOrEmpty(request.PolicyUri))
+                    {
+                        <a href="@request.PolicyUri" target="_blank" rel="noopener noreferrer">@Localizer["client_policy_link"]</a>
+                    }
+                    @if (!string.IsNullOrEmpty(request.PolicyUri) && !string.IsNullOrEmpty(request.TosUri))
+                    {
+                        <span class="auth-legal-sep" aria-hidden="true">·</span>
+                    }
+                    @if (!string.IsNullOrEmpty(request.TosUri))
+                    {
+                        <a href="@request.TosUri" target="_blank" rel="noopener noreferrer">@Localizer["client_tos_link"]</a>
+                    }
+                </p>
+            }
+        }
+        else
+        {
+            <h1 class="auth-title">@Localizer["device_page_title"]</h1>
+            <p class="auth-subtitle">@Localizer["device_enter_code_subtitle"]</p>
+
+            @if (status is DeviceVerificationStatus.NotFound or DeviceVerificationStatus.Expired)
+            {
+                <div class="alert alert-danger" role="alert" id="device-code-error">
+                    <span>@(status == DeviceVerificationStatus.Expired ? Localizer["device_expired"] : Localizer["device_not_found"])</span>
+                </div>
+            }
+
+            <form method="get" action="/device">
+                <div class="form-group">
+                    <label for="user_code">@Localizer["device_code_label"]</label>
+                    <input type="text" id="user_code" name="user_code" class="form-control"
+                           autocomplete="one-time-code" autocapitalize="characters" spellcheck="false"
+                           required maxlength="16" aria-describedby="device-code-help@(status is DeviceVerificationStatus.NotFound or DeviceVerificationStatus.Expired ? " device-code-error" : "")"
+                           style="text-transform: uppercase; letter-spacing: 0.15em;" autofocus />
+                    <p class="form-help" id="device-code-help">@Localizer["device_code_help"]</p>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">@Localizer["device_continue_button"]</button>
+            </form>
+        }
+
+        @if (!string.IsNullOrEmpty(Model.UserDisplay))
+        {
+            <p class="help-text text-center" style="margin-top: 1.5rem;">
+                @Localizer["device_signed_in_as", Model.UserDisplay]
+                <a href="/account/logout?returnUrl=@Uri.EscapeDataString(string.IsNullOrEmpty(request?.UserCode) ? "/device" : "/device?user_code=" + request.UserCode)">@Localizer["device_not_you"]</a>
+            </p>
+        }
+    </div>
+</main>

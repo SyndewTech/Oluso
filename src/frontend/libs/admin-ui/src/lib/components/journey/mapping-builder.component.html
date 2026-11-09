@@ -1,0 +1,264 @@
+<div class="space-y-3">
+  <div class="flex items-center justify-between">
+    <div>
+      <h4 class="text-sm font-medium text-gray-700">{{ effectiveTitle }}</h4>
+      <p class="text-xs text-gray-500">{{ effectiveDescription }}</p>
+    </div>
+    <button
+      type="button"
+      (click)="addMapping()"
+      class="text-sm text-blue-600 hover:text-blue-800 flex items-center"
+    >
+      <ui-icon name="plus" class="h-4 w-4 mr-1" />
+      Add Mapping
+    </button>
+  </div>
+
+  @if (mappings.length === 0) {
+    <div class="text-center py-4 text-gray-500 text-xs bg-gray-50 rounded-lg">
+      No mappings defined. Click "Add Mapping" to create one.
+    </div>
+  }
+
+  <div class="space-y-2">
+    @for (mapping of mappings; track $index; let i = $index) {
+      <div class="border rounded-lg bg-white">
+        <!-- Header - collapsed view -->
+        <div
+          class="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50"
+          (click)="toggleExpanded(i)"
+        >
+          <div class="flex items-center gap-2 text-sm">
+            <span class="text-gray-400 text-xs">{{ i + 1 }}.</span>
+            <span class="font-medium text-purple-600">{{ getSourceType(mapping) }}</span>
+            <span class="text-gray-600">{{ getSourcePath(mapping) }}</span>
+            <ui-icon name="arrow-right" class="h-3 w-3 text-gray-400" />
+            <span class="font-medium text-green-600">{{ getTarget(mapping) }}</span>
+            @if (getTransform(mapping)) {
+              <span class="text-xs text-orange-600 bg-orange-50 px-1 rounded">
+                {{ getTransform(mapping) }}
+              </span>
+            }
+          </div>
+          <div class="flex items-center gap-1">
+            <button
+              type="button"
+              (click)="removeMapping(i); $event.stopPropagation()"
+              class="text-red-400 hover:text-red-600 p-1"
+            >
+              <ui-icon name="trash" class="h-4 w-4" />
+            </button>
+            <ui-icon name="chevron-down" [class]="'h-4 w-4 text-gray-400 transition-transform ' + (expandedIndex() === i ? 'rotate-180' : '')" />
+          </div>
+        </div>
+
+        <!-- Expanded view -->
+        @if (expandedIndex() === i) {
+          <div class="p-3 border-t bg-gray-50 space-y-3">
+            @if (isTransformMapping(mapping)) {
+              <!-- Transform Mapping Editor -->
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Source Type</label>
+                  <select
+                    [ngModel]="mapping.sourceType"
+                    (ngModelChange)="updateMapping(i, { sourceType: $event })"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  >
+                    @for (t of transformSourceTypes; track t) {
+                      <option [value]="t">{{ sourceTypeLabel(t) }}</option>
+                    }
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Source Path</label>
+                  <input
+                    type="text"
+                    [ngModel]="mapping.source"
+                    (ngModelChange)="updateMapping(i, { source: $event })"
+                    [attr.list]="'transform-source-suggestions-' + i"
+                    placeholder="e.g., email or user.profile.name"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  />
+                  <datalist [id]="'transform-source-suggestions-' + i">
+                    @for (s of getSuggestionsForType(mapping.sourceType); track s) {
+                      <option [value]="s"></option>
+                    }
+                  </datalist>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Transform</label>
+                  <select
+                    [ngModel]="mapping.transform || 'copy'"
+                    (ngModelChange)="setTransform(i, $event)"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  >
+                    @for (t of transforms; track t.name) {
+                      <option [value]="t.name">{{ t.label }}</option>
+                    }
+                  </select>
+                  @if (transformFor(mapping.transform)?.description; as hint) {
+                    <p class="text-xs text-gray-500 mt-1">{{ hint }}</p>
+                  }
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Target Path</label>
+                  <input
+                    type="text"
+                    [ngModel]="mapping.target"
+                    (ngModelChange)="updateMapping(i, { target: $event })"
+                    placeholder="e.g., normalizedEmail"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  />
+                </div>
+              </div>
+
+              <!-- The chosen transform's options, as the step publishes them -->
+              @if (transformFor(mapping.transform); as transform) {
+                @if (transform.options.length > 0) {
+                  <div class="grid grid-cols-2 gap-3">
+                    @for (option of transform.options; track option.name) {
+                      <div [class.col-span-2]="option.multiline">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">{{ option.label }}</label>
+                        @if (option.multiline) {
+                          <textarea
+                            rows="3"
+                            [ngModel]="optionValue(mapping, option)"
+                            (ngModelChange)="setOption(i, mapping, option.name, $event)"
+                            class="w-full rounded-md border-gray-300 text-sm font-mono"
+                          ></textarea>
+                        } @else {
+                          <input
+                            type="text"
+                            [ngModel]="optionValue(mapping, option)"
+                            (ngModelChange)="setOption(i, mapping, option.name, $event)"
+                            class="w-full rounded-md border-gray-300 text-sm"
+                          />
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              }
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Default Value</label>
+                  <input
+                    type="text"
+                    [ngModel]="mapping.defaultValue || ''"
+                    (ngModelChange)="updateMapping(i, { defaultValue: $event || undefined })"
+                    placeholder="Used when no value is produced"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  />
+                </div>
+                <label class="flex items-center gap-2 text-xs text-gray-600 mt-5">
+                  <input
+                    type="checkbox"
+                    [ngModel]="!!mapping.required"
+                    (ngModelChange)="updateMapping(i, { required: $event || undefined })"
+                  />
+                  Fail the journey when no value is produced
+                </label>
+              </div>
+            } @else {
+              <!-- Claim Mapping Editor -->
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Source Type</label>
+                  <select
+                    [ngModel]="$any(mapping).sourceType"
+                    (ngModelChange)="updateMapping(i, { sourceType: $event })"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  >
+                    @for (t of (mode === 'output' ? outputSourceTypes : sourceTypes); track t.value) {
+                      <option [value]="t.value">{{ t.label }}</option>
+                    }
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">
+                    @for (t of sourceTypes; track t.value) {
+                      @if (t.value === $any(mapping).sourceType) {
+                        {{ t.description }}
+                      }
+                    }
+                  </p>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">
+                    {{ $any(mapping).sourceType === 'literal' ? 'Value' : 'Source Path' }}
+                  </label>
+                  <input
+                    type="text"
+                    [ngModel]="$any(mapping).sourcePath"
+                    (ngModelChange)="updateMapping(i, { sourcePath: $event })"
+                    [attr.list]="'source-suggestions-' + i"
+                    [placeholder]="$any(mapping).sourceType === 'literal' ? 'Static value' : 'e.g., email or user.profile.name'"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  />
+                  <datalist [id]="'source-suggestions-' + i">
+                    @for (s of getSuggestionsForType($any(mapping).sourceType); track s) {
+                      <option [value]="s"></option>
+                    }
+                  </datalist>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">
+                    {{ mode === 'output' ? 'Target Claim Type' : 'Target Parameter' }}
+                  </label>
+                  <input
+                    type="text"
+                    [ngModel]="$any(mapping).targetClaimType"
+                    (ngModelChange)="updateMapping(i, { targetClaimType: $event })"
+                    list="target-claim-suggestions"
+                    [placeholder]="mode === 'output' ? 'e.g., email or custom_claim' : 'e.g., userId'"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">Default Value</label>
+                  <input
+                    type="text"
+                    [ngModel]="$any(mapping).defaultValue || ''"
+                    (ngModelChange)="updateMapping(i, { defaultValue: $event || undefined })"
+                    placeholder="Used if source is empty"
+                    class="w-full rounded-md border-gray-300 text-sm"
+                  />
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Preview -->
+  @if (mappings.length > 0) {
+    <div class="mt-2 p-2 bg-gray-100 rounded text-xs">
+      <div class="text-gray-500 mb-1">Preview:</div>
+      <div class="space-y-1">
+        @for (m of mappings; track $index) {
+          <div class="font-mono text-gray-700">
+            <span class="text-purple-600">{{ getSourceType(m) }}</span>
+            <span class="text-gray-500">.</span>
+            <span class="text-blue-600">{{ getSourcePath(m) }}</span>
+            @if (getTransform(m)) {
+              <span class="text-orange-500"> | {{ getTransform(m) }}</span>
+            }
+            <span class="text-gray-400"> -> </span>
+            <span class="text-green-600">{{ getTarget(m) }}</span>
+            @if (isClaimMapping(m) && $any(m).defaultValue) {
+              <span class="text-orange-500"> (default: "{{ $any(m).defaultValue }}")</span>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>

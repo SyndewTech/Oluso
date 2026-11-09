@@ -54,6 +54,14 @@ public class PluginExecutionContext
     public string? TenantId { get; init; }
     public IDictionary<string, object>? Input { get; init; }
     public IDictionary<string, object>? JourneyData { get; init; }
+
+    /// <summary>
+    /// Step-level config dictionary forwarded from the journey definition
+    /// (the `config` field on a custom_plugin step). Plugins read their own
+    /// configuration from here — keeps plugin contracts explicit instead of
+    /// having plugins root around in journey state.
+    /// </summary>
+    public IDictionary<string, object>? Config { get; init; }
 }
 
 /// <summary>

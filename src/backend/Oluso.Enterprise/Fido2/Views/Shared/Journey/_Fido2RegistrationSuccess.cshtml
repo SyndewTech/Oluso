@@ -8,17 +8,17 @@
         </svg>
     </div>
 
-    <h2 class="title">Passkey Registered!</h2>
-    <p class="description">Your passkey "@(Model.DisplayName ?? "New Passkey")" has been successfully set up.</p>
+    <h2 class="title">@Localizer["fido2_reg_success_heading"]</h2>
+    <p class="description">@string.Format(Localizer["fido2_reg_success_detail"].Value, Model.DisplayName ?? Localizer["fido2_reg_success_default_name"].Value)</p>
 
     <div class="info-box">
-        <h4>What's next?</h4>
-        <p>Next time you sign in, you can use this passkey instead of your password. It's faster and more secure!</p>
+        <h4>@Localizer["fido2_reg_success_whats_next"]</h4>
+        <p>@Localizer["fido2_reg_success_next_description"]</p>
     </div>
 
     <form method="post" class="continue-form">
         <input type="hidden" name="action" value="continue" />
-        <button type="submit" class="btn btn-primary btn-block">Continue</button>
+        <button type="submit" class="btn btn-primary btn-block">@Localizer["fido2_reg_success_continue"]</button>
     </form>
 </div>
 

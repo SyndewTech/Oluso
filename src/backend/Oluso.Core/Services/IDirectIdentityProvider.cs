@@ -18,15 +18,17 @@ public interface IDirectIdentityProvider
     string ProviderType { get; }
 
     /// <summary>
-    /// Authenticates a user with the given credentials.
+    /// Authenticates a user with the given credentials using provider-specific configuration.
     /// </summary>
     /// <param name="username">Username or identifier</param>
     /// <param name="password">Password</param>
+    /// <param name="providerDefinition">Provider configuration containing connection settings</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Authentication result with claims principal if successful</returns>
     Task<DirectIdentityResult> AuthenticateAsync(
         string username,
         string password,
+        ExternalProviderDefinition providerDefinition,
         CancellationToken cancellationToken = default);
 }
 

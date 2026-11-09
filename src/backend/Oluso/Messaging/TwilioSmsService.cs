@@ -10,7 +10,7 @@ namespace Oluso.Messaging;
 /// <summary>
 /// SMS sender implementation using Twilio
 /// </summary>
-public class TwilioSmsSender : ISmsSender
+public class TwilioSmsSender : ISmsService
 {
     private readonly HttpClient _httpClient;
     private readonly SmsOptions _options;

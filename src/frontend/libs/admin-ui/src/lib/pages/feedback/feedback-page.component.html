@@ -1,0 +1,179 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Beta Feedback</h1>
+      <p class="mt-1 text-sm text-gray-500">
+        Review feedback from users in every tenant, across the admin and workspace portals
+      </p>
+    </div>
+    <ui-button variant="secondary" [disabled]="loading()" (clicked)="onRefresh()">
+      <ui-icon name="refresh" [class]="'h-4 w-4 mr-1 ' + (loading() ? 'animate-spin' : '')" />
+      Refresh
+    </ui-button>
+  </div>
+
+  <!-- Filters -->
+  <ui-card>
+    <div class="px-4 py-5 sm:p-6">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <!-- Category Filter -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+          <select
+            [value]="filter.category || ''"
+            (change)="onCategoryChange($event)"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          >
+            <option value="">All Categories</option>
+            @for (cat of categories; track cat) {
+              <option [value]="cat">{{ getCategoryLabel(cat) }}</option>
+            }
+          </select>
+        </div>
+
+        <!-- Status Filter -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+          <select
+            [value]="filter.status || ''"
+            (change)="onStatusChange($event)"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          >
+            <option value="">All Statuses</option>
+            @for (s of statuses; track s) {
+              <option [value]="s" class="capitalize">{{ s }}</option>
+            }
+          </select>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-end">
+          <ui-button variant="secondary" (clicked)="clearFilters()">
+            Clear Filters
+          </ui-button>
+        </div>
+      </div>
+    </div>
+  </ui-card>
+
+  <!-- Results info -->
+  <div class="flex justify-between items-center">
+    <p class="text-sm text-gray-500">
+      @if (totalCount() > 0) {
+        Showing {{ getStartIndex() }} - {{ getEndIndex() }} of {{ totalCount() }} submissions
+      } @else {
+        No feedback submissions found
+      }
+    </p>
+  </div>
+
+  <!-- Table -->
+  <ui-card [padding]="false">
+    @if (loading()) {
+      <div class="flex items-center justify-center h-64">
+        <div class="text-gray-500">Loading...</div>
+      </div>
+    } @else if (items().length === 0) {
+      <div class="flex flex-col items-center justify-center h-64 text-gray-500">
+        <ui-icon name="chat-bubble-left" class="h-12 w-12 mb-4" />
+        <p>No feedback submissions yet</p>
+      </div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Title
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Category
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Tenant
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Portal
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Submitted By
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Date
+              </th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            @for (item of items(); track item.id) {
+              <tr class="hover:bg-gray-50 cursor-pointer" (click)="onRowClick(item)">
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <div class="flex items-center gap-2">
+                    <span class="text-primary-600 hover:text-primary-800 font-medium">
+                      {{ item.title }}
+                    </span>
+                    @if (item.hasScreenshot) {
+                      <ui-icon name="camera" class="h-4 w-4 text-gray-400" />
+                    }
+                  </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="getCategoryVariant(item.category)">
+                    {{ getCategoryLabel(item.category) }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <ui-badge [variant]="getStatusVariant(item.status)">
+                    {{ item.status }}
+                  </ui-badge>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  {{ item.tenantName || item.tenantId }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ getPortalLabel(item.portal) }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  {{ item.submittedByName || item.submittedByEmail || item.submittedByUserId }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {{ formatDate(item.createdAt) }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </ui-card>
+
+  <!-- Pagination -->
+  @if (totalPages() > 1) {
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-gray-500">
+        Page {{ filter.pageNumber }} of {{ totalPages() }}
+      </p>
+      <div class="flex items-center gap-2">
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="filter.pageNumber === 1"
+          (clicked)="onPreviousPage()"
+        >
+          Previous
+        </ui-button>
+        <ui-button
+          variant="secondary"
+          size="sm"
+          [disabled]="filter.pageNumber === totalPages()"
+          (clicked)="onNextPage()"
+        >
+          Next
+        </ui-button>
+      </div>
+    </div>
+  }
+</div>

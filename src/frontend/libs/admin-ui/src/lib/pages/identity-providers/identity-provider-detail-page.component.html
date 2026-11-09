@@ -1,0 +1,1867 @@
+@if (loading()) {
+  <div class="flex items-center justify-center h-64">
+    <div class="text-gray-500">Loading...</div>
+  </div>
+} @else {
+  <div class="space-y-6">
+    <!-- Plugin slot: before header -->
+    @if (!isNew() && provider()) {
+      <ui-page-slot-host
+        pageId="idp-detail"
+        slotId="before-header"
+        [data]="{ provider: provider() }"
+      />
+    }
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <ui-button variant="ghost" (clicked)="onBack()">
+          <ui-icon name="arrow-left" class="h-4 w-4 mr-2" />
+          Back
+        </ui-button>
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">
+            @if (isNew()) {
+              Add Identity Provider
+            } @else {
+              {{ provider()?.displayName || provider()?.scheme }}
+            }
+          </h1>
+          @if (!isNew() && provider()) {
+            <p class="text-sm text-gray-500">
+              {{ getProviderTypeName(provider()!.providerType) }} &middot; {{ provider()?.scheme }}
+            </p>
+          }
+        </div>
+      </div>
+      @if (!isNew()) {
+        <div class="flex gap-2">
+          <ui-button variant="secondary" (clicked)="onTest()">
+            <ui-icon name="play-circle" class="h-4 w-4 mr-2" />
+            Test Connection
+          </ui-button>
+          <ui-button
+            variant="danger"
+            [disabled]="provider()?.nonEditable === true"
+            [title]="provider()?.nonEditable ? 'This provider cannot be deleted' : ''"
+            (clicked)="openDeleteModal()"
+          >
+            Delete
+          </ui-button>
+        </div>
+      }
+    </div>
+
+    <!-- Non-editable warning -->
+    @if (provider()?.nonEditable) {
+      <div class="flex items-center gap-2 p-4 rounded-md bg-yellow-50 text-yellow-800">
+        <ui-icon name="exclamation-triangle" class="h-5 w-5" />
+        This provider is marked as non-editable and cannot be modified.
+      </div>
+    }
+
+    <!-- Test result -->
+    @if (testResult()) {
+      <div
+        [class]="'flex items-center gap-2 p-4 rounded-md ' +
+          (testResult()!.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800')"
+      >
+        @if (testResult()!.success) {
+          <ui-icon name="check-circle" class="h-5 w-5" />
+        } @else {
+          <ui-icon name="x-circle" class="h-5 w-5" />
+        }
+        {{ testResult()!.message }}
+      </div>
+    }
+
+    <!-- Tab navigation — groups the form into General / Connection /
+         Access Control / Advanced. Tabs with unresolved validation issues
+         show a red "!" badge so admins notice errors hiding off-screen. -->
+    <div class="border-b border-gray-200">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto [scrollbar-width:thin] [&>*]:shrink-0" aria-label="Tabs">
+        @for (tab of tabs; track tab.id) {
+          <button
+            type="button"
+            (click)="setActiveTab(tab.id)"
+            [class]="'flex items-center gap-2 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ' +
+              (activeTab() === tab.id
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300')"
+          >
+            <ui-icon [name]="tab.icon" class="h-4 w-4" />
+            {{ tab.label }}
+            @if (tabHasErrors(tab.id)) {
+              <span class="inline-flex items-center justify-center h-5 w-5 rounded-full bg-red-100 text-red-700 text-xs font-semibold" aria-label="Has errors">!</span>
+            }
+          </button>
+        }
+      </nav>
+    </div>
+
+    @if (activeTab() === 'general') {
+    <div class="grid grid-cols-1 gap-6">
+      <!-- Basic Information -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Basic Information</h3>
+
+          <div class="space-y-4">
+            @if (isNew()) {
+              <!-- Provider Type (only for new) -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700">Provider Type *</label>
+                <select
+                  [ngModel]="formData.providerType"
+                  (ngModelChange)="onProviderTypeSelected($event)"
+                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                >
+                  <option [ngValue]="undefined">Select a provider type...</option>
+                  @for (type of providerTypes(); track type.type) {
+                    <option [ngValue]="type.type">{{ type.name }}</option>
+                  }
+                </select>
+                @if (getSelectedTypeInfo()?.description) {
+                  <p class="mt-1 text-xs text-gray-500">{{ getSelectedTypeInfo()?.description }}</p>
+                }
+              </div>
+
+              <!-- Scheme (only for new) -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700">Scheme Name *</label>
+                <div class="relative">
+                  <input
+                    type="text"
+                    [ngModel]="formData.scheme"
+                    (ngModelChange)="formData.scheme = normalizeScheme($event); onSchemeChange()"
+                    [class]="'mt-1 block w-full rounded-md shadow-sm focus:ring-primary-500 sm:text-sm pr-10 ' +
+                      (formData.scheme && formData.scheme.length >= 2 && schemeAvailability()
+                        ? (schemeAvailability()!.available
+                          ? 'border-green-300 focus:border-green-500'
+                          : 'border-red-300 focus:border-red-500')
+                        : 'border-gray-300 focus:border-primary-500')"
+                    placeholder="e.g., google, corporate-sso"
+                  />
+                  @if (formData.scheme && formData.scheme.length >= 2) {
+                    <div class="absolute inset-y-0 right-0 flex items-center pr-3 mt-1">
+                      @if (checkingScheme()) {
+                        <svg class="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      } @else if (schemeAvailability()?.available) {
+                        <ui-icon name="check-circle" class="h-5 w-5 text-green-500" />
+                      } @else if (schemeAvailability()) {
+                        <ui-icon name="exclamation-triangle" class="h-5 w-5 text-red-500" />
+                      }
+                    </div>
+                  }
+                </div>
+                @if (formData.scheme && formData.scheme.length >= 2 && schemeAvailability() && !schemeAvailability()!.available) {
+                  <p class="mt-1 text-xs text-red-600">{{ schemeAvailability()?.message || 'This scheme name is unavailable' }}</p>
+                } @else {
+                  <p class="mt-1 text-xs text-gray-500">Unique identifier (lowercase, hyphens allowed)</p>
+                }
+              </div>
+            }
+
+            <!-- Display Name -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700">Display Name</label>
+              <input
+                type="text"
+                [(ngModel)]="formData.displayName"
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                placeholder="e.g., Sign in with Google"
+              />
+            </div>
+
+            <!-- Icon URL -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700">Icon URL</label>
+              <div class="mt-1 flex items-center gap-2">
+                @if (formData.iconUrl) {
+                  <img [src]="formData.iconUrl" alt="" class="h-6 w-6 rounded flex-shrink-0" />
+                }
+                <input
+                  type="url"
+                  [(ngModel)]="formData.iconUrl"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  placeholder="https://…/logo.svg"
+                />
+              </div>
+              <p class="mt-1 text-xs text-gray-500">
+                Optional. Overrides the built-in brand icon on the login screen. Leave blank to use the default icon for this provider type.
+              </p>
+              @if (!isNew()) {
+                <div class="mt-2">
+                  <button
+                    type="button"
+                    (click)="discoverIcons()"
+                    [disabled]="discoveringIcons()"
+                    class="inline-flex items-center px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md disabled:opacity-50"
+                  >
+                    <ui-icon name="sparkles" class="h-4 w-4 mr-1.5" />
+                    {{ discoveringIcons() ? 'Looking for icons...' : 'Find icon on provider site' }}
+                  </button>
+                  <p class="mt-1 text-xs text-gray-500">
+                    Fetches the site's own icons, checks they are real images and stores a copy, so the login page never loads from the provider.
+                  </p>
+                </div>
+                @if (iconDiscovery(); as found) {
+                  <div class="mt-3 border border-gray-200 rounded-md p-3">
+                    @if (found.candidates.length === 0) {
+                      <p class="text-sm text-gray-600">No usable icons found{{ found.origin ? ' on ' + found.origin : '' }}.</p>
+                    } @else {
+                      <p class="text-xs text-gray-500 mb-2">Found on {{ found.origin }}. Pick one to use it.</p>
+                      <div class="flex flex-wrap gap-3">
+                        @for (c of found.candidates; track c.sourceUrl) {
+                          <button
+                            type="button"
+                            (click)="useIcon(c)"
+                            [disabled]="settingIcon()"
+                            class="flex flex-col items-center gap-1 p-2 rounded-md border border-gray-200 hover:border-primary-500 hover:bg-primary-50 disabled:opacity-50"
+                            [title]="c.sourceUrl"
+                          >
+                            <img [src]="c.dataUrl" alt="" class="h-12 w-12 rounded" />
+                            <span class="text-[11px] text-gray-600">{{ c.source }}</span>
+                            <span class="text-[11px] text-gray-400">{{ c.width }}×{{ c.height }} · {{ c.sourceFormat }}</span>
+                          </button>
+                        }
+                      </div>
+                    }
+                    @if (found.notes.length > 0) {
+                      <details class="mt-2">
+                        <summary class="text-xs text-gray-500 cursor-pointer">Details ({{ found.notes.length }})</summary>
+                        <ul class="mt-1 space-y-0.5 text-xs text-gray-500 font-mono break-all">
+                          @for (n of found.notes; track $index) {
+                            <li>{{ n }}</li>
+                          }
+                        </ul>
+                      </details>
+                    }
+                  </div>
+                }
+              }
+            </div>
+
+            <!-- Enabled -->
+            <div class="flex items-center">
+              <input
+                type="checkbox"
+                id="enabled"
+                [(ngModel)]="formData.enabled"
+                class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              <label for="enabled" class="ml-2 text-sm text-gray-700">Enabled</label>
+            </div>
+
+            @if (!isNew() && provider()) {
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Created</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                  {{ provider()!.created | localeDate:'medium' }}
+                </dd>
+              </div>
+              @if (provider()?.lastAccessed) {
+                <div>
+                  <dt class="text-sm font-medium text-gray-500">Last Used</dt>
+                  <dd class="mt-1 text-sm text-gray-900">
+                    {{ provider()!.lastAccessed | localeDate:'medium' }}
+                  </dd>
+                </div>
+              }
+            }
+          </div>
+        </div>
+      </ui-card>
+    </div>
+    }
+
+    @if (activeTab() === 'connection') {
+    <div class="grid grid-cols-1 gap-6">
+      <!-- Provider Configuration -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Provider Configuration</h3>
+
+          <div class="space-y-4">
+            @switch (formData.providerType) {
+              <!-- Google -->
+              @case (ProviderTypes.Google) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="xxx.apps.googleusercontent.com"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret *</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Hosted Domain (optional)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('hostedDomain', '')"
+                    (ngModelChange)="updateConfig('hostedDomain', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="example.com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Restrict to Google Workspace domain</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Access Type</label>
+                  <select
+                    [ngModel]="getConfig('accessType', 'online')"
+                    (ngModelChange)="updateConfig('accessType', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="online">Online (default)</option>
+                    <option value="offline">Offline (get refresh token)</option>
+                  </select>
+                  <p class="mt-1 text-xs text-gray-500">Use offline to receive a refresh token for long-lived access</p>
+                </div>
+              }
+
+              <!-- Microsoft -->
+              @case (ProviderTypes.Microsoft) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret *</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Tenant ID</label>
+                  <select
+                    [ngModel]="microsoftCustomTenant() ? '__custom__' : getConfig('tenantId', 'common')"
+                    (ngModelChange)="setMicrosoftTenantPreset($event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="common">Common (any account)</option>
+                    <option value="organizations">Organizations only</option>
+                    <option value="consumers">Personal accounts only</option>
+                    <option value="__custom__">Specific tenant ID or domain…</option>
+                  </select>
+                  @if (microsoftCustomTenant()) {
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('tenantId', '')"
+                      (ngModelChange)="updateConfig('tenantId', $event)"
+                      placeholder="00000000-0000-0000-0000-000000000000 or contoso.onmicrosoft.com"
+                      class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono"
+                    />
+                  }
+                  <p class="mt-1 text-xs text-gray-500">Pick a preset or enter a specific tenant GUID / verified domain.</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Domain Hint (optional)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('domainHint', '')"
+                    (ngModelChange)="updateConfig('domainHint', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="contoso.com"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Instance (optional)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('instance', '')"
+                    (ngModelChange)="updateConfig('instance', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://login.microsoftonline.com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Override Azure AD / Entra ID instance URL (e.g., for national / sovereign clouds)</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Prompt</label>
+                  <select
+                    [ngModel]="getConfig('prompt', '')"
+                    (ngModelChange)="updateConfig('prompt', $event || undefined)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="">Default</option>
+                    <option value="login">Force login</option>
+                    <option value="consent">Force consent</option>
+                    <option value="select_account">Select account</option>
+                    <option value="none">None (silent)</option>
+                  </select>
+                </div>
+              }
+
+              <!-- GitHub -->
+              @case (ProviderTypes.GitHub) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret *</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Enterprise URL (optional)</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('enterpriseUrl', '')"
+                    (ngModelChange)="updateConfig('enterpriseUrl', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://github.example.com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">For GitHub Enterprise Server</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Allowed Organizations (optional)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('allowedOrganizations').join(', ')"
+                    (ngModelChange)="setConfigFromCommaSeparated('allowedOrganizations', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="org1, org2"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Restrict login to members of these GitHub organizations (comma-separated)</p>
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="requestEmail"
+                    [ngModel]="getConfig('requestEmail', true)"
+                    (ngModelChange)="updateConfig('requestEmail', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="requestEmail" class="ml-2 text-sm text-gray-700">Request email address</label>
+                </div>
+              }
+
+              <!-- Facebook -->
+              @case (ProviderTypes.Facebook) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">App ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="Your Facebook App ID"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">App Secret *</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Fields</label>
+                  <input
+                    type="text"
+                    [ngModel]="(getConfigArray('fields').length ? getConfigArray('fields') : ['id', 'name', 'email', 'picture']).join(',')"
+                    (ngModelChange)="setConfigFromCommaSeparated('fields', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="id,name,email,picture"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Comma-separated Graph API fields</p>
+                </div>
+              }
+
+              <!-- Apple -->
+              @case (ProviderTypes.Apple) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Services ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="com.example.app.auth"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Your Apple Services ID (not App ID)</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Team ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('teamId', '')"
+                    (ngModelChange)="updateConfig('teamId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="XXXXXXXXXX"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">10-character Team ID from Apple Developer</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Key ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('keyId', '')"
+                    (ngModelChange)="updateConfig('keyId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="XXXXXXXXXX"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Key ID for your Sign in with Apple private key</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Private Key (P8) *</label>
+                  <textarea
+                    [ngModel]="getConfig('privateKey', '')"
+                    (ngModelChange)="updateConfig('privateKey', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono text-xs"
+                    rows="4"
+                    placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+                  ></textarea>
+                  <p class="mt-1 text-xs text-gray-500">Contents of the .p8 file from Apple Developer</p>
+                </div>
+              }
+
+              <!-- LinkedIn -->
+              @case (ProviderTypes.LinkedIn) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret *</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Scopes</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('scopes').join(' ')"
+                    (ngModelChange)="setConfigFromSpaceSeparated('scopes', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="openid profile email"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">LinkedIn uses OpenID Connect</p>
+                </div>
+              }
+
+              <!-- Twitter -->
+              @case (ProviderTypes.Twitter) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="OAuth 2.0 Client ID"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">From Twitter/X Developer Portal</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret *</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Scopes</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('scopes').join(' ')"
+                    (ngModelChange)="setConfigFromSpaceSeparated('scopes', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="tweet.read users.read"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Twitter OAuth 2.0 scopes</p>
+                </div>
+              }
+
+              <!-- OIDC -->
+              @case (ProviderTypes.Oidc) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Authority URL *</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('authority', '')"
+                    (ngModelChange)="updateConfig('authority', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://provider.example.com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Base URL for OIDC discovery (.well-known/openid-configuration)</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                  <p class="mt-1 text-xs text-gray-500">Required for confidential clients</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Scopes</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('scopes').join(' ')"
+                    (ngModelChange)="setConfigFromSpaceSeparated('scopes', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="openid profile email"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Space-separated. Include <code>email</code> to auto-provision accounts from the IdP&#39;s email claim; omit it and the user will be asked for an email at first sign-in.</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Prompt</label>
+                  <select
+                    [ngModel]="getConfig('prompt', '')"
+                    (ngModelChange)="updateConfig('prompt', $event || undefined)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="">Default</option>
+                    <option value="login">Force login</option>
+                    <option value="consent">Force consent</option>
+                    <option value="select_account">Select account</option>
+                    <option value="none">None (silent)</option>
+                  </select>
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="usePkce"
+                    [ngModel]="getConfig('usePkce', true)"
+                    (ngModelChange)="updateConfig('usePkce', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="usePkce" class="ml-2 text-sm text-gray-700">Use PKCE (recommended)</label>
+                </div>
+
+                <details class="mt-4 border-t pt-3">
+                  <summary class="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900 select-none flex items-center gap-2">
+                    <svg class="h-3 w-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                    Endpoint Overrides (advanced)
+                  </summary>
+
+                  <div class="mt-3">
+                    <p class="text-xs text-gray-500 mb-2">Override discovered endpoints. Leave blank to use values from OIDC discovery.</p>
+                    <div class="flex items-center mb-3">
+                      <input
+                        type="checkbox"
+                        id="disableDiscovery"
+                        [ngModel]="getConfig('disableDiscovery', false)"
+                        (ngModelChange)="updateConfig('disableDiscovery', $event)"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <label for="disableDiscovery" class="ml-2 text-sm text-gray-700">Disable OIDC discovery (manual configuration)</label>
+                    </div>
+                    <div class="grid grid-cols-1 gap-3">
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">Authorization Endpoint</label>
+                        <input
+                          type="url"
+                          [ngModel]="getConfig('authorizationEndpoint', '')"
+                          (ngModelChange)="updateConfig('authorizationEndpoint', $event)"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="https://provider.example.com/authorize"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">Token Endpoint</label>
+                        <input
+                          type="url"
+                          [ngModel]="getConfig('tokenEndpoint', '')"
+                          (ngModelChange)="updateConfig('tokenEndpoint', $event)"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="https://provider.example.com/token"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">UserInfo Endpoint</label>
+                        <input
+                          type="url"
+                          [ngModel]="getConfig('userInfoEndpoint', '')"
+                          (ngModelChange)="updateConfig('userInfoEndpoint', $event)"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="https://provider.example.com/userinfo"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">JWKS URI</label>
+                        <input
+                          type="url"
+                          [ngModel]="getConfig('jwksUri', '')"
+                          (ngModelChange)="updateConfig('jwksUri', $event)"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="https://provider.example.com/.well-known/jwks.json"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700">End Session Endpoint</label>
+                        <input
+                          type="url"
+                          [ngModel]="getConfig('endSessionEndpoint', '')"
+                          (ngModelChange)="updateConfig('endSessionEndpoint', $event)"
+                          class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                          placeholder="https://provider.example.com/logout"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              }
+
+              <!-- OAuth2 -->
+              @case (ProviderTypes.OAuth2) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Authorization Endpoint *</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('authorizationEndpoint', '')"
+                    (ngModelChange)="updateConfig('authorizationEndpoint', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://provider.example.com/oauth/authorize"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Token Endpoint *</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('tokenEndpoint', '')"
+                    (ngModelChange)="updateConfig('tokenEndpoint', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://provider.example.com/oauth/token"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">User Info Endpoint</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('userInfoEndpoint', '')"
+                    (ngModelChange)="updateConfig('userInfoEndpoint', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://provider.example.com/userinfo"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('clientId', '')"
+                    (ngModelChange)="updateConfig('clientId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Client Secret</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('clientSecret', '')"
+                      (ngModelChange)="updateConfig('clientSecret', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('clientSecret')"
+                        [disabled]="isRevealingSecret('clientSecret')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Scopes</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('scopes').join(' ')"
+                    (ngModelChange)="setConfigFromSpaceSeparated('scopes', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="openid profile email"
+                  />
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Claim Mappings</h4>
+                <p class="text-xs text-gray-500 mb-2">JSON path to extract user properties from the userinfo response</p>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">User ID Claim Path</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('userIdClaimPath', 'sub')"
+                    (ngModelChange)="updateConfig('userIdClaimPath', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="sub"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Email Claim Path</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('emailClaimPath', 'email')"
+                    (ngModelChange)="updateConfig('emailClaimPath', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="email"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Name Claim Path</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('nameClaimPath', 'name')"
+                    (ngModelChange)="updateConfig('nameClaimPath', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="name"
+                  />
+                </div>
+              }
+
+              <!-- SAML2 -->
+              @case (ProviderTypes.Saml2) {
+                <h4 class="font-medium text-gray-900 border-b pb-2">Identity Provider</h4>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Entity ID *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('entityId', '')"
+                    (ngModelChange)="updateConfig('entityId', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://idp.example.com/saml2"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Metadata URL (recommended)</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('metadataUrl', '')"
+                    (ngModelChange)="updateConfig('metadataUrl', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://idp.example.com/saml2/metadata"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Auto-discover SSO endpoints and certificates from metadata</p>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Manual Configuration (if no metadata)</h4>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">SSO Service URL</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('singleSignOnServiceUrl', '')"
+                    (ngModelChange)="updateConfig('singleSignOnServiceUrl', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://idp.example.com/saml2/sso"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">SSO Binding</label>
+                  <select
+                    [ngModel]="getConfig('singleSignOnBinding', 'Redirect')"
+                    (ngModelChange)="updateConfig('singleSignOnBinding', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="Redirect">HTTP-Redirect</option>
+                    <option value="POST">HTTP-POST</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Single Logout Service URL (optional)</label>
+                  <input
+                    type="url"
+                    [ngModel]="getConfig('singleLogoutServiceUrl', '')"
+                    (ngModelChange)="updateConfig('singleLogoutServiceUrl', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="https://idp.example.com/saml2/slo"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">IdP endpoint for Single Logout. Without this, signing out of the local session won't propagate to the IdP.</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">IdP Signing Certificate (PEM)</label>
+                  <textarea
+                    [ngModel]="getConfig('signingCertificate', '')"
+                    (ngModelChange)="updateConfig('signingCertificate', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono text-xs"
+                    rows="4"
+                    placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+                  ></textarea>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Name ID Format</h4>
+                <div>
+                  <select
+                    [ngModel]="getConfig('nameIdFormat', 'unspecified')"
+                    (ngModelChange)="updateConfig('nameIdFormat', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  >
+                    <option value="unspecified">Unspecified</option>
+                    <option value="emailAddress">Email Address</option>
+                    <option value="persistent">Persistent</option>
+                    <option value="transient">Transient</option>
+                  </select>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Security</h4>
+                <div class="space-y-2">
+                  <div class="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="signRequests"
+                      [ngModel]="getConfig('signAuthenticationRequests', false)"
+                      (ngModelChange)="updateConfig('signAuthenticationRequests', $event)"
+                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="signRequests" class="ml-2 text-sm text-gray-700">Sign authentication requests</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="wantSigned"
+                      [ngModel]="getConfig('wantAssertionsSigned', true)"
+                      (ngModelChange)="updateConfig('wantAssertionsSigned', $event)"
+                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="wantSigned" class="ml-2 text-sm text-gray-700">Require signed assertions</label>
+                  </div>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Options</h4>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="autoProvisionSaml"
+                    [ngModel]="getConfig('autoProvisionUsers', true)"
+                    (ngModelChange)="updateConfig('autoProvisionUsers', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="autoProvisionSaml" class="ml-2 text-sm text-gray-700">Auto-provision users on first login</label>
+                </div>
+              }
+
+              <!-- LDAP -->
+              @case (ProviderTypes.Ldap) {
+                <h4 class="font-medium text-gray-900 border-b pb-2">Connection Settings</h4>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Server *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('server', '')"
+                    (ngModelChange)="updateConfig('server', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="ldap.example.com"
+                  />
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Port</label>
+                    <input
+                      type="number"
+                      [ngModel]="getConfig('port', 389)"
+                      (ngModelChange)="updateConfig('port', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div class="flex items-end gap-4">
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="useSsl"
+                        [ngModel]="getConfig('useSsl', false)"
+                        (ngModelChange)="updateConfig('useSsl', $event)"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <label for="useSsl" class="ml-2 text-sm text-gray-700">Use SSL (LDAPS)</label>
+                    </div>
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="useStartTls"
+                        [ngModel]="getConfig('useStartTls', false)"
+                        (ngModelChange)="updateConfig('useStartTls', $event)"
+                        class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <label for="useStartTls" class="ml-2 text-sm text-gray-700">Use StartTLS</label>
+                    </div>
+                  </div>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Bind Credentials</h4>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Bind DN</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('bindDn', '')"
+                    (ngModelChange)="updateConfig('bindDn', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="cn=admin,dc=example,dc=com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Service account DN for LDAP queries</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Bind Password</label>
+                  <div class="flex gap-2">
+                    <input
+                      type="password"
+                      [ngModel]="getConfig('bindPassword', '')"
+                      (ngModelChange)="updateConfig('bindPassword', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    @if (!isNew()) {
+                      <button
+                        type="button"
+                        (click)="revealSecret('bindPassword')"
+                        [disabled]="isRevealingSecret('bindPassword')"
+                        class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                      >
+                        {{ isRevealingSecret('bindPassword') ? '...' : 'Reveal' }}
+                      </button>
+                    }
+                  </div>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Search Settings</h4>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Base DN *</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('baseDn', '')"
+                    (ngModelChange)="updateConfig('baseDn', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="dc=example,dc=com"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">User Search Base (optional)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('userSearchBase', '')"
+                    (ngModelChange)="updateConfig('userSearchBase', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="ou=people,dc=example,dc=com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Override Base DN for user lookups. Leave blank to use the Base DN above.</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">User Search Filter</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('userSearchFilter', '(&(objectClass=person)(uid={0}))')"
+                    (ngModelChange)="updateConfig('userSearchFilter', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="(&(objectClass=person)(uid={0}))"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">&#123;0&#125; is replaced with the username</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Group Search Base (optional)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('groupSearchBase', '')"
+                    (ngModelChange)="updateConfig('groupSearchBase', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="ou=groups,dc=example,dc=com"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">Override Base DN for group lookups. Leave blank to use the Base DN above.</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Group Search Filter</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfig('groupSearchFilter', '(objectClass=group)')"
+                    (ngModelChange)="updateConfig('groupSearchFilter', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="(objectClass=group)"
+                  />
+                  <p class="mt-1 text-xs text-gray-500">LDAP filter for groups. Use &#123;0&#125; for username if filtering by membership.</p>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Attribute Mappings</h4>
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">UID Attribute</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('uidAttribute', 'uid')"
+                      (ngModelChange)="updateConfig('uidAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Email Attribute</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('emailAttribute', 'mail')"
+                      (ngModelChange)="updateConfig('emailAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">First Name</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('firstNameAttribute', 'givenName')"
+                      (ngModelChange)="updateConfig('firstNameAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Last Name</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('lastNameAttribute', 'sn')"
+                      (ngModelChange)="updateConfig('lastNameAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Display Name</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('displayNameAttribute', 'displayName')"
+                      (ngModelChange)="updateConfig('displayNameAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Phone</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('phoneAttribute', 'telephoneNumber')"
+                      (ngModelChange)="updateConfig('phoneAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Group Membership</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('memberOfAttribute', 'memberOf')"
+                      (ngModelChange)="updateConfig('memberOfAttribute', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                    <p class="mt-1 text-xs text-gray-500">Attribute listing the groups a user belongs to</p>
+                  </div>
+                </div>
+
+                <h4 class="font-medium text-gray-900 border-b pb-2 mt-4">Options</h4>
+                <div class="flex items-center gap-6">
+                  <div class="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="autoProvision"
+                      [ngModel]="getConfig('autoProvisionUsers', true)"
+                      (ngModelChange)="updateConfig('autoProvisionUsers', $event)"
+                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="autoProvision" class="ml-2 text-sm text-gray-700">Auto-provision users</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="syncGroups"
+                      [ngModel]="getConfig('syncGroupsToRoles', true)"
+                      (ngModelChange)="updateConfig('syncGroupsToRoles', $event)"
+                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <label for="syncGroups" class="ml-2 text-sm text-gray-700">Sync groups to roles</label>
+                  </div>
+                </div>
+              }
+
+              @default {
+                @if (formData.providerType === undefined) {
+                  <p class="text-sm text-gray-500">Select a provider type to configure its settings.</p>
+                } @else {
+                  <!-- Generic OAuth2 fields for unknown provider types -->
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Client ID *</label>
+                    <input
+                      type="text"
+                      [ngModel]="getConfig('clientId', '')"
+                      (ngModelChange)="updateConfig('clientId', $event)"
+                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700">Client Secret</label>
+                    <div class="flex gap-2">
+                      <input
+                        type="password"
+                        [ngModel]="getConfig('clientSecret', '')"
+                        (ngModelChange)="updateConfig('clientSecret', $event)"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                      />
+                      @if (!isNew()) {
+                        <button
+                          type="button"
+                          (click)="revealSecret('clientSecret')"
+                          [disabled]="isRevealingSecret('clientSecret')"
+                          class="mt-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                        >
+                          {{ isRevealingSecret('clientSecret') ? '...' : 'Reveal' }}
+                        </button>
+                      }
+                    </div>
+                  </div>
+                }
+              }
+            }
+          </div>
+        </div>
+      </ui-card>
+    </div>
+    }
+
+    @if (activeTab() === 'access') {
+    <div class="grid grid-cols-1 gap-6">
+      <!-- Access Control & Default Roles - Show for all except LDAP -->
+      @if (showProxyModeSettings()) {
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Access Control & Default Roles</h3>
+          <p class="text-sm text-gray-500 mb-4">
+            Gate which external users can sign in via this IdP and assign default Oluso roles
+            to new users on first login.
+          </p>
+
+          <!-- Mode selector -->
+          <fieldset class="mb-6">
+            <legend class="text-sm font-medium text-gray-700 mb-2">Access Control</legend>
+
+            <div class="space-y-2">
+              <label class="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="accessControlMode"
+                  [checked]="getAccessControlMode() === 'open'"
+                  (change)="setAccessControlMode('open')"
+                  class="mt-1 text-primary-600 border-gray-300 focus:ring-primary-500"
+                />
+                <span>
+                  <span class="block text-sm font-medium text-gray-900">Open</span>
+                  <span class="block text-xs text-gray-500">Anyone the IdP authenticates can sign in.</span>
+                </span>
+              </label>
+
+              <label class="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="accessControlMode"
+                  [checked]="getAccessControlMode() === 'emailAllowlist'"
+                  (change)="setAccessControlMode('emailAllowlist')"
+                  class="mt-1 text-primary-600 border-gray-300 focus:ring-primary-500"
+                />
+                <span>
+                  <span class="block text-sm font-medium text-gray-900">Email allowlist</span>
+                  <span class="block text-xs text-gray-500">Only the listed external emails can sign in.</span>
+                </span>
+              </label>
+
+              <label class="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="accessControlMode"
+                  [checked]="getAccessControlMode() === 'claimGate'"
+                  (change)="setAccessControlMode('claimGate')"
+                  class="mt-1 text-primary-600 border-gray-300 focus:ring-primary-500"
+                />
+                <span>
+                  <span class="block text-sm font-medium text-gray-900">Claim gate</span>
+                  <span class="block text-xs text-gray-500">Allow only users whose IdP claim contains a specific value (e.g. group=admins).</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <!-- Email allowlist editor -->
+          @if (getAccessControlMode() === 'emailAllowlist') {
+            <div class="mb-6 pl-4 border-l-2 border-gray-200">
+              <label class="block text-sm font-medium text-gray-700 mb-2">Allowed emails</label>
+
+              <div class="flex flex-wrap gap-2 mb-2">
+                @for (email of getAllowedEmails(); track email) {
+                  <span class="inline-flex items-center gap-1 px-2 py-1 bg-primary-50 text-primary-700 rounded-md text-sm">
+                    {{ email }}
+                    <button
+                      type="button"
+                      (click)="removeAllowedEmail(email)"
+                      class="hover:bg-primary-100 rounded p-0.5"
+                      [attr.aria-label]="'Remove ' + email"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </span>
+                }
+              </div>
+
+              <div class="flex gap-2">
+                <input
+                  type="email"
+                  [(ngModel)]="newAllowedEmail"
+                  (keyup.enter)="addAllowedEmail()"
+                  placeholder="user@example.com"
+                  class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                />
+                <button
+                  type="button"
+                  (click)="addAllowedEmail()"
+                  class="px-3 py-2 text-sm font-medium text-primary-700 border border-primary-300 rounded-md hover:bg-primary-50"
+                >
+                  Add
+                </button>
+              </div>
+              <p class="mt-1 text-xs text-gray-500">Press Enter to add. Comparison is case-insensitive.</p>
+            </div>
+          }
+
+          <!-- Claim gate editor -->
+          @if (getAccessControlMode() === 'claimGate') {
+            <div class="mb-6 pl-4 border-l-2 border-gray-200 space-y-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Claim path</label>
+                <select
+                  [ngModel]="isCustomClaimPath() ? '__custom__' : getClaimPath()"
+                  (ngModelChange)="$event === '__custom__' ? setClaimPath(customClaimPath || '') : setClaimPath($event)"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                >
+                  <option value="">— Select —</option>
+                  @for (preset of commonClaimPaths; track preset.value) {
+                    <option [value]="preset.value">{{ preset.label }} — {{ preset.hint }}</option>
+                  }
+                  <option value="__custom__">Custom…</option>
+                </select>
+
+                @if (isCustomClaimPath() || getClaimPath() === '') {
+                  <input
+                    type="text"
+                    [ngModel]="getClaimPath()"
+                    (ngModelChange)="setClaimPath($event)"
+                    placeholder="e.g. https://my.app/groups"
+                    class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm font-mono"
+                  />
+                }
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Allowed values</label>
+
+                <div class="flex flex-wrap gap-2 mb-2">
+                  @for (v of getClaimAnyOf(); track v) {
+                    <span class="inline-flex items-center gap-1 px-2 py-1 bg-primary-50 text-primary-700 rounded-md text-sm">
+                      {{ v }}
+                      <button
+                        type="button"
+                        (click)="removeClaimAnyOf(v)"
+                        class="hover:bg-primary-100 rounded p-0.5"
+                        [attr.aria-label]="'Remove ' + v"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </span>
+                  }
+                </div>
+
+                <div class="flex gap-2">
+                  <input
+                    type="text"
+                    [(ngModel)]="newClaimAnyOfValue"
+                    (keyup.enter)="addClaimAnyOf()"
+                    placeholder="e.g. admins"
+                    class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                  />
+                  <button
+                    type="button"
+                    (click)="addClaimAnyOf()"
+                    class="px-3 py-2 text-sm font-medium text-primary-700 border border-primary-300 rounded-md hover:bg-primary-50"
+                  >
+                    Add
+                  </button>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">User passes if the claim contains <strong>any</strong> of these values.</p>
+              </div>
+
+              <div class="rounded-md bg-gray-50 p-3 text-xs text-gray-600">
+                <strong class="block text-gray-700 mb-1">Preview</strong>
+                {{ getClaimGatePreview() }}
+              </div>
+            </div>
+          }
+
+          <!-- Default roles editor -->
+          <fieldset>
+            <legend class="text-sm font-medium text-gray-700 mb-2">Default Roles</legend>
+            <p class="text-xs text-gray-500 mb-2">
+              Assigned to new users on <strong>first sign-in</strong> only. Editing this list later does not affect existing users.
+            </p>
+
+            <div class="flex flex-wrap gap-2 mb-2">
+              @for (roleId of getDefaultRoles(); track roleId) {
+                <span class="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md text-sm">
+                  {{ getRoleDisplayName(roleId) }}
+                  <button
+                    type="button"
+                    (click)="removeDefaultRole(roleId)"
+                    class="hover:bg-emerald-100 rounded p-0.5"
+                    [attr.aria-label]="'Remove ' + getRoleDisplayName(roleId)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </span>
+              }
+            </div>
+
+            <div class="flex gap-2">
+              <select
+                [(ngModel)]="newDefaultRole"
+                class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              >
+                <option value="">— Select a role —</option>
+                @for (role of tenantRoles(); track role.id) {
+                  <option [value]="role.id" [disabled]="getDefaultRoles().includes(role.id)">
+                    {{ role.name }}{{ role.description ? ' — ' + role.description : '' }}
+                  </option>
+                }
+              </select>
+              <button
+                type="button"
+                (click)="addDefaultRole()"
+                [disabled]="!newDefaultRole"
+                class="px-3 py-2 text-sm font-medium text-primary-700 border border-primary-300 rounded-md hover:bg-primary-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+            </div>
+          </fieldset>
+        </div>
+      </ui-card>
+      }
+    </div>
+    }
+
+    @if (activeTab() === 'advanced') {
+    <div class="grid grid-cols-1 gap-6">
+      <!-- Proxy Mode Settings (Federation Broker) - Show for all except LDAP -->
+      @if (showProxyModeSettings()) {
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Proxy Mode (Federation Broker)</h3>
+
+          <div class="space-y-4">
+            <div class="flex items-center">
+              <input
+                type="checkbox"
+                id="proxyMode"
+                [ngModel]="getConfig('proxyMode', false)"
+                (ngModelChange)="updateConfig('proxyMode', $event)"
+                class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              <label for="proxyMode" class="ml-2 text-sm text-gray-700">Enable Proxy/Pass-through Mode</label>
+            </div>
+            <p class="text-xs text-gray-500 ml-6 -mt-2">Authenticate via external IdP without storing user details locally</p>
+
+            @if (getConfig('proxyMode', false)) {
+              <div class="mt-4 pl-4 border-l-2 border-primary-200 space-y-4">
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="storeUserLocally"
+                    [ngModel]="getConfig('storeUserLocally', true)"
+                    (ngModelChange)="updateConfig('storeUserLocally', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="storeUserLocally" class="ml-2 text-sm text-gray-700">Store user details locally</label>
+                </div>
+
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="cacheExternalTokens"
+                    [ngModel]="getConfig('cacheExternalTokens', false)"
+                    (ngModelChange)="updateConfig('cacheExternalTokens', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="cacheExternalTokens" class="ml-2 text-sm text-gray-700">Cache external tokens for userinfo proxy</label>
+                </div>
+
+                @if (getConfig('cacheExternalTokens', false)) {
+                  <div class="ml-6">
+                    <label class="block text-sm font-medium text-gray-700">Token Cache Duration (seconds)</label>
+                    <input
+                      type="number"
+                      [ngModel]="getConfig('tokenCacheDurationSeconds', 3600)"
+                      (ngModelChange)="updateConfig('tokenCacheDurationSeconds', $event)"
+                      class="mt-1 block w-32 rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                      min="60"
+                      max="86400"
+                    />
+                  </div>
+                }
+
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="enableUserInfoProxy"
+                    [ngModel]="getConfig('enableUserInfoProxy', false)"
+                    (ngModelChange)="updateConfig('enableUserInfoProxy', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="enableUserInfoProxy" class="ml-2 text-sm text-gray-700">Enable UserInfo proxy endpoint</label>
+                </div>
+                <p class="text-xs text-gray-500 ml-6 -mt-2">Allows clients to fetch user details from external IdP via /userinfo-proxy/&#123;scheme&#125;</p>
+
+                <h5 class="font-medium text-gray-800 text-sm mt-4">Token Pass-through</h5>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="includeExternalAccessToken"
+                    [ngModel]="getConfig('includeExternalAccessToken', false)"
+                    (ngModelChange)="updateConfig('includeExternalAccessToken', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="includeExternalAccessToken" class="ml-2 text-sm text-gray-700">Include external access token in issued tokens</label>
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="includeExternalIdToken"
+                    [ngModel]="getConfig('includeExternalIdToken', false)"
+                    (ngModelChange)="updateConfig('includeExternalIdToken', $event)"
+                    class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <label for="includeExternalIdToken" class="ml-2 text-sm text-gray-700">Include external ID token in issued tokens</label>
+                </div>
+                <p class="text-xs text-orange-600 ml-6 -mt-2">Warning: Exposes external tokens to clients. Use with caution.</p>
+
+                <h5 class="font-medium text-gray-800 text-sm mt-4">Claim Filtering</h5>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Include Claims (comma-separated)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('proxyIncludeClaims').join(', ')"
+                    (ngModelChange)="setConfigFromCommaSeparated('proxyIncludeClaims', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="Leave empty to include all claims"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700">Exclude Claims (comma-separated)</label>
+                  <input
+                    type="text"
+                    [ngModel]="getConfigArray('proxyExcludeClaims').join(', ')"
+                    (ngModelChange)="setConfigFromCommaSeparated('proxyExcludeClaims', $event)"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    placeholder="e.g., nonce, at_hash, c_hash"
+                  />
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+      </ui-card>
+    }
+
+    <!-- Setup Instructions -->
+    @if (formData.providerType !== undefined) {
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6">
+          <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+            <ui-icon name="information-circle" class="h-5 w-5 text-primary-500" />
+            Setup Instructions
+          </h3>
+
+          @switch (formData.providerType) {
+            @case (ProviderTypes.Google) {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">Google Cloud Console Setup</h4>
+                <ol class="list-decimal list-inside space-y-2 text-sm text-gray-600">
+                  <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline">Google Cloud Console - APIs & Services - Credentials</a></li>
+                  <li>Create OAuth 2.0 Client ID (Web application type)</li>
+                  <li>Add the following Authorized redirect URI:</li>
+                </ol>
+                <div class="bg-gray-100 p-2 rounded font-mono text-xs break-all">{{ getCallbackUrl() }}</div>
+              </div>
+            }
+
+            @case (ProviderTypes.Microsoft) {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">Azure/Entra ID Setup</h4>
+                <ol class="list-decimal list-inside space-y-2 text-sm text-gray-600">
+                  <li>Go to <a href="https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline">Azure Portal - App Registrations</a></li>
+                  <li>Create new registration or select existing app</li>
+                  <li>Under Authentication - Add platform - Web</li>
+                  <li>Add the following redirect URI:</li>
+                </ol>
+                <div class="bg-gray-100 p-2 rounded font-mono text-xs break-all">{{ getCallbackUrl() }}</div>
+              </div>
+            }
+
+            @case (ProviderTypes.GitHub) {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">GitHub OAuth App Setup</h4>
+                <ol class="list-decimal list-inside space-y-2 text-sm text-gray-600">
+                  <li>Go to <a href="https://github.com/settings/developers" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline">GitHub - Settings - Developer Settings - OAuth Apps</a></li>
+                  <li>Create new OAuth App</li>
+                  <li>Set the Authorization callback URL to:</li>
+                </ol>
+                <div class="bg-gray-100 p-2 rounded font-mono text-xs break-all">{{ getCallbackUrl() }}</div>
+              </div>
+            }
+
+            @case (ProviderTypes.Oidc) {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">OpenID Connect Setup</h4>
+                <p class="text-sm text-gray-600">Register this application with your OIDC provider using the callback URL below:</p>
+                <div class="bg-gray-100 p-2 rounded font-mono text-xs break-all">{{ getCallbackUrl() }}</div>
+                @if (getDiscoveryUrl()) {
+                  <div class="pt-2">
+                    <p class="text-sm text-gray-600 mb-2">Discovery document:</p>
+                    <button
+                      (click)="openDiscoveryUrl()"
+                      class="inline-flex items-center gap-1 text-primary-600 hover:underline text-sm"
+                    >
+                      <span class="font-mono text-xs">{{ getDiscoveryUrl() }}</span>
+                      <ui-icon name="arrow-top-right-on-square" class="h-4 w-4" />
+                    </button>
+                  </div>
+                }
+              </div>
+            }
+
+            @case (ProviderTypes.Saml2) {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">SAML 2.0 Service Provider Metadata</h4>
+                <p class="text-sm text-gray-600">Configure your Identity Provider with these values:</p>
+                <dl class="space-y-2 text-sm">
+                  <div>
+                    <dt class="font-medium text-gray-700">ACS URL (Assertion Consumer Service):</dt>
+                    <dd class="bg-gray-100 p-2 rounded font-mono text-xs break-all mt-1">{{ getCallbackUrl() }}</dd>
+                  </div>
+                  <div>
+                    <dt class="font-medium text-gray-700">Entity ID / Audience:</dt>
+                    <dd class="bg-gray-100 p-2 rounded font-mono text-xs break-all mt-1">{{ getIssuerUri() }}</dd>
+                  </div>
+                </dl>
+              </div>
+            }
+
+            @case (ProviderTypes.Ldap) {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">LDAP/Active Directory Setup</h4>
+                <p class="text-sm text-gray-600">
+                  Ensure the LDAP server is reachable from this server. Common configurations:
+                </p>
+                <ul class="list-disc list-inside space-y-1 text-sm text-gray-600">
+                  <li><strong>Active Directory:</strong> Port 389 (LDAP) or 636 (LDAPS), filter: <code class="bg-gray-100 px-1">(sAMAccountName=&#123;0&#125;)</code></li>
+                  <li><strong>OpenLDAP:</strong> Port 389 (LDAP) or 636 (LDAPS), filter: <code class="bg-gray-100 px-1">(uid=&#123;0&#125;)</code></li>
+                  <li><strong>389 Directory:</strong> Similar to OpenLDAP configuration</li>
+                </ul>
+              </div>
+            }
+
+            @default {
+              <div class="space-y-3">
+                <h4 class="font-medium text-gray-900">Callback URL</h4>
+                <p class="text-sm text-gray-600">Configure your identity provider to redirect to:</p>
+                <div class="bg-gray-100 p-2 rounded font-mono text-xs break-all">{{ getCallbackUrl() }}</div>
+              </div>
+            }
+          }
+        </div>
+      </ui-card>
+    }
+
+    <!-- Plugin detail sections (only for existing providers) -->
+    @if (!isNew() && provider()) {
+      <ui-detail-section-host
+        entityType="identity-provider"
+        [entityId]="provider()!.id.toString()"
+        [data]="{ provider: provider() }"
+      />
+
+      <!-- Plugin slot: after content -->
+      <ui-page-slot-host
+        pageId="idp-detail"
+        slotId="after-content"
+        [data]="{ provider: provider() }"
+      />
+    }
+    </div>
+    }
+
+    <!-- Action buttons -->
+    <div class="flex justify-end gap-2">
+      <ui-button variant="secondary" (clicked)="onBack()">
+        Cancel
+      </ui-button>
+      <ui-button
+        [disabled]="saving() || (isNew() && (!formData.scheme || formData.providerType === undefined || (schemeAvailability() && !schemeAvailability()!.available))) || provider()?.nonEditable === true"
+        [title]="provider()?.nonEditable ? 'This provider cannot be modified' : ''"
+        (clicked)="onSave()"
+      >
+        {{ saving() ? 'Saving...' : (isNew() ? 'Create Provider' : 'Save Changes') }}
+      </ui-button>
+    </div>
+  </div>
+
+  <!-- Delete Modal -->
+  <ui-modal
+    [open]="showDeleteModal()"
+    title="Delete Identity Provider"
+    (closed)="closeDeleteModal()"
+  >
+    <p class="text-gray-600">
+      Are you sure you want to delete <strong>{{ provider()?.displayName || provider()?.scheme }}</strong>?
+      Users will no longer be able to sign in using this provider.
+    </p>
+
+    <div class="mt-6 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeDeleteModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmDelete()">
+        Delete
+      </ui-button>
+    </div>
+  </ui-modal>
+}

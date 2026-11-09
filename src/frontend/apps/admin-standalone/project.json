@@ -1,0 +1,76 @@
+{
+  "name": "admin-standalone",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "generators": {},
+  "sourceRoot": "apps/admin-standalone/src",
+  "prefix": "admin",
+  "targets": {
+    "collect-help": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "rm -rf .help-staging && mkdir -p .help-staging && for dir in libs/*/help libs/plugins/*/help; do [ -d \"$dir\" ] && cp -R \"$dir\"/. .help-staging/; done; true"
+      }
+    },
+    "build": {
+      "executor": "@angular/build:application",
+      "dependsOn": ["collect-help", "^build"],
+      "options": {
+        "browser": "apps/admin-standalone/src/main.ts",
+        "tsConfig": "apps/admin-standalone/tsconfig.app.json",
+        "assets": [
+          {
+            "glob": "**/*",
+            "input": "apps/admin-standalone/public"
+          },
+          {
+            "glob": "**/*",
+            "input": ".help-staging",
+            "output": "/assets/help"
+          }
+        ],
+        "styles": ["apps/admin-standalone/src/styles.css"],
+        "outputPath": "dist/apps/admin-standalone"
+      },
+      "configurations": {
+        "production": {
+          "budgets": [
+            {
+              "type": "initial",
+              "maximumWarning": "2MB",
+              "maximumError": "3MB"
+            },
+            {
+              "type": "anyComponentStyle",
+              "maximumWarning": "4kB",
+              "maximumError": "8kB"
+            }
+          ],
+          "outputHashing": "all"
+        },
+        "development": {
+          "optimization": false,
+          "extractLicenses": false,
+          "sourceMap": true
+        }
+      },
+      "defaultConfiguration": "production",
+      "outputs": ["{options.outputPath}"]
+    },
+    "serve": {
+      "executor": "@angular/build:dev-server",
+      "options": {
+        "port": 4201
+      },
+      "configurations": {
+        "production": {
+          "buildTarget": "admin-standalone:build:production"
+        },
+        "development": {
+          "buildTarget": "admin-standalone:build:development"
+        }
+      },
+      "defaultConfiguration": "development"
+    }
+  }
+}

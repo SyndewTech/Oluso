@@ -143,6 +143,15 @@ public class JourneySubmissionStore : IJourneySubmissionStore
         return entities.Select(MapToSubmission);
     }
 
+    public async Task<JourneySubmission?> GetByJourneyAsync(string journeyId, CancellationToken cancellationToken = default)
+    {
+        var entity = await _context.JourneySubmissions
+            .Where(s => s.JourneyId == journeyId)
+            .OrderBy(s => s.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        return entity == null ? null : MapToSubmission(entity);
+    }
+
     private static JourneySubmission MapToSubmission(JourneySubmissionEntity entity)
     {
         return new JourneySubmission

@@ -1,12 +1,9 @@
 namespace Oluso.Middleware;
 
 /// <summary>
-/// Service to invalidate the host validation cache when tenants change
+/// Service to invalidate the host validation cache when tenants change.
+/// Extends the Core interface for backward compatibility.
 /// </summary>
-public interface IHostValidationCacheInvalidator
+public interface IHostValidationCacheInvalidator : Oluso.Core.Services.IHostValidationCacheInvalidator
 {
-    /// <summary>
-    /// Invalidates the cached allowed hosts, forcing a refresh on next request
-    /// </summary>
-    Task InvalidateCacheAsync(CancellationToken cancellationToken = default);
 }

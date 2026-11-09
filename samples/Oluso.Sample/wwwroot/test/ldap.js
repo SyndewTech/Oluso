@@ -5,7 +5,8 @@ var config = {
     host: 'localhost',
     port: 10389,
     baseDn: 'dc=oluso,dc=local',
-    adminDn: 'cn=admin,dc=oluso,dc=local'
+    adminDn: 'cn=admin,dc=oluso,dc=local',
+    tenantIsolation: true
 };
 
 // Initialize page
@@ -37,15 +38,31 @@ function updateConfigDisplay() {
     document.getElementById('ldapPort').textContent = config.port;
     document.getElementById('baseDn').textContent = config.baseDn;
     document.getElementById('adminDn').textContent = config.adminDn;
+    document.getElementById('tenantIsolation').textContent = config.tenantIsolation ? 'true' : 'false';
+
+    // Show/hide tenant ID field based on tenant isolation setting
+    var tenantIdGroup = document.getElementById('tenantIdGroup');
+    if (tenantIdGroup) {
+        tenantIdGroup.style.display = config.tenantIsolation ? 'block' : 'none';
+    }
+
+    // Build user DN based on tenant isolation
+    var tenantId = 'default';
+    var userDn = config.tenantIsolation
+        ? 'uid=testuser@example.com,ou=users,o=' + tenantId + ',' + config.baseDn
+        : 'uid=testuser@example.com,ou=users,' + config.baseDn;
+    var searchBase = config.tenantIsolation
+        ? 'o=' + tenantId + ',' + config.baseDn
+        : config.baseDn;
 
     var examples =
 '# Test anonymous search (if allowed)\n' +
 'ldapsearch -x -H ldap://' + config.host + ':' + config.port + ' -b "' + config.baseDn + '" "(objectClass=*)"\n\n' +
-'# Test user bind and search\n' +
+'# Test user bind and search' + (config.tenantIsolation ? ' (with tenant isolation)' : '') + '\n' +
 'ldapsearch -x -H ldap://' + config.host + ':' + config.port + ' \\\n' +
-'  -D "uid=testuser@example.com,ou=users,' + config.baseDn + '" \\\n' +
+'  -D "' + userDn + '" \\\n' +
 '  -w "Password123!" \\\n' +
-'  -b "ou=users,' + config.baseDn + '" \\\n' +
+'  -b "' + searchBase + '" \\\n' +
 '  "(uid=*)"\n\n' +
 '# Test admin bind\n' +
 'ldapsearch -x -H ldap://' + config.host + ':' + config.port + ' \\\n' +
@@ -60,15 +77,20 @@ function updateConfigDisplay() {
 async function testBind() {
     var username = document.getElementById('username').value;
     var password = document.getElementById('password').value;
+    var tenantId = document.getElementById('tenantId').value;
     var result = document.getElementById('bindResult');
 
     result.textContent = 'Testing...';
 
     try {
+        var requestBody = { username: username, password: password };
+        if (config.tenantIsolation && tenantId) {
+            requestBody.tenantId = tenantId;
+        }
         var response = await fetch('/test/ldap/bind', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: username, password: password })
+            body: JSON.stringify(requestBody)
         });
         var text = await response.text();
         if (!text) {

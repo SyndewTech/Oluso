@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 
 namespace Oluso.UserJourneys.Steps;
@@ -24,6 +25,15 @@ public class ConsentStepHandler : IStepHandler
         var logger = context.ServiceProvider.GetRequiredService<ILogger<ConsentStepHandler>>();
         var eventService = context.ServiceProvider.GetService<IOlusoEventService>();
         var httpContextAccessor = context.ServiceProvider.GetService<IHttpContextAccessor>();
+
+        // Step-level consent presentation config. Each defaults to the
+        // permissive value so existing journeys that don't set them keep
+        // the old behaviour; setting any of them lets the admin tighten
+        // or simplify the consent screen per journey.
+        var allowRemember = context.GetConfig("allowRemember", true);
+        var rememberDays = context.GetConfig("rememberDays", 365);
+        var showResourceScopes = context.GetConfig("showResourceScopes", true);
+        var showIdentityScopes = context.GetConfig("showIdentityScopes", true);
 
         // Get user ID from context or from authenticated session
         // This handles consent-only journeys where user is already authenticated
@@ -53,11 +63,12 @@ public class ConsentStepHandler : IStepHandler
         if (!client.RequireConsent)
         {
             logger.LogDebug("Consent not required for client {ClientId}", client.ClientId);
-            return StepHandlerResult.Skip();
+            return StepHandlerResult.SkipOrBranch(context, "consent_not_required");
         }
 
         // Parse requested scopes
-        var scopeString = context.GetData<string>("scope") ?? "";
+        // Consent journeys carry "scope"; a consent step inside a sign-in journey has "scopes".
+        var scopeString = context.GetData<string>("scope") ?? context.GetData<string>("scopes") ?? "";
         var requestedScopes = scopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         // Check if user has already consented to all requested scopes
@@ -73,14 +84,18 @@ public class ConsentStepHandler : IStepHandler
             {
                 logger.LogDebug("User {UserId} already has consent for client {ClientId}, scopes: {Scopes}",
                     context.UserId, client.ClientId, scopeString);
-                context.SetData("consented_scopes", scopeString);
-                return StepHandlerResult.Skip();
+                context.SetData(Oluso.Protocols.ConsentDecisions.ConsentedScopesDataKey, scopeString);
+                return StepHandlerResult.SkipOrBranch(context, "consent_already_granted");
             }
         }
 
         // Get resources for requested scopes
         var identityResources = await resourceStore.FindIdentityResourcesByScopeNameAsync(requestedScopes, cancellationToken);
-        var apiScopes = await resourceStore.FindApiScopesByNameAsync(requestedScopes, cancellationToken);
+        // Keyed by the requested value: an instance of a prefix scope (e.g. device:abc of the prefix scope device:) is
+        // consented to as requested but shown by the prefix scope's display name, never its client-chosen suffix.
+        var defaultSuffixMaxLength = await ApiScopePrefixes.GetDefaultSuffixMaxLengthAsync(
+            context.ServiceProvider.GetService<ITenantSettingsProvider>(), cancellationToken);
+        var apiScopes = await ApiScopePrefixes.ResolveAsync(resourceStore, requestedScopes, cancellationToken, defaultSuffixMaxLength);
 
         // Check for consent response
         var consentAction = context.GetInput("consent_action");
@@ -128,13 +143,22 @@ public class ConsentStepHandler : IStepHandler
                     }
                 }
 
-                // Store consent decision
-                var rememberConsent = context.GetInput("remember_consent") == "true";
+                // Store consent decision. Treat the user's "remember"
+                // ticket as honoured only when the step config allows it
+                // — admins can disable the remember-consent affordance
+                // for sensitive flows by setting allowRemember=false.
+                var rememberConsent = allowRemember && context.GetInput("remember_consent") == "true";
                 if (rememberConsent && context.UserId != null)
                 {
-                    // Calculate expiration based on client settings
+                    // Calculate expiration. Step config wins when set
+                    // (rememberDays > 0); otherwise use the client's
+                    // ConsentLifetime; otherwise persist indefinitely.
                     DateTime? expiresAt = null;
-                    if (client.ConsentLifetime.HasValue && client.ConsentLifetime.Value > 0)
+                    if (rememberDays > 0)
+                    {
+                        expiresAt = DateTime.UtcNow.AddDays(rememberDays);
+                    }
+                    else if (client.ConsentLifetime.HasValue && client.ConsentLifetime.Value > 0)
                     {
                         expiresAt = DateTime.UtcNow.AddSeconds(client.ConsentLifetime.Value);
                     }
@@ -161,7 +185,7 @@ public class ConsentStepHandler : IStepHandler
                         client.ClientId, string.Join(", ", consentedScopes));
                 }
 
-                context.SetData("consented_scopes", string.Join(" ", consentedScopes));
+                context.SetData(Oluso.Protocols.ConsentDecisions.ConsentedScopesDataKey, string.Join(" ", consentedScopes));
 
                 // Raise consent granted event
                 if (eventService != null && context.UserId != null)
@@ -176,42 +200,63 @@ public class ConsentStepHandler : IStepHandler
                     }, cancellationToken);
                 }
 
-                return StepHandlerResult.Success(new Dictionary<string, object>
+                var outputData = new Dictionary<string, object>
                 {
                     ["consented_scopes"] = string.Join(" ", consentedScopes)
-                });
+                };
+                return StepHandlerResult.SuccessOrBranch(context, outputData, "consent_granted");
             }
         }
 
-        // Show consent UI
+        // Show consent UI. The step config can hide the identity- or
+        // API-scope sections entirely (e.g. for an API-only flow that
+        // doesn't surface profile scopes) and can suppress the remember
+        // checkbox even if the client allows it.
         var viewModel = new ConsentViewModel
         {
             ClientId = client.ClientId,
             ClientName = client.ClientName ?? client.ClientId,
             ClientUri = client.ClientUri,
             ClientLogoUri = client.LogoUri,
-            AllowRememberConsent = client.AllowRememberConsent,
-            IdentityScopes = identityResources.Select(r => new ScopeViewModel
-            {
-                Name = r.Name,
-                DisplayName = r.DisplayName ?? r.Name,
-                Description = r.Description,
-                Required = r.Required,
-                Emphasize = r.Emphasize,
-                Checked = true
-            }).ToList(),
-            ApiScopes = apiScopes.Select(s => new ScopeViewModel
-            {
-                Name = s.Name,
-                DisplayName = s.DisplayName ?? s.Name,
-                Description = s.Description,
-                Required = s.Required,
-                Emphasize = s.Emphasize,
-                Checked = true
-            }).ToList()
+            PolicyUri = HttpsProperty(client, "policy_uri"),
+            TosUri = HttpsProperty(client, "tos_uri"),
+            AllowRememberConsent = allowRemember && client.AllowRememberConsent,
+            IdentityScopes = showIdentityScopes
+                ? identityResources.Select(r => new ScopeViewModel
+                {
+                    Name = r.Name,
+                    DisplayName = r.DisplayName ?? r.Name,
+                    Description = r.Description,
+                    Required = r.Required,
+                    Emphasize = r.Emphasize,
+                    Checked = true
+                }).ToList()
+                : new List<ScopeViewModel>(),
+            ApiScopes = showResourceScopes
+                ? requestedScopes.Where(apiScopes.ContainsKey).Distinct(StringComparer.Ordinal).Select(name =>
+                {
+                    var s = apiScopes[name];
+                    return new ScopeViewModel
+                    {
+                        Name = name,
+                        DisplayName = s.DisplayName ?? s.Name,
+                        Description = s.Description,
+                        Required = s.Required,
+                        Emphasize = s.Emphasize,
+                        Checked = true
+                    };
+                }).ToList()
+                : new List<ScopeViewModel>()
         };
 
         return StepHandlerResult.ShowUi("Journey/_Consent", viewModel);
+    }
+
+    /// <summary>A registered https link from the client's metadata (policy_uri, tos_uri), else null.</summary>
+    private static string? HttpsProperty(Client client, string key)
+    {
+        var value = client.Properties?.FirstOrDefault(p => p.Key == key)?.Value;
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? value : null;
     }
 
     private static string? GetUserIdFromSession(IHttpContextAccessor? httpContextAccessor)
@@ -234,6 +279,10 @@ public class ConsentViewModel
     public string ClientName { get; set; } = null!;
     public string? ClientUri { get; set; }
     public string? ClientLogoUri { get; set; }
+    /// <summary>The client's privacy policy (registered policy_uri, https only).</summary>
+    public string? PolicyUri { get; set; }
+    /// <summary>The client's terms of service (registered tos_uri, https only).</summary>
+    public string? TosUri { get; set; }
     public bool AllowRememberConsent { get; set; }
     public List<ScopeViewModel> IdentityScopes { get; set; } = new();
     public List<ScopeViewModel> ApiScopes { get; set; } = new();

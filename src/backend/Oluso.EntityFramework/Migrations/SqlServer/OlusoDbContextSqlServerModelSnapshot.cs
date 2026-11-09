@@ -17,10 +17,59 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.22")
+                .HasAnnotation("ProductVersion", "10.0.5")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.ActionToken", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SubjectId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("ActionTokens", (string)null);
+                });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ApiScope", b =>
                 {
@@ -158,6 +207,12 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<string>("AllowedResources")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("nvarchar(max)")
+                        .HasDefaultValueSql("'[]'");
+
                     b.Property<bool>("AlwaysIncludeUserClaimsInIdToken")
                         .HasColumnType("bit");
 
@@ -243,6 +298,12 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<bool>("IncludeJwtId")
                         .HasColumnType("bit");
 
+                    b.Property<string>("IntrospectionResources")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("nvarchar(max)")
+                        .HasDefaultValueSql("'[]'");
+
                     b.Property<bool>("IsDynamicallyRegistered")
                         .HasColumnType("bit");
 
@@ -295,12 +356,42 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<bool>("RequireRequestObject")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("RequireVerifiedEmail")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("RequiredPermission")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<int>("SlidingRefreshTokenLifetime")
                         .HasColumnType("int");
 
                     b.Property<string>("TenantId")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("TlsClientAuthSanDns")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("TlsClientAuthSanEmail")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("TlsClientAuthSanIp")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("TlsClientAuthSanUri")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("TlsClientAuthSubjectDn")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("TokenEndpointAuthMethod")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<bool>("UpdateAccessTokenClaimsOnRefresh")
                         .HasColumnType("bit");
@@ -342,6 +433,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId");
@@ -367,11 +461,50 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId");
 
                     b.ToTable("ClientAllowedUsers");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.ClientAuthorizeParameter", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ClaimType")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<int>("ClientId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Parameter")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("Required")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientId", "Parameter")
+                        .IsUnique();
+
+                    b.ToTable("ClientAuthorizeParameters", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ClientClaim", b =>
@@ -384,6 +517,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.Property<int>("ClientId")
                         .HasColumnType("int");
+
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -415,6 +551,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId");
@@ -435,6 +574,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.Property<string>("GrantType")
                         .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
@@ -459,6 +601,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId");
@@ -481,6 +626,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId");
@@ -501,6 +649,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.Property<string>("Key")
                         .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Value")
@@ -527,11 +678,17 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.Property<string>("RedirectUri")
                         .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("TenantId")
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId");
+
+                    b.HasIndex("RedirectUri");
 
                     b.ToTable("ClientRedirectUris");
                 });
@@ -549,6 +706,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.Property<string>("Scope")
                         .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
@@ -579,6 +739,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasColumnType("datetime2");
 
                     b.Property<string>("LastThreeChars")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Type")
@@ -637,6 +800,173 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("Consents", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.ConversationMentionRead", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("MessageId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<DateTime>("ReadAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "UserId", "MessageId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ConversationMentionReads_User_Message")
+                        .HasFilter("[TenantId] IS NOT NULL");
+
+                    b.ToTable("ConversationMentionReads", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.ConversationMessage", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("AuthorUserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DeletedByUserId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime?>("EditedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("MentionedUserIdsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "EntityType", "EntityId", "CreatedAt")
+                        .HasDatabaseName("IX_ConversationMessages_Thread");
+
+                    b.ToTable("ConversationMessages", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.CustomDomainVerification", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("CheckAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ExternalProvisioningId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime?>("GracePeriodStartedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastCheckedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastRevalidatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("TxtRecordName")
+                        .IsRequired()
+                        .HasMaxLength(600)
+                        .HasColumnType("nvarchar(600)");
+
+                    b.Property<string>("TxtRecordValue")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("VerificationToken")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Domain")
+                        .IsUnique();
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("CustomDomainVerifications", (string)null);
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.DeviceFlowCode", b =>
                 {
                     b.Property<string>("UserCode")
@@ -689,6 +1019,265 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("DeviceFlowCodes", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.Entitlement", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Group")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Group");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("Entitlements", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.FeedbackSubmission", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ElementSelector")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Portal")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ScreenshotPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("SubmittedByEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("SubmittedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("SubmittedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Url")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ViewportSize")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Category");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "Status");
+
+                    b.ToTable("FeedbackSubmissions", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.FileAttachment", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ContentHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EntityId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("EntityIdHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("EntityIdProtected")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("EntityType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("FileNameProtected")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("Folder")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ProtectionPurpose")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StoragePath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<int>("StorageProvider")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SubEntityId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("SubEntityIdHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("SubEntityIdProtected")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("SubEntityType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("TenantId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("UploadedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("UploadedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "EntityType", "EntityId");
+
+                    b.HasIndex("TenantId", "EntityType", "EntityIdHash");
+
+                    b.HasIndex("TenantId", "UploadedByUserId", "Folder");
+
+                    b.ToTable("FileAttachments", (string)null);
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.IdentityProvider", b =>
                 {
                     b.Property<int>("Id")
@@ -697,7 +1286,7 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("AllowedClientIds")
+                    b.PrimitiveCollection<string>("AllowedClientIds")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
@@ -865,6 +1454,12 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<bool>("AllowDuplicates")
                         .HasColumnType("bit");
 
+                    b.Property<string>("AllowedOrigins")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ApiKey")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Conditions")
                         .HasColumnType("nvarchar(max)");
 
@@ -899,17 +1494,31 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<string>("OutputClaims")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("OwnerModule")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<bool>("PersistSubmissions")
                         .HasColumnType("bit");
 
                     b.Property<int>("Priority")
                         .HasColumnType("int");
 
+                    b.Property<bool>("RequireApiKey")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("RequiresAuthentication")
                         .HasColumnType("bit");
 
                     b.Property<string>("SessionConfig")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Sharing")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Slug")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
 
                     b.Property<string>("Steps")
                         .IsRequired()
@@ -950,6 +1559,12 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasColumnType("int");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "OwnerModule");
+
+                    b.HasIndex("TenantId", "Slug")
+                        .IsUnique()
+                        .HasFilter("[TenantId] IS NOT NULL AND [Slug] IS NOT NULL");
 
                     b.HasIndex("TenantId", "Type");
 
@@ -1111,6 +1726,8 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.HasIndex("CreatedAt");
 
+                    b.HasIndex("JourneyId");
+
                     b.HasIndex("Status");
 
                     b.HasIndex("TenantId", "PolicyId");
@@ -1120,10 +1737,72 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("JourneySubmissions", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.KeyRotationConfig", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Algorithm")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("GracePeriodDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("KeyLifetimeDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("KeySize")
+                        .HasColumnType("int");
+
+                    b.Property<int>("KeyType")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("LastRotationAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("MaxKeys")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("NextRotationAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("PreferredStorageProvider")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RotationLeadDays")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ClientId")
+                        .IsUnique()
+                        .HasFilter("[TenantId] IS NOT NULL AND [ClientId] IS NOT NULL");
+
+                    b.ToTable("KeyRotationConfigs", (string)null);
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.OlusoRole", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
@@ -1143,6 +1822,10 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<bool>("IsSystemRole")
                         .HasColumnType("bit");
 
+                    b.Property<string>("ManagedByRole")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<string>("Name")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
@@ -1150,10 +1833,6 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<string>("NormalizedName")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("Permissions")
-                        .HasMaxLength(4000)
-                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("TenantId")
                         .HasMaxLength(128)
@@ -1228,6 +1907,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<string>("CustomClaims")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("CustomPropertiesJson")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("DisplayName")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
@@ -1271,6 +1953,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<DateTime?>("PasswordChangedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("PasswordHash")
                         .HasColumnType("nvarchar(max)");
 
@@ -1288,6 +1973,7 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("TenantId")
+                        .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
@@ -1318,12 +2004,12 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.HasIndex("TenantId", "NormalizedEmail")
                         .IsUnique()
                         .HasDatabaseName("IX_AspNetUsers_TenantId_NormalizedEmail")
-                        .HasFilter("[TenantId] IS NOT NULL AND [NormalizedEmail] IS NOT NULL");
+                        .HasFilter("[NormalizedEmail] IS NOT NULL");
 
                     b.HasIndex("TenantId", "NormalizedUserName")
                         .IsUnique()
                         .HasDatabaseName("IX_AspNetUsers_TenantId_NormalizedUserName")
-                        .HasFilter("[TenantId] IS NOT NULL AND [NormalizedUserName] IS NOT NULL");
+                        .HasFilter("[NormalizedUserName] IS NOT NULL");
 
                     b.ToTable("AspNetUsers", (string)null);
                 });
@@ -1403,6 +2089,10 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<string>("RoleId")
                         .HasColumnType("nvarchar(450)");
 
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
                     b.Property<DateTime>("AssignedAt")
                         .HasColumnType("datetime2");
 
@@ -1410,11 +2100,13 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.HasKey("UserId", "RoleId");
+                    b.HasKey("UserId", "RoleId", "TenantId");
 
                     b.HasIndex("AssignedAt");
 
                     b.HasIndex("RoleId");
+
+                    b.HasIndex("TenantId", "RoleId");
 
                     b.ToTable("AspNetUserRoles", (string)null);
                 });
@@ -1511,6 +2203,59 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsUnique();
 
                     b.ToTable("Organizations", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.OrganizationFeature", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FeatureKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("GrantedByUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int?>("MaxSeats")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasDefaultValue("manual");
+
+                    b.Property<string>("SourceSubscriptionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OrganizationId", "FeatureKey")
+                        .IsUnique();
+
+                    b.ToTable("OrganizationFeatures", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.OrganizationInvitation", b =>
@@ -1626,6 +2371,33 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("OrganizationMemberships", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PasswordHistoryEntry", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAt")
+                        .HasDatabaseName("IX_PasswordHistory_User_CreatedAt");
+
+                    b.ToTable("PasswordHistory", (string)null);
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.PersistedGrant", b =>
                 {
                     b.Property<string>("Key")
@@ -1682,6 +2454,210 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.HasIndex("SubjectId", "SessionId", "Type");
 
                     b.ToTable("PersistedGrants", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginConfigOverride", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("ConfigJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("SecretsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PluginId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "PluginId")
+                        .IsUnique();
+
+                    b.ToTable("PluginConfigOverrides", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginExecutionLog", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("EntityId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("EntityType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("ErrorStackTrace")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("ExecutedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ExecutionId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("HookBindingId")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("HttpRequestCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("InputSummary")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("OutputSummary")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Result")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ResultAction")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExecutedAt");
+
+                    b.HasIndex("ExecutionId");
+
+                    b.HasIndex("PluginId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "PluginId", "ExecutedAt")
+                        .HasDatabaseName("IX_PluginExecutionLogs_TenantPluginDate");
+
+                    b.ToTable("PluginExecutionLogs", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginHookBinding", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("FailureMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("FilterConditions")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("FunctionName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("TimeoutMs")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PluginId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "Domain", "EntityType", "EventType", "IsActive")
+                        .HasDatabaseName("IX_PluginHookBindings_DomainEventLookup");
+
+                    b.ToTable("PluginHookBindings", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginMetadata", b =>
@@ -1799,6 +2775,62 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasFilter("[TenantId] IS NOT NULL");
 
                     b.ToTable("PluginMetadata", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginNetworkConfig", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("AccessMode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("AllowedHosts")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ApprovedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int>("HttpTimeoutMs")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsApproved")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("MaxHttpRequestsPerExecution")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<bool>("RequiresApproval")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PluginId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "PluginId")
+                        .IsUnique();
+
+                    b.ToTable("PluginNetworkConfigs", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.PushedAuthorizationRequest", b =>
@@ -1944,6 +2976,83 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.HasIndex("ResourceId");
 
                     b.ToTable("ResourceScopes");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.SenderProfile", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("FromAddress")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("FromName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("LastTestError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime?>("LastTestSendAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ReplyToAddress")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "IsActive");
+
+                    b.HasIndex("TenantId", "IsDefault");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("SenderProfiles", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ServerSideSession", b =>
@@ -2119,11 +3228,164 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("SigningKeys", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.Team", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ManagedBy")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("OwnerUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ParentTeamId")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentTeamId");
+
+                    b.HasIndex("TenantId", "Code")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Teams_TenantId_Code");
+
+                    b.HasIndex("TenantId", "IsActive")
+                        .HasDatabaseName("IX_Teams_TenantId_IsActive");
+
+                    b.HasIndex("TenantId", "ParentTeamId")
+                        .HasDatabaseName("IX_Teams_TenantId_ParentTeamId");
+
+                    b.HasIndex("TenantId", "Type")
+                        .HasDatabaseName("IX_Teams_TenantId_Type");
+
+                    b.ToTable("Teams", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TeamMembership", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("JoinedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LeftAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("TeamId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TeamId");
+
+                    b.HasIndex("TenantId", "TeamId", "UserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TeamMemberships_Tenant_Team_User");
+
+                    b.HasIndex("TenantId", "UserId", "IsActive")
+                        .HasDatabaseName("IX_TeamMemberships_Tenant_User_Active");
+
+                    b.ToTable("TeamMemberships", (string)null);
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.Tenant", b =>
                 {
                     b.Property<string>("Id")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("AllowPlatformOrgSignIn")
+                        .HasColumnType("bit");
 
                     b.Property<bool>("AllowSelfRegistration")
                         .HasColumnType("bit");
@@ -2131,9 +3393,6 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<string>("AllowedEmailDomains")
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
-
-                    b.Property<string>("Configuration")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ConnectionString")
                         .HasMaxLength(2000)
@@ -2146,6 +3405,15 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<string>("DefaultIdpScheme")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DefaultSignInPolicyId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("DefaultSsoUiMode")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Description")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -2155,6 +3423,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<bool>("EnableLocalLogin")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("EnablePasskey")
                         .HasColumnType("bit");
 
                     b.Property<bool>("Enabled")
@@ -2169,6 +3440,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("JourneyFallbackToStandard")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -2217,6 +3491,293 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.HasIndex("OrganizationId", "Environment");
 
                     b.ToTable("Tenants", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantConfigurationSection", b =>
+                {
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("SectionKey")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsEncrypted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime>("Updated")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("TenantId", "SectionKey");
+
+                    b.ToTable("TenantConfigurationSections", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantEmailDomain", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int>("CheckAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasMaxLength(253)
+                        .HasColumnType("nvarchar(253)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime?>("GracePeriodStartedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastCheckedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastRevalidatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("TxtRecordName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("TxtRecordValue")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("VerificationToken")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Domain", "Status");
+
+                    b.HasIndex("TenantId", "Domain")
+                        .IsUnique();
+
+                    b.ToTable("TenantEmailDomains", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantFeature", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("FeatureKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("GrantedByUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int?>("MaxSeats")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "FeatureKey")
+                        .IsUnique();
+
+                    b.ToTable("TenantFeatures", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantMembership", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("InvitedByUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("JoinedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("TenantMemberships", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantModuleSeed", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("FeatureKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("SeededAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "FeatureKey")
+                        .IsUnique();
+
+                    b.ToTable("TenantModuleSeeds", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.UserModuleAccess", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("FeatureKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("GrantedByUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "FeatureKey");
+
+                    b.HasIndex("TenantId", "UserId", "FeatureKey")
+                        .IsUnique();
+
+                    b.ToTable("UserModuleAccess", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.UserNotificationProfile", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("MutedEventTypes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<int?>("QuietHoursEndMinute")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("QuietHoursStartMinute")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SnoozeReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("SnoozeUntilUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("TimeZoneId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("UserNotificationProfiles", (string)null);
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.WebhookDeliveryEntity", b =>
@@ -2303,6 +3864,19 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<string>("AuthCredential")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<int>("AuthType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -2338,6 +3912,24 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime?>("SensitiveDataAuthorizedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SensitiveDataAuthorizedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("SensitiveDataAuthorizedByName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("SigningSecretEncrypted")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<bool>("SkipOwnClientEvents")
+                        .HasColumnType("bit");
 
                     b.Property<int>("SuccessfulDeliveries")
                         .HasColumnType("int");
@@ -2399,6 +3991,241 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("WebhookEventSubscriptions", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.WhatsAppAccount", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("BusinessAccountId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DisplayPhoneNumber")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime?>("LastVerifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PhoneNumberId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("QualityRating")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("VerifiedName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PhoneNumberId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("WhatsAppAccounts", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.WhatsAppContact", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("ConsentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ConsentSource")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("ConsentStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("LastInboundAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("LastInboundMessageId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("LastOutboundAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("OptedOutAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PhoneNumber")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ConsentStatus");
+
+                    b.HasIndex("TenantId", "PhoneNumber")
+                        .IsUnique();
+
+                    b.ToTable("WhatsAppContacts", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.WhatsAppInboundMessage", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ContactId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("From")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("InReplyToMessageId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Keyword")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("MessageType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime>("ProcessedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ProviderMessageId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("RawJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Text")
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "ProviderMessageId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "ContactId", "ReceivedAt");
+
+                    b.ToTable("WhatsAppInboundMessages", (string)null);
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.WhatsAppTemplate", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("BodyParameterCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("BodyText")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ComponentsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("HeaderFormat")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("ProviderTemplateId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime>("SyncedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Name", "Language")
+                        .IsUnique();
+
+                    b.ToTable("WhatsAppTemplates", (string)null);
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Interfaces.AuditLog", b =>
                 {
                     b.Property<long>("Id")
@@ -2439,6 +4266,18 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Property<string>("IpAddress")
                         .HasMaxLength(45)
                         .HasColumnType("nvarchar(45)");
+
+                    b.Property<string>("OriginId")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("OriginKind")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("OriginName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<string>("Reason")
                         .HasMaxLength(500)
@@ -2496,6 +4335,8 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.HasIndex("TenantId");
 
                     b.HasIndex("Timestamp");
+
+                    b.HasIndex("OriginKind", "OriginId");
 
                     b.HasIndex("ResourceType", "ResourceId");
 
@@ -2678,6 +4519,55 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.ToTable("TelemetryLogs", (string)null);
                 });
 
+            modelBuilder.Entity("Oluso.Core.Terminology.TerminologyOverride", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Locale", "Key")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TerminologyOverrides_Tenant_Locale_Key");
+
+                    b.ToTable("TerminologyOverrides");
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ApiScopeClaim", b =>
                 {
                     b.HasOne("Oluso.Core.Domain.Entities.ApiScope", "Scope")
@@ -2715,6 +4605,17 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                 {
                     b.HasOne("Oluso.Core.Domain.Entities.Client", "Client")
                         .WithMany("AllowedUsers")
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Client");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.ClientAuthorizeParameter", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Client", "Client")
+                        .WithMany("AllowedAuthorizeParameters")
                         .HasForeignKey("ClientId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -2821,6 +4722,17 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Navigation("Client");
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.CustomDomainVerification", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.IdentityResourceClaim", b =>
                 {
                     b.HasOne("Oluso.Core.Domain.Entities.IdentityResource", "IdentityResource")
@@ -2906,6 +4818,17 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.OrganizationFeature", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Organization", "Organization")
+                        .WithMany("Features")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.OrganizationInvitation", b =>
                 {
                     b.HasOne("Oluso.Core.Domain.Entities.Organization", "Organization")
@@ -2926,6 +4849,48 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .IsRequired();
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PasswordHistoryEntry", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.OlusoUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginConfigOverride", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.PluginMetadata", "Plugin")
+                        .WithMany()
+                        .HasForeignKey("PluginId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plugin");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginHookBinding", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.PluginMetadata", "Plugin")
+                        .WithMany()
+                        .HasForeignKey("PluginId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plugin");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.PluginNetworkConfig", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.PluginMetadata", "Plugin")
+                        .WithMany()
+                        .HasForeignKey("PluginId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plugin");
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ResourceClaim", b =>
@@ -2950,6 +4915,27 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Navigation("Resource");
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.Team", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Team", "ParentTeam")
+                        .WithMany("ChildTeams")
+                        .HasForeignKey("ParentTeamId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("ParentTeam");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TeamMembership", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Team", "Team")
+                        .WithMany("Members")
+                        .HasForeignKey("TeamId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Team");
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.Tenant", b =>
                 {
                     b.HasOne("Oluso.Core.Domain.Entities.Organization", "Organization")
@@ -2963,31 +4949,11 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                             b1.Property<string>("TenantId")
                                 .HasColumnType("nvarchar(128)");
 
-                            b1.Property<string>("BackgroundColor")
-                                .HasMaxLength(20)
-                                .HasColumnType("nvarchar(20)");
-
-                            b1.Property<string>("CustomCss")
-                                .HasColumnType("nvarchar(max)");
-
-                            b1.Property<string>("FaviconUrl")
-                                .HasMaxLength(2000)
-                                .HasColumnType("nvarchar(2000)");
+                            b1.Property<bool>("HideEmbedBranding")
+                                .HasColumnType("bit");
 
                             b1.Property<int>("Id")
                                 .HasColumnType("int");
-
-                            b1.Property<string>("LogoUrl")
-                                .HasMaxLength(2000)
-                                .HasColumnType("nvarchar(2000)");
-
-                            b1.Property<string>("PrimaryColor")
-                                .HasMaxLength(20)
-                                .HasColumnType("nvarchar(20)");
-
-                            b1.Property<string>("SecondaryColor")
-                                .HasMaxLength(20)
-                                .HasColumnType("nvarchar(20)");
 
                             b1.HasKey("TenantId");
 
@@ -3038,6 +5004,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                             b1.Property<int>("PasswordHistoryCount")
                                 .HasColumnType("int");
+
+                            b1.Property<bool>("RejectWhenBreachCheckUnavailable")
+                                .HasColumnType("bit");
 
                             b1.Property<bool>("RequireDigit")
                                 .HasColumnType("bit");
@@ -3128,6 +5097,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                             b1.Property<bool>("EnableDynamicClientRegistration")
                                 .HasColumnType("bit");
 
+                            b1.Property<bool>("EnforceOAuth21")
+                                .HasColumnType("bit");
+
                             b1.Property<bool>("FrontchannelLogoutSupported")
                                 .HasColumnType("bit");
 
@@ -3137,6 +5109,12 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                             b1.Property<string>("IdTokenSigningAlgValuesSupportedJson")
                                 .HasMaxLength(500)
                                 .HasColumnType("nvarchar(500)");
+
+                            b1.Property<int?>("PrefixScopeSuffixMaxLength")
+                                .HasColumnType("int");
+
+                            b1.Property<string>("RefreshImplyingScopesJson")
+                                .HasColumnType("nvarchar(max)");
 
                             b1.Property<bool>("RequestParameterSupported")
                                 .HasColumnType("bit");
@@ -3179,6 +5157,72 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Navigation("ProtocolConfiguration");
                 });
 
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantConfigurationSection", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantEmailDomain", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantFeature", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany("Features")
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantMembership", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.TenantModuleSeed", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.UserModuleAccess", b =>
+                {
+                    b.HasOne("Oluso.Core.Domain.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
             modelBuilder.Entity("Oluso.Core.Domain.Entities.WebhookDeliveryEntity", b =>
                 {
                     b.HasOne("Oluso.Core.Domain.Entities.WebhookEndpointEntity", "Endpoint")
@@ -3210,6 +5254,8 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.Client", b =>
                 {
+                    b.Navigation("AllowedAuthorizeParameters");
+
                     b.Navigation("AllowedCorsOrigins");
 
                     b.Navigation("AllowedGrantTypes");
@@ -3260,6 +5306,8 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.Organization", b =>
                 {
+                    b.Navigation("Features");
+
                     b.Navigation("Invitations");
 
                     b.Navigation("Memberships");
@@ -3272,6 +5320,18 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                     b.Navigation("AllowedScopes");
 
                     b.Navigation("UserClaims");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.Team", b =>
+                {
+                    b.Navigation("ChildTeams");
+
+                    b.Navigation("Members");
+                });
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.Tenant", b =>
+                {
+                    b.Navigation("Features");
                 });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.WebhookEndpointEntity", b =>

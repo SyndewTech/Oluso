@@ -1,0 +1,233 @@
+<div class="space-y-6">
+  <!-- Header -->
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Module Seats</h1>
+    <p class="mt-1 text-sm text-gray-500">
+      Manage which users have access to each ERP module
+    </p>
+  </div>
+
+  @if (loading()) {
+    <div class="flex items-center justify-center h-64">
+      <div class="text-gray-500">Loading...</div>
+    </div>
+  } @else if (modules().length === 0) {
+    <ui-card>
+      <div class="px-4 py-12 text-center">
+        <ui-icon name="puzzle-piece" class="mx-auto h-12 w-12 text-gray-400" />
+        <h3 class="mt-2 text-sm font-medium text-gray-900">No modules enabled</h3>
+        <p class="mt-1 text-sm text-gray-500">
+          No ERP modules are enabled for this tenant. Contact your administrator to enable modules.
+        </p>
+      </div>
+    </ui-card>
+  } @else {
+    <!-- Module list / detail split view -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <!-- Module list -->
+      <div class="space-y-3" [class]="selectedModule() ? 'lg:col-span-1' : 'lg:col-span-3'">
+        @for (module of modules(); track module.featureKey) {
+          <div
+            (click)="selectModule(module.featureKey)"
+            class="rounded-lg border bg-white p-4 shadow-sm cursor-pointer transition-colors"
+            [class]="selectedModule()?.featureKey === module.featureKey
+              ? 'border-primary-500 ring-1 ring-primary-500'
+              : 'border-gray-200 hover:border-gray-300'"
+          >
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-900 capitalize">{{ module.featureKey }}</h3>
+                @if (module.seatBased) {
+                  <p class="mt-1 text-xs text-gray-500">
+                    {{ module.usedSeats }} / {{ module.maxSeats }} seats used
+                  </p>
+                } @else {
+                  <p class="mt-1 text-xs text-gray-400">Unlimited access</p>
+                }
+              </div>
+              @if (module.seatBased) {
+                <div class="flex-shrink-0">
+                  <ui-badge [variant]="getUsagePercent(module) >= 90 ? 'danger' : getUsagePercent(module) >= 70 ? 'warning' : 'success'">
+                    {{ getUsagePercent(module) }}%
+                  </ui-badge>
+                </div>
+              } @else {
+                <ui-badge variant="default">Open</ui-badge>
+              }
+            </div>
+            @if (module.seatBased && module.maxSeats) {
+              <div class="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                <div
+                  class="h-1.5 rounded-full transition-all"
+                  [class]="getUsagePercent(module) >= 90 ? 'bg-red-500' : getUsagePercent(module) >= 70 ? 'bg-amber-500' : 'bg-green-500'"
+                  [style.width.%]="getUsagePercent(module)"
+                ></div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Detail panel -->
+      @if (selectedModule(); as detail) {
+        <div class="lg:col-span-2">
+          <ui-card>
+            <div class="px-4 py-5 sm:p-6">
+              <!-- Detail header -->
+              <div class="flex items-center justify-between mb-6">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-lg font-semibold text-gray-900 capitalize">{{ detail.featureKey }}</h3>
+                    <button (click)="closeDetail()" class="lg:hidden p-1 text-gray-400 hover:text-gray-600">
+                      <ui-icon name="x-mark" class="h-4 w-4" />
+                    </button>
+                  </div>
+                  @if (detail.seatBased) {
+                    <p class="text-sm text-gray-500">
+                      {{ detail.usedSeats }} of {{ detail.maxSeats }} seats assigned
+                    </p>
+                  } @else {
+                    <p class="text-sm text-gray-500">Unlimited seats — all tenant users have access</p>
+                  }
+                </div>
+                <ui-button (clicked)="openAddUserModal()" [disabled]="detail.seatBased && detail.maxSeats !== null && detail.usedSeats >= detail.maxSeats">
+                  <ui-icon name="plus" class="h-4 w-4 mr-1" />
+                  Add User
+                </ui-button>
+              </div>
+
+              @if (detailLoading()) {
+                <div class="flex items-center justify-center h-32">
+                  <div class="text-gray-500">Loading...</div>
+                </div>
+              } @else if (detail.users.length === 0) {
+                <div class="text-center py-8">
+                  <ui-icon name="users" class="mx-auto h-8 w-8 text-gray-400" />
+                  <p class="mt-2 text-sm text-gray-500">No users assigned to this module</p>
+                </div>
+              } @else {
+                <!-- Users table -->
+                <table class="min-w-full divide-y divide-gray-200">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Granted</th>
+                      <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-200">
+                    @for (user of detail.users; track user.userId) {
+                      <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3">
+                          <div class="text-sm font-medium text-gray-900">{{ user.displayName || user.userName || user.userId }}</div>
+                          @if (user.email) {
+                            <div class="text-xs text-gray-500">{{ user.email }}</div>
+                          }
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-500">
+                          {{ formatDate(user.grantedAt) }}
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                          <button
+                            (click)="openRemoveUserModal(user)"
+                            class="p-1 text-gray-400 hover:text-red-600"
+                            title="Remove access"
+                          >
+                            <ui-icon name="trash" class="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              }
+            </div>
+          </ui-card>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Add User Modal -->
+  <ui-modal
+    [open]="showAddUserModal()"
+    title="Add User to Module"
+    (closed)="closeAddUserModal()"
+  >
+    <div class="space-y-4">
+      <p class="text-sm text-gray-500">
+        Search for a user to grant access to the
+        <span class="font-medium capitalize">{{ selectedModule()?.featureKey }}</span> module.
+      </p>
+
+      @if (selectedUserForAdd(); as user) {
+        <div class="flex items-center justify-between border border-primary-300 bg-primary-50 rounded-md px-3 py-2">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-gray-900 truncate">{{ user.displayName || user.name || user.userName }}</div>
+            <div class="text-xs text-gray-500 truncate">{{ user.email }}</div>
+          </div>
+          <button type="button" (click)="clearSelectedUser()" class="ml-2 p-1 text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <ui-icon name="x-mark" class="h-4 w-4" />
+          </button>
+        </div>
+      } @else {
+        <div class="relative">
+          <input
+            type="text"
+            [ngModel]="userSearchTerm"
+            (ngModelChange)="onUserSearch($event)"
+            placeholder="Search by name or email..."
+            autocomplete="off"
+            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-primary-500 focus:border-primary-500"
+          />
+          @if (userSearchResults().length > 0) {
+            <div class="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-auto">
+              @for (u of userSearchResults(); track u.id) {
+                <button
+                  type="button"
+                  (click)="selectUserForAdd(u)"
+                  class="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                >
+                  <div class="text-sm font-medium text-gray-900">{{ u.displayName || u.name || u.userName }}</div>
+                  <div class="text-xs text-gray-500">{{ u.email }}</div>
+                </button>
+              }
+            </div>
+          }
+        </div>
+      }
+
+      <div class="flex justify-end gap-3 pt-4">
+        <ui-button type="button" variant="secondary" (clicked)="closeAddUserModal()">
+          Cancel
+        </ui-button>
+        <ui-button (clicked)="grantSeat()" [disabled]="saving() || !selectedUserForAdd()">
+          {{ saving() ? 'Granting...' : 'Grant Access' }}
+        </ui-button>
+      </div>
+    </div>
+  </ui-modal>
+
+  <!-- Remove User Confirmation Modal -->
+  <ui-modal
+    [open]="showRemoveUserModal()"
+    title="Remove Module Access"
+    (closed)="closeRemoveUserModal()"
+  >
+    @if (selectedUser(); as user) {
+      <p class="text-sm text-gray-500">
+        Are you sure you want to revoke
+        <span class="font-medium text-gray-700">{{ user.displayName || user.userName || user.userId }}</span>'s
+        access to the <span class="font-medium capitalize">{{ selectedModule()?.featureKey }}</span> module?
+      </p>
+    }
+    <div class="mt-4 flex justify-end gap-3">
+      <ui-button variant="secondary" (clicked)="closeRemoveUserModal()">
+        Cancel
+      </ui-button>
+      <ui-button variant="danger" (clicked)="confirmRemoveUser()">
+        Remove Access
+      </ui-button>
+    </div>
+  </ui-modal>
+</div>

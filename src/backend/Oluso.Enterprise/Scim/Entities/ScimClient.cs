@@ -30,6 +30,14 @@ public class ScimClient : TenantEntity
     public string TokenHash { get; set; } = string.Empty;
 
     /// <summary>
+    /// Optional OAuth client (ClientId) linked to this SCIM client. When set,
+    /// the provisioning endpoints additionally accept a platform-issued JWT
+    /// access token (OAuth 2.0 client_credentials) whose <c>client_id</c> claim
+    /// matches this value, in addition to the static bearer token above.
+    /// </summary>
+    public string? OAuthClientId { get; set; }
+
+    /// <summary>
     /// When the token was last rotated
     /// </summary>
     public DateTime TokenCreatedAt { get; set; } = DateTime.UtcNow;

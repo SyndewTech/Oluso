@@ -1,6 +1,11 @@
 {
-  "name": "@oluso/sdk",
+  "name": "@syndew/oluso-sdk",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SyndewTech/Oluso.git",
+    "directory": "sdk/js"
+  },
   "description": "Oluso JavaScript SDK for embedding journeys and forms",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -15,7 +20,14 @@
       "import": "./dist/react.mjs",
       "require": "./dist/react.js",
       "types": "./dist/react.d.ts"
-    }
+    },
+    "./embed": "./dist/embed.global.js",
+    "./auth": {
+      "import": "./dist/auth/index.mjs",
+      "require": "./dist/auth/index.js",
+      "types": "./dist/auth/index.d.ts"
+    },
+    "./auth-embed": "./dist/auth/embed.global.js"
   },
   "files": [
     "dist"
@@ -40,10 +52,11 @@
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
+    "jsdom": "^24.1.3",
     "react": "^18.2.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
-    "vitest": "^1.0.0"
+    "vitest": "^4.1.12"
   },
   "keywords": [
     "oluso",
