@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Oluso.Core.Domain.Entities;
-using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Jobs;
 using Oluso.Core.Services;
 using Oluso.EntityFramework;
@@ -19,19 +18,20 @@ public sealed class DemoAccountResetOptions
     public TimeSpan Interval { get; set; } = TimeSpan.FromDays(1);
 
     /// <summary>
-    /// The super admin's password after each reset. Kept out of the published test credentials, so
-    /// visitors can't take over the platform while its owner can always sign in.
+    /// The super admin's password, seeded with it and put back by each reset. Kept out of the published
+    /// test credentials, so visitors can't take over the platform while its owner can always sign in.
     /// </summary>
     public string? SuperAdminPassword { get; set; }
+
+    public static DemoAccountResetOptions From(IConfiguration configuration) =>
+        configuration.GetSection(SectionName).Get<DemoAccountResetOptions>() ?? new DemoAccountResetOptions();
 }
 
 /// <summary>
 /// For a public demo: puts the sample's test accounts back as seeded on a schedule, so a visitor who
-/// changes a password, turns on MFA, adds a passkey, changes the email, disables the user or removes
-/// its role can't lock everyone else out. Each account gets back its email and name, its password
-/// (the super admin's from <see cref="DemoAccountResetOptions.SuperAdminPassword"/>), its role and,
-/// for the org admin, its organization ownership; MFA, passkeys, external logins, lockout and
-/// sessions are cleared. A deleted account is created again.
+/// changes a password, turns on MFA, adds a passkey, changes the email or user name, disables the user,
+/// or changes its roles, claims or organization memberships can't lock everyone else out or keep extra
+/// access. A deleted account is created again.
 /// </summary>
 public sealed class DemoAccountReset(
     IServiceScopeFactory scopeFactory,
@@ -43,7 +43,14 @@ public sealed class DemoAccountReset(
         using var timer = new PeriodicTimer(options.Interval);
         do
         {
-            await ResetAsync(stoppingToken);
+            try
+            {
+                await ResetAsync(stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(ex, "Demo reset failed; the next run in {Interval} tries again", options.Interval);
+            }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
@@ -52,29 +59,30 @@ public sealed class DemoAccountReset(
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<OlusoDbContext>();
-        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<OlusoUser>>();
         var hasher = new PasswordHasher<OlusoUser>();
 
         foreach (var account in SeedData.TestAccounts)
         {
-            var password = account.RoleName == "SuperAdmin" ? options.SuperAdminPassword! : account.Password;
+            var password = SeedData.TestAccountPassword(account, options);
             var tenantId = await SeedData.TestAccountTenantIdAsync(dbContext, account);
+            var role = await SeedData.TestAccountRoleAsync(dbContext, account, cancellationToken);
             var normalized = account.Email.ToUpperInvariant();
 
+            // By the fixed ID; by email or user name for accounts seeded before the IDs were fixed.
             var user = await dbContext.Users.IgnoreQueryFilters()
-                .FirstOrDefaultAsync(u => u.TenantId == tenantId && (u.NormalizedUserName == normalized || u.NormalizedEmail == normalized), cancellationToken);
+                .Where(u => u.Id == account.Id || (u.TenantId == tenantId && (u.NormalizedUserName == normalized || u.NormalizedEmail == normalized)))
+                .OrderByDescending(u => u.Id == account.Id)
+                .FirstOrDefaultAsync(cancellationToken);
 
             if (user == null)
             {
-                user = await SeedData.AddTestAccountAsync(dbContext, account, password);
-                await ValidatePasswordAsync(userManager, user, account, password);
+                await SeedData.AddTestAccountAsync(dbContext, account, password);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 logger.LogInformation("Demo reset: recreated {Email}", account.Email);
                 continue;
             }
 
-            await ValidatePasswordAsync(userManager, user, account, password);
-
+            var userId = user.Id;
             user.UserName = account.Email;
             user.NormalizedUserName = normalized;
             user.Email = account.Email;
@@ -87,82 +95,75 @@ public sealed class DemoAccountReset(
             user.TwoFactorEnabled = false;
             user.LockoutEnd = null;
             user.AccessFailedCount = 0;
+            // The known password isn't run through the tenant's validators: a password history policy would
+            // refuse the same password every day.
             user.PasswordHash = hasher.HashPassword(user, password);
-            user.PasswordChangedAt = null;
+            user.PasswordChangedAt = DateTime.UtcNow;
             user.SecurityStamp = Guid.NewGuid().ToString();
 
-            // The authenticator key and recovery codes are user tokens; external logins could stand in for the password.
-            dbContext.UserTokens.RemoveRange(await dbContext.UserTokens.IgnoreQueryFilters().Where(t => t.UserId == user.Id).ToListAsync(cancellationToken));
-            dbContext.UserLogins.RemoveRange(await dbContext.UserLogins.IgnoreQueryFilters().Where(l => l.UserId == user.Id).ToListAsync(cancellationToken));
+            // Authenticator key and recovery codes (user tokens), external logins, and claims the seed doesn't give.
+            dbContext.UserTokens.RemoveRange(await dbContext.UserTokens.IgnoreQueryFilters().Where(t => t.UserId == userId).ToListAsync(cancellationToken));
+            dbContext.UserLogins.RemoveRange(await dbContext.UserLogins.IgnoreQueryFilters().Where(l => l.UserId == userId).ToListAsync(cancellationToken));
+            dbContext.UserClaims.RemoveRange(await dbContext.UserClaims.IgnoreQueryFilters().Where(c => c.UserId == userId).ToListAsync(cancellationToken));
 
-            var role = await dbContext.Roles.IgnoreQueryFilters().FirstAsync(r => r.Name == account.RoleName, cancellationToken);
-            var assignments = await dbContext.Set<OlusoUserRole>().IgnoreQueryFilters().Where(ur => ur.UserId == user.Id).ToListAsync(cancellationToken);
-            dbContext.Set<OlusoUserRole>().RemoveRange(assignments.Where(ur => ur.RoleId != role.Id));
-            if (assignments.All(ur => ur.RoleId != role.Id))
+            // Sessions and refresh tokens in every tenant, saved with the password so neither survives without the other.
+            dbContext.ServerSideSessions.RemoveRange(await dbContext.ServerSideSessions.IgnoreQueryFilters().Where(s => s.SubjectId == userId).ToListAsync(cancellationToken));
+            dbContext.PersistedGrants.RemoveRange(await dbContext.PersistedGrants.IgnoreQueryFilters().Where(g => g.SubjectId == userId).ToListAsync(cancellationToken));
+
+            // Exactly the seeded role assignment: the seeded role in the seeded tenant.
+            var assignmentTenantId = SeedData.TestAccountRoleAssignmentTenantId(account, user, role);
+            var assignments = await dbContext.Set<OlusoUserRole>().IgnoreQueryFilters().Where(ur => ur.UserId == userId).ToListAsync(cancellationToken);
+            dbContext.Set<OlusoUserRole>().RemoveRange(assignments.Where(ur => ur.RoleId != role.Id || ur.TenantId != assignmentTenantId));
+            if (!assignments.Any(ur => ur.RoleId == role.Id && ur.TenantId == assignmentTenantId))
             {
                 dbContext.Set<OlusoUserRole>().Add(new OlusoUserRole
                 {
-                    UserId = user.Id,
+                    UserId = userId,
                     RoleId = role.Id,
-                    TenantId = SeedData.TestAccountRoleTenantId(account, user, role),
+                    TenantId = assignmentTenantId,
                     AssignedAt = DateTime.UtcNow,
                     AssignedBy = "system"
                 });
             }
 
+            // Exactly the seeded organization membership: the org admin owns default-org, the others belong to none.
+            var memberships = await dbContext.OrganizationMemberships.IgnoreQueryFilters().Where(m => m.UserId == userId).ToListAsync(cancellationToken);
+            var seeded = account.RoleName == "OrgAdmin"
+                ? memberships.FirstOrDefault(m => m.OrganizationId == SeedData.OrgAdminOrganizationId)
+                : null;
+            dbContext.OrganizationMemberships.RemoveRange(memberships.Where(m => m != seeded));
             if (account.RoleName == "OrgAdmin")
             {
-                var membership = await dbContext.OrganizationMemberships.IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(m => m.UserId == user.Id && m.OrganizationId == SeedData.OrgAdminOrganizationId, cancellationToken);
-                if (membership == null)
+                if (seeded == null)
                 {
                     dbContext.OrganizationMemberships.Add(new OrganizationMembership
                     {
                         Id = Guid.NewGuid().ToString(),
                         OrganizationId = SeedData.OrgAdminOrganizationId,
-                        UserId = user.Id,
+                        UserId = userId,
                         Role = OrganizationRole.Owner,
                         JoinedAt = DateTime.UtcNow
                     });
                 }
                 else
                 {
-                    membership.Role = OrganizationRole.Owner;
+                    seeded.Role = OrganizationRole.Owner;
                 }
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            // Sessions, refresh tokens and passkeys are kept by tenant-scoped stores.
-            var userId = user.Id;
+            // Passkeys live in the FIDO2 module's tenant-scoped store; a failure here is retried by the next run.
             await TenantScope.RunAsync(scopeFactory, tenantId, async (services, ct) =>
             {
-                await services.GetRequiredService<IPersistedGrantStore>().RemoveAllAsync(new PersistedGrantFilter { SubjectId = userId }, ct);
-
                 var fido2 = services.GetService<IFido2Service>();
-                if (fido2 != null)
-                {
-                    foreach (var credential in await fido2.GetCredentialsAsync(userId, ct))
-                        await fido2.DeleteCredentialAsync(userId, credential.Id, ct);
-                }
+                if (fido2 == null)
+                    return;
+                foreach (var credential in await fido2.GetCredentialsAsync(userId, ct))
+                    await fido2.DeleteCredentialAsync(userId, credential.Id, ct);
             }, cancellationToken);
 
             logger.LogInformation("Demo reset: restored {Email}", account.Email);
-        }
-    }
-
-    private static async Task ValidatePasswordAsync(UserManager<OlusoUser> userManager, OlusoUser user, SeedData.TestAccount account, string password)
-    {
-        foreach (var validator in userManager.PasswordValidators)
-        {
-            var result = await validator.ValidateAsync(userManager, user, password);
-            if (!result.Succeeded)
-            {
-                var errors = string.Join(" ", result.Errors.Select(e => e.Description));
-                throw new InvalidOperationException(account.RoleName == "SuperAdmin"
-                    ? $"{DemoAccountResetOptions.SectionName}:SuperAdminPassword doesn't meet the password policy: {errors}"
-                    : $"The test password for {account.Email} doesn't meet the password policy: {errors}");
-            }
         }
     }
 }
@@ -175,7 +176,7 @@ public static class DemoAccountResetExtensions
     /// </summary>
     public static IServiceCollection AddDemoAccountReset(this IServiceCollection services, IConfiguration configuration)
     {
-        var options = configuration.GetSection(DemoAccountResetOptions.SectionName).Get<DemoAccountResetOptions>() ?? new DemoAccountResetOptions();
+        var options = DemoAccountResetOptions.From(configuration);
         if (!options.Enabled)
             return services;
 
