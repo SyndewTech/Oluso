@@ -100,6 +100,9 @@
                   <ui-badge [variant]="client.enabled ? 'success' : 'danger'">
                     {{ client.enabled ? 'Enabled' : 'Disabled' }}
                   </ui-badge>
+                  @if (client.nonEditable) {
+                    <ui-badge variant="info" class="ml-1">Managed</ui-badge>
+                  }
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
                   {{ formatGrantTypes(client.allowedGrantTypes) }}

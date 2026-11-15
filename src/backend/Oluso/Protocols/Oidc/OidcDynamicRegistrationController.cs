@@ -14,6 +14,9 @@ using Oluso.Core.Protocols.DPoP;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
 using Oluso.Protocols.Validation;
+using Oluso.Core.Security;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Oluso.Protocols.Oidc;
 
@@ -27,6 +30,8 @@ namespace Oluso.Protocols.Oidc;
 /// - Supports DPoP-bound tokens for sender-constrained access
 /// - Uses IScopeValidator for consistent scope validation
 /// </summary>
+// RFC 7591 section 3.2.1: responses carry the client secret and registration access token.
+[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public class OidcDynamicRegistrationController : OidcControllerBase
 {
     private readonly IClientStore _clientStore;
@@ -37,14 +42,12 @@ public class OidcDynamicRegistrationController : OidcControllerBase
     private readonly IIssuerResolver _issuerResolver;
     private readonly IBearerTokenValidator _tokenValidator;
     private readonly IDPoPProofValidator _dpopValidator;
+    private readonly IClientSecretProtector _secrets;
     private readonly OidcEndpointConfiguration _endpointConfig;
     private readonly ILogger<OidcDynamicRegistrationController> _logger;
 
     private static readonly string[] DefaultScopes = ["openid", "profile", "email"];
     private static readonly string[] DefaultGrantTypes = ["authorization_code", "refresh_token"];
-
-    // Registration access token lifetime (default 24 hours, configurable)
-    private const int RegistrationAccessTokenLifetimeSeconds = 86400;
 
     public OidcDynamicRegistrationController(
         IClientStore clientStore,
@@ -54,6 +57,7 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         IIssuerResolver issuerResolver,
         IBearerTokenValidator tokenValidator,
         IDPoPProofValidator dpopValidator,
+        IClientSecretProtector secrets,
         IOptions<OidcEndpointConfiguration> endpointConfig,
         ILogger<OidcDynamicRegistrationController> logger,
         IResourceStore? resourceStore = null)
@@ -66,6 +70,7 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         _issuerResolver = issuerResolver;
         _tokenValidator = tokenValidator;
         _dpopValidator = dpopValidator;
+        _secrets = secrets;
         _endpointConfig = endpointConfig.Value;
         _logger = logger;
     }
@@ -144,6 +149,12 @@ public class OidcDynamicRegistrationController : OidcControllerBase
                 ErrorDescription = $"Maximum {protocolSettings.DynamicRegistrationMaxRedirectUris} redirect URIs allowed"
             });
         }
+
+        // The client's signing keys and request object algorithm (OpenID Connect Dynamic Registration section 2).
+        var (registeredKeys, keysError) = ReadJwks(request.Jwks, request.JwksUri, AllowPrivateNetworkJwksUri());
+        if (keysError != null) return BadRequest(keysError);
+        var algorithmError = ValidateRequestObjectSigningAlg(request.RequestObjectSigningAlg);
+        if (algorithmError != null) return BadRequest(algorithmError);
 
         // Validate redirect URI format
         foreach (var uri in request.RedirectUris)
@@ -250,13 +261,15 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         // Generate client credentials
         var clientId = GenerateClientId();
         string? clientSecret = null;
-        string? hashedSecret = null;
+        string? storedSecret = null;
 
         // Generate a shared secret only for methods that use one
         if (requireSecret && authMethod != "self_signed_tls_client_auth")
         {
-            clientSecret = GenerateClientSecret();
-            hashedSecret = HashSecret(clientSecret);
+            // A client that signs JWTs with its secret (HMAC) needs it recoverable and long enough for HS512.
+            var hmac = ClientSecretProtector.UsesHmac(authMethod, request.RequestObjectSigningAlg);
+            clientSecret = ClientSecretProtector.GenerateSecret(hmac);
+            storedSecret = _secrets.ToStoredValue(clientSecret, hmac);
         }
 
         var now = DateTime.UtcNow;
@@ -316,6 +329,11 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             client.Properties.Add(new ClientProperty { Key = "software_version", Value = request.SoftwareVersion });
         if (request.Contacts?.Count > 0)
             client.Properties.Add(new ClientProperty { Key = "contacts", Value = JsonSerializer.Serialize(request.Contacts) });
+        if (!string.IsNullOrEmpty(request.RequestObjectSigningAlg))
+            client.Properties.Add(new ClientProperty { Key = RequestObjectSigningAlgorithms.ClientProperty, Value = request.RequestObjectSigningAlg });
+        foreach (var key in registeredKeys)
+            client.ClientSecrets.Add(RegisteredKey(key));
+        client.JwksUri = NullIfEmpty(request.JwksUri);
 
         // Custom authorize-parameter → claim mappings (Oluso vendor extension to
         // RFC 7591). Declaring where a token claim comes from is a security
@@ -340,9 +358,9 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         }
 
         // Add secret if required
-        if (hashedSecret != null)
+        if (storedSecret != null)
         {
-            client.ClientSecrets.Add(new ClientSecret { Value = hashedSecret });
+            client.ClientSecrets.Add(new ClientSecret { Value = storedSecret });
         }
 
         // Save the client
@@ -365,8 +383,11 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             ClientId = clientId,
             ClientSecret = clientSecret,
             ClientIdIssuedAt = issuedAt,
-            ClientSecretExpiresAt = 0, // Never expires
+            ClientSecretExpiresAt = clientSecret != null ? 0 : null,
             RedirectUris = request.RedirectUris,
+            RequestObjectSigningAlg = request.RequestObjectSigningAlg,
+            Jwks = RegisteredJwks(client),
+            JwksUri = client.JwksUri,
             GrantTypes = requestedGrantTypes.ToList(),
             ResponseTypes = DeriveResponseTypes(requestedGrantTypes),
             TokenEndpointAuthMethod = authMethod,
@@ -478,6 +499,11 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             });
         }
 
+        var (updatedKeys, updateKeysError) = ReadJwks(request.Jwks, request.JwksUri, AllowPrivateNetworkJwksUri());
+        if (updateKeysError != null) return BadRequest(updateKeysError);
+        var updateAlgorithmError = ValidateRequestObjectSigningAlg(request.RequestObjectSigningAlg);
+        if (updateAlgorithmError != null) return BadRequest(updateAlgorithmError);
+
         // A Matrix client's metadata, as it will be after this update, follows the Matrix registration rules.
         if (MatrixScopes.AnyMatrix(client!.AllowedScopes.Select(s => s.Scope)))
         {
@@ -515,17 +541,39 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         UpdateClientProperty(client!, "tos_uri", request.TosUri);
         UpdateClientProperty(client!, "policy_uri", request.PolicyUri);
         UpdateClientProperty(client!, "contacts", request.Contacts != null ? JsonSerializer.Serialize(request.Contacts) : null);
+        UpdateClientProperty(client!, RequestObjectSigningAlgorithms.ClientProperty, request.RequestObjectSigningAlg);
+
+        // RFC 7592 section 2.2: the update replaces the client's metadata, its registered keys included. Keys an
+        // administrator added to the client are not the registration's and stay.
+        foreach (var stale in client!.ClientSecrets.Where(IsRegisteredKey).ToList())
+            client.ClientSecrets.Remove(stale);
+        foreach (var key in updatedKeys)
+            client.ClientSecrets.Add(RegisteredKey(key));
+        client.JwksUri = NullIfEmpty(request.JwksUri);
 
         client!.Updated = DateTime.UtcNow;
 
         await _clientStore.UpdateClientAsync(client, cancellationToken);
+
+        // RFC 7592 section 2.2: a new registration access token comes with the update and the one used stops working,
+        // so a token that leaked is replaced the next time the client manages its registration. The new one keeps the
+        // old one's DPoP binding.
+        var usedTokenKey = ComputeRegistrationTokenKey(Request.Headers.Authorization.ToString()["Bearer ".Length..]);
+        var usedToken = await _grantStore.GetAsync(usedTokenKey, cancellationToken);
+        var boundKey = usedToken?.Data is { Length: > 0 } usedData
+            ? JsonSerializer.Deserialize<RegistrationTokenData>(usedData)?.DPoPJkt
+            : null;
+        var rotatedToken = await CreateRegistrationAccessTokenAsync(clientId, boundKey, cancellationToken);
+        await _grantStore.RemoveAsync(usedTokenKey, cancellationToken);
 
         _logger.LogInformation("Updated DCR client {ClientId}", clientId);
 
         var issuer = await _issuerResolver.GetIssuerAsync(cancellationToken);
         var baseUrl = issuer.TrimEnd('/');
 
-        return Ok(BuildClientResponse(client, baseUrl));
+        var response = BuildClientResponse(client, baseUrl);
+        response.RegistrationAccessToken = rotatedToken;
+        return Ok(response);
     }
 
     /// <summary>
@@ -789,7 +837,9 @@ public class OidcDynamicRegistrationController : OidcControllerBase
     }
 
     /// <summary>
-    /// Creates a registration access token and stores it in the grant store.
+    /// Creates a registration access token and stores it in the grant store. It does not expire: RFC 7592 has no way
+    /// for a client to get a new one, so an expiring token would end the client's self-management. Every update
+    /// replaces it instead (section 2.2), and deleting the client revokes it.
     /// </summary>
     private async Task<string> CreateRegistrationAccessTokenAsync(
         string clientId,
@@ -812,7 +862,7 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             Type = OidcConstants.PersistedGrantTypes.RegistrationAccessToken,
             ClientId = clientId,
             CreationTime = now,
-            Expiration = now.AddSeconds(RegistrationAccessTokenLifetimeSeconds),
+            Expiration = null,
             Data = JsonSerializer.Serialize(data)
         };
 
@@ -849,7 +899,7 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         {
             ClientId = client.ClientId,
             ClientIdIssuedAt = issuedAt,
-            ClientSecretExpiresAt = 0,
+            ClientSecretExpiresAt = authMethod is "client_secret_basic" or "client_secret_post" or "client_secret_jwt" ? 0 : null,
             RedirectUris = client.RedirectUris.Select(r => r.RedirectUri).ToList(),
             GrantTypes = client.AllowedGrantTypes.Select(g => g.GrantType).ToList(),
             ResponseTypes = DeriveResponseTypes(client.AllowedGrantTypes.Select(g => g.GrantType)),
@@ -858,6 +908,10 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             ClientUri = client.ClientUri,
             LogoUri = client.LogoUri,
             ApplicationType = GetClientProperty<string>(client, "application_type") ?? MatrixClientMetadata.Web,
+            RequestObjectSigningAlg = client.Properties
+                .FirstOrDefault(p => p.Key == RequestObjectSigningAlgorithms.ClientProperty)?.Value,
+            Jwks = RegisteredJwks(client),
+            JwksUri = client.JwksUri,
             Scope = string.Join(" ", client.AllowedScopes.Select(s => s.Scope)),
             Contacts = GetClientProperty<List<string>>(client, "contacts"),
             TosUri = GetClientProperty<string>(client, "tos_uri"),
@@ -872,9 +926,105 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             TlsClientAuthSanUri = client.TlsClientAuthSanUri,
             TlsClientAuthSanEmail = client.TlsClientAuthSanEmail,
             TlsClientAuthSanIp = client.TlsClientAuthSanIp
-            // Note: registration_access_token is not returned on GET/PUT per RFC 7592
+            // registration_access_token: added to an update's response (the rotated token), never to a read's
         };
     }
+
+    /// <summary>
+    /// The public keys in a registration's <c>jwks</c>, each as JWK JSON (<see cref="ClientPublicKeys"/>), or its
+    /// <c>jwks_uri</c>, which is checked here as every fetch of it is (<see cref="PublicHttpTargets"/>: https, a public
+    /// host) and then fetched when the client's JWTs are checked (<see cref="IClientJwksUriKeys"/>). The two are
+    /// mutually exclusive (RFC 7591 section 2); a private or symmetric key is refused, as is a key set that is not one.
+    /// </summary>
+    private static (List<string> Keys, DynamicRegistrationError? Error) ReadJwks(JsonElement? jwks, string? jwksUri, bool allowPrivateNetwork)
+    {
+        var keys = new List<string>();
+        var hasJwks = jwks is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined };
+        if (!string.IsNullOrEmpty(jwksUri))
+        {
+            if (hasJwks)
+            {
+                return (keys, InvalidMetadata("jwks and jwks_uri must not both be registered"));
+            }
+            if (!Uri.TryCreate(jwksUri, UriKind.Absolute, out var uri) ||
+                PublicHttpTargets.ValidateTarget(uri, allowPrivateNetwork) != null)
+            {
+                return (keys, InvalidMetadata("jwks_uri must be an absolute https URL on a public host"));
+            }
+            return (keys, null);
+        }
+
+        if (jwks is not { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } set)
+        {
+            return (keys, null);
+        }
+
+        if (set.ValueKind != JsonValueKind.Object ||
+            !set.TryGetProperty("keys", out var keyArray) ||
+            keyArray.ValueKind != JsonValueKind.Array)
+        {
+            return (keys, InvalidMetadata("jwks must be a JWK Set with a keys array"));
+        }
+
+        if (keyArray.GetArrayLength() > MaxRegisteredKeys)
+        {
+            return (keys, InvalidMetadata($"jwks may hold at most {MaxRegisteredKeys} keys"));
+        }
+
+        foreach (var element in keyArray.EnumerateArray())
+        {
+            if (ClientPublicKeys.PublicJwkError(element) is { } keyError)
+            {
+                return (keys, InvalidMetadata($"jwks: {keyError}"));
+            }
+
+            keys.Add(element.GetRawText());
+        }
+
+        return (keys, null);
+    }
+
+    private bool AllowPrivateNetworkJwksUri() =>
+        HttpContext.RequestServices.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()
+            .GetValue<bool>(ClientJwksUriKeys.AllowPrivateNetworkSetting);
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>The most keys a registration's jwks may hold (enough for rotation, not a store for anything else).</summary>
+    private const int MaxRegisteredKeys = 10;
+
+    /// <summary>request_object_signing_alg must be one the server verifies request objects with.</summary>
+    private static DynamicRegistrationError? ValidateRequestObjectSigningAlg(string? algorithm) =>
+        string.IsNullOrEmpty(algorithm) || RequestObjectSigningAlgorithms.Supported.Contains(algorithm, StringComparer.Ordinal)
+            ? null
+            : InvalidMetadata($"request_object_signing_alg '{algorithm}' is not supported");
+
+    private static ClientSecret RegisteredKey(string jwkJson) => new()
+    {
+        Type = ClientPublicKeys.JsonWebKeyType,
+        Value = jwkJson,
+        Description = ClientPublicKeys.RegisteredDescription
+    };
+
+    /// <summary>A key the registration's jwks holds, not one an administrator added to the client.</summary>
+    private static bool IsRegisteredKey(ClientSecret secret) =>
+        secret.Type == ClientPublicKeys.JsonWebKeyType && secret.Description == ClientPublicKeys.RegisteredDescription;
+
+    /// <summary>The registration's public keys as a JWK Set, or null when it has none.</summary>
+    private static JsonElement? RegisteredJwks(Client client)
+    {
+        var keys = client.ClientSecrets
+            .Where(IsRegisteredKey)
+            .Select(s => JsonSerializer.Deserialize<JsonElement>(s.Value))
+            .ToList();
+        return keys.Count == 0 ? null : JsonSerializer.SerializeToElement(new { keys });
+    }
+
+    private static DynamicRegistrationError InvalidMetadata(string description) => new()
+    {
+        Error = "invalid_client_metadata",
+        ErrorDescription = description
+    };
 
     private static void UpdateClientProperty(Client client, string key, string? value)
     {
@@ -923,19 +1073,6 @@ public class OidcDynamicRegistrationController : OidcControllerBase
         return $"rat_{Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").TrimEnd('=')}";
     }
 
-    private static string GenerateClientSecret()
-    {
-        var bytes = new byte[32];
-        RandomNumberGenerator.Fill(bytes);
-        return Convert.ToBase64String(bytes);
-    }
-
-    private static string HashSecret(string secret)
-    {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(secret);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToBase64String(hash);
-    }
 
     private static bool IsValidRedirectUri(string uri)
     {
@@ -1050,6 +1187,12 @@ public class OidcDynamicRegistrationController : OidcControllerBase
             responseTypes.Add("id_token");
             responseTypes.Add("id_token token");
         }
+        if (grantTypes.Contains("authorization_code") && grantTypes.Contains("implicit"))
+        {
+            responseTypes.Add("code id_token");
+            responseTypes.Add("code token");
+            responseTypes.Add("code id_token token");
+        }
 
         return responseTypes.Count > 0 ? responseTypes : ["code"];
     }
@@ -1113,6 +1256,9 @@ public class DynamicRegistrationRequest
 
     [JsonPropertyName("jwks")]
     public JsonElement? Jwks { get; set; }
+
+    [JsonPropertyName("request_object_signing_alg")]
+    public string? RequestObjectSigningAlg { get; set; }
 
     [JsonPropertyName("software_id")]
     public string? SoftwareId { get; set; }
@@ -1181,12 +1327,27 @@ public class DynamicRegistrationResponse
     [JsonPropertyName("client_id_issued_at")]
     public long ClientIdIssuedAt { get; set; }
 
+    /// <summary>
+    /// Required whenever the client has a client_secret (RFC 7591 section 3.2.1); 0 means the secret never expires.
+    /// </summary>
     [JsonPropertyName("client_secret_expires_at")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public long ClientSecretExpiresAt { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? ClientSecretExpiresAt { get; set; }
 
     [JsonPropertyName("redirect_uris")]
     public List<string>? RedirectUris { get; set; }
+
+    [JsonPropertyName("request_object_signing_alg")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RequestObjectSigningAlg { get; set; }
+
+    [JsonPropertyName("jwks")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Jwks { get; set; }
+
+    [JsonPropertyName("jwks_uri")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? JwksUri { get; set; }
 
     [JsonPropertyName("grant_types")]
     public List<string>? GrantTypes { get; set; }

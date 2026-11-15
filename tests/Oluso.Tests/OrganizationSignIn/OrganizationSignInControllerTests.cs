@@ -79,6 +79,8 @@ public class OrganizationSignInControllerTests
                 .AddSingleton(Auth.Object)
                 .AddSingleton(IdentityTestFactory.CreateUserManager(Db))
                 .AddSingleton(ClaimsFactory.Object)
+                .AddSingleton(new Oluso.Authentication.MfaSignInGate(Mock.Of<IProtocolStateStore>(), Users.Object,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<Oluso.Authentication.MfaSignInGate>.Instance))
                 .BuildServiceProvider();
             var http = new DefaultHttpContext { RequestServices = services };
             http.Request.Scheme = "https";

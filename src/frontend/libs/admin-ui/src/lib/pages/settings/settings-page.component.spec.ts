@@ -104,3 +104,53 @@ describe('SettingsPageComponent prefix scope default', () => {
     expect(prefixScopeSuffixMaxLengthError(null)).not.toBeNull();
   });
 });
+
+describe('SettingsPageComponent claims parameter', () => {
+  const loaded = (claimsParameterSupported: boolean): ServerSettings => ({
+    tokenSettings: { defaultAccessTokenLifetime: 3600, defaultIdentityTokenLifetime: 300, defaultRefreshTokenLifetime: 2592000 },
+    securitySettings: { requireHttps: true, emitStaticClaims: false, enableBackchannelLogout: true },
+    corsSettings: { allowAllOrigins: false, allowedOrigins: [] },
+    protocolSettings: {
+      enforceOAuth21: false,
+      claimsParameterSupported,
+      enableDynamicClientRegistration: false,
+      allowOpenDynamicRegistration: false,
+      dynamicRegistrationRequirePkce: true,
+      dynamicRegistrationMaxRedirectUris: 10,
+      prefixScopeSuffixMaxLength: 256,
+    },
+  });
+
+  it('shows the tenant setting on the Protocol tab and saves a change', async () => {
+    const updateSettings = vi.fn((s: ServerSettings) => of(s));
+    TestBed.configureTestingModule({
+      imports: [SettingsPageComponent],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useValue: { snapshot: { queryParamMap: convertToParamMap({ tab: 'protocol' }), paramMap: convertToParamMap({}), data: {} } },
+        },
+        { provide: SettingsService, useValue: { getSettings: () => of(loaded(true)), updateSettings } },
+        { provide: PluginService, useValue: { settingsTabs: signal([]) } },
+        { provide: ToastService, useValue: { error: vi.fn(), success: vi.fn() } },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPageComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const checkbox = fixture.nativeElement.querySelector('[data-testid="claims-parameter-supported"]') as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('Claims Request Parameter');
+
+    fixture.componentInstance.updateProtocolSettings('claimsParameterSupported', false);
+    fixture.componentInstance.onSave();
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ protocolSettings: expect.objectContaining({ claimsParameterSupported: false }) }),
+    );
+  });
+});

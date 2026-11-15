@@ -267,6 +267,7 @@ public class DPoPSenderConstraintTests : IDisposable
     public async Task A_code_bound_with_dpop_jkt_needs_a_proof_by_that_key(bool withProof, bool rightKey)
     {
         var codes = new Mock<IAuthorizationCodeStore>();
+        codes.Setup(c => c.TryConsumeAsync("code", It.IsAny<CancellationToken>())).ReturnsAsync(true);
         codes.Setup(c => c.GetAsync("code", It.IsAny<CancellationToken>())).ReturnsAsync(new AuthorizationCode
         {
             Code = "code", ClientId = "native-app", SubjectId = "user-1", RedirectUri = "nativeapp://oluso-callback",
@@ -278,7 +279,7 @@ public class DPoPSenderConstraintTests : IDisposable
         profiles.Setup(p => p.GetProfileDataAsync(It.IsAny<ProfileDataRequestContext>())).Returns(Task.CompletedTask);
         var handler = new AuthorizationCodeGrantHandler(codes.Object, Mock.Of<IPkceValidator>(), profiles.Object,
             Mock.Of<IPersistedGrantStore>(), Mock.Of<IClientStore>(), ClientUserAccessKit.For(profiles.Object),
-            NullLogger<AuthorizationCodeGrantHandler>.Instance);
+            Mock.Of<IAccessTokenRevocationStore>(), NullLogger<AuthorizationCodeGrantHandler>.Instance);
 
         var result = await handler.HandleAsync(new TokenRequest
         {

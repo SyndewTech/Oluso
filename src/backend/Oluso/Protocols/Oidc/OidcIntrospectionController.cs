@@ -26,6 +26,7 @@ public class OidcIntrospectionController : OidcControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly ITenantStore _tenants;
     private readonly IOlusoEventService? _eventService;
+    private readonly IAccessTokenRevocationStore? _revocations;
     private readonly ILogger<OidcIntrospectionController> _logger;
 
     public OidcIntrospectionController(
@@ -37,8 +38,10 @@ public class OidcIntrospectionController : OidcControllerBase
         ITenantContext tenantContext,
         ITenantStore tenants,
         ILogger<OidcIntrospectionController> logger,
-        IOlusoEventService? eventService = null)
+        IOlusoEventService? eventService = null,
+        IAccessTokenRevocationStore? revocations = null)
     {
+        _revocations = revocations;
         _tenants = tenants;
         _clientAuthenticator = clientAuthenticator;
         _grantStore = grantStore;
@@ -295,6 +298,14 @@ public class OidcIntrospectionController : OidcControllerBase
                             callingClient.ClientId, tokenClientId);
                         return new IntrospectionResponse { Active = false };
                     }
+                }
+
+                // RFC 7662 section 2.2: a revoked token is not active.
+                if (_revocations != null && !string.IsNullOrEmpty(tokenClientId) && await _revocations.IsRevokedAsync(
+                        jwt.Claims.FirstOrDefault(c => c.Type == "tenant_id")?.Value, tokenClientId,
+                        jwt.Claims.FirstOrDefault(c => c.Type == "sid")?.Value, jwt.Id, jwt.ValidFrom, cancellationToken))
+                {
+                    return new IntrospectionResponse { Active = false };
                 }
 
                 // Build response from validated JWT claims

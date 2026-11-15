@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Security.Cryptography;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +21,12 @@ namespace Oluso.UserJourneys.Steps;
 /// </remarks>
 public class PasswordlessEmailStepHandler : IPrimaryAuthenticationStep
 {
+    /// <summary>
+    /// The send time is stored as UTC (round-trip "O"): read it back as UTC. A plain DateTime.TryParse turns it into
+    /// local time, and the code then looks hours old (or new) on a server away from UTC.
+    /// </summary>
+    private const DateTimeStyles UtcStyles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
+
     public string StepType => "passwordless_email";
 
     /// <summary>Where the code was sent: the account's own address, or a new sign-up's typed one.</summary>
@@ -173,7 +180,7 @@ public class PasswordlessEmailStepHandler : IPrimaryAuthenticationStep
             }
 
             // Check expiration
-            if (DateTime.TryParse(sentAt, out var sentTime) &&
+            if (DateTime.TryParse(sentAt, CultureInfo.InvariantCulture, UtcStyles, out var sentTime) &&
                 DateTime.UtcNow - sentTime > TimeSpan.FromMinutes(expirationMinutes))
             {
                 logger.LogWarning("Passwordless code expired");

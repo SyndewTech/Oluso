@@ -110,7 +110,8 @@ public class SettingsController : AdminBaseController
                 PrivacyPolicyUrl = tenant.PrivacyPolicyUrl,
                 AllowedEmailDomains = tenant.AllowedEmailDomains,
                 EnableLocalLogin = tenant.EnableLocalLogin,
-                EnablePasskey = tenant.EnablePasskey
+                EnablePasskey = tenant.EnablePasskey,
+                RequireMfa = tenant.RequireMfa
             } : new TenantSettingsDto(),
             ProtocolSettings = MapProtocolSettings(tenant?.ProtocolConfiguration)
         };
@@ -167,6 +168,7 @@ public class SettingsController : AdminBaseController
             tenant.AllowedEmailDomains = settings.TenantSettings.AllowedEmailDomains;
             tenant.EnableLocalLogin = settings.TenantSettings.EnableLocalLogin;
             tenant.EnablePasskey = settings.TenantSettings.EnablePasskey;
+            tenant.RequireMfa = settings.TenantSettings.RequireMfa;
             tenantChanged = true;
         }
 
@@ -177,6 +179,7 @@ public class SettingsController : AdminBaseController
             tenant.ProtocolConfiguration ??= new Core.Domain.Entities.TenantProtocolConfiguration { TenantId = tenantId };
             var config = tenant.ProtocolConfiguration;
             config.EnforceOAuth21 = protocol.EnforceOAuth21;
+            config.ClaimsParameterSupported = protocol.ClaimsParameterSupported;
             config.EnableDynamicClientRegistration = protocol.EnableDynamicClientRegistration;
             config.AllowOpenDynamicRegistration = protocol.AllowOpenDynamicRegistration;
             config.DynamicRegistrationAllowedScopesJson = SerializeList(protocol.DynamicRegistrationAllowedScopes);
@@ -423,6 +426,7 @@ public class SettingsController : AdminBaseController
         return new ProtocolSettingsDto
         {
             EnforceOAuth21 = config.EnforceOAuth21,
+            ClaimsParameterSupported = config.ClaimsParameterSupported,
             EnableDynamicClientRegistration = config.EnableDynamicClientRegistration,
             AllowOpenDynamicRegistration = config.AllowOpenDynamicRegistration,
             DynamicRegistrationAllowedScopes = DeserializeList(config.DynamicRegistrationAllowedScopesJson),
@@ -473,7 +477,8 @@ public class SettingsController : AdminBaseController
                 PrivacyPolicyUrl = tenant.PrivacyPolicyUrl,
                 AllowedEmailDomains = tenant.AllowedEmailDomains,
                 EnableLocalLogin = tenant.EnableLocalLogin,
-                EnablePasskey = tenant.EnablePasskey
+                EnablePasskey = tenant.EnablePasskey,
+                RequireMfa = tenant.RequireMfa
             } : new TenantSettingsDto(),
             ProtocolSettings = MapProtocolSettings(tenant?.ProtocolConfiguration)
         };

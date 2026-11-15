@@ -326,6 +326,7 @@ public class TenantsController : AdminBaseController
         if (request.AllowedEmailDomains != null) tenant.AllowedEmailDomains = request.AllowedEmailDomains;
         if (request.EnableLocalLogin.HasValue) tenant.EnableLocalLogin = request.EnableLocalLogin.Value;
         if (request.EnablePasskey.HasValue) tenant.EnablePasskey = request.EnablePasskey.Value;
+        if (request.RequireMfa.HasValue) tenant.RequireMfa = request.RequireMfa.Value;
         if (request.AllowPlatformOrgSignIn.HasValue) tenant.AllowPlatformOrgSignIn = request.AllowPlatformOrgSignIn.Value;
         if (request.DefaultIdpScheme != null)
         {
@@ -1274,6 +1275,7 @@ public class TenantsController : AdminBaseController
         HideEmbedBranding = tenant.Branding?.HideEmbedBranding ?? false,
         EnableLocalLogin = tenant.EnableLocalLogin,
         EnablePasskey = tenant.EnablePasskey,
+        RequireMfa = tenant.RequireMfa,
         DefaultIdpScheme = tenant.DefaultIdpScheme,
         DefaultSignInPolicyId = tenant.DefaultSignInPolicyId,
         DefaultSsoUiMode = tenant.DefaultSsoUiMode,

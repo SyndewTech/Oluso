@@ -18,6 +18,13 @@ public class ServerSettingsDto
 public class ProtocolSettingsDto
 {
     public bool EnforceOAuth21 { get; set; }
+
+    /// <summary>
+    /// Whether authorization requests may use the claims parameter (OpenID Connect Core 1.0 section 5.5); published
+    /// as claims_parameter_supported in discovery.
+    /// </summary>
+    public bool ClaimsParameterSupported { get; set; }
+
     public bool EnableDynamicClientRegistration { get; set; }
     public bool AllowOpenDynamicRegistration { get; set; }
     public List<string>? DynamicRegistrationAllowedScopes { get; set; }
@@ -73,6 +80,9 @@ public class TenantSettingsDto
     public string? AllowedEmailDomains { get; set; }
     public bool EnableLocalLogin { get; set; } = true;
     public bool EnablePasskey { get; set; } = true;
+
+    /// <summary>Every password or external sign-in needs a second factor; users without one set it up at sign-in.</summary>
+    public bool RequireMfa { get; set; }
 }
 
 public class TokenSettingsDto

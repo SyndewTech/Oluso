@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Oluso.Core.Protocols.Models;
@@ -215,6 +216,10 @@ public class ParRequestDto
     [JsonPropertyName("ui_locales")]
     public string? UiLocales { get; set; }
 
+    /// <summary>The claims parameter (OpenID Connect Core 1.0 section 5.5): a JSON object, or the same as a string.</summary>
+    [JsonPropertyName("claims")]
+    public JsonElement? Claims { get; set; }
+
     [JsonPropertyName("request")]
     public string? Request { get; set; }
 
@@ -247,6 +252,9 @@ public class ParRequestDto
             LoginHint = LoginHint,
             AcrValues = AcrValues,
             UiLocales = UiLocales,
+            Claims = Claims is { ValueKind: JsonValueKind.String } text ? text.GetString()
+                : Claims is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } json ? json.GetRawText()
+                : null,
             Request = Request,
             RequestUri = RequestUri,
             Resource = Resource?.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct().ToList() ?? new List<string>()

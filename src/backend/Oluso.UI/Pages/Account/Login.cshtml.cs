@@ -1,3 +1,4 @@
+using Oluso.Authentication;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -25,6 +26,7 @@ public class LoginModel : PageModel
 {
     private readonly IOlusoUserService _userService;
     private readonly IProtocolStateStore _protocolStateStore;
+    private readonly MfaSignInGate _mfaGate;
     private readonly ITenantContext? _tenantContext;
     private readonly IAuthenticationMethodRegistry? _authMethodRegistry;
     private readonly IClientStore? _clientStore;
@@ -35,6 +37,7 @@ public class LoginModel : PageModel
     public LoginModel(
         IOlusoUserService userService,
         IProtocolStateStore protocolStateStore,
+        MfaSignInGate mfaGate,
         ILogger<LoginModel> logger,
         ITenantContext? tenantContext = null,
         IAuthenticationMethodRegistry? authMethodRegistry = null,
@@ -44,6 +47,7 @@ public class LoginModel : PageModel
     {
         _userService = userService;
         _protocolStateStore = protocolStateStore;
+        _mfaGate = mfaGate;
         _tenantContext = tenantContext;
         _authMethodRegistry = authMethodRegistry;
         _clientStore = clientStore;
@@ -261,7 +265,10 @@ public class LoginModel : PageModel
         // Authenticate user
         var result = await _userService.ValidateCredentialsAsync(loginIdentifier, Input.Password!, tenantId);
 
-        if (!result.Succeeded)
+        // The password was right and the account has MFA: the second factor is asked for below.
+        var passwordMatchedForMfa = result.RequiresMfa && result.User != null;
+
+        if (!result.Succeeded && !passwordMatchedForMfa)
         {
             _logger.LogWarning("Login failed for user {Username}: {Error}", Input.Username, result.Error);
 
@@ -301,10 +308,33 @@ public class LoginModel : PageModel
         }
 
         var userId = result.User!.Id;
-        _logger.LogInformation("User {UserId} logged in successfully", userId);
+        _logger.LogInformation("Password accepted for user {UserId}", userId);
 
-        // Sign in the user
-        await SignInUserAsync(userId, Input.RememberMe);
+        var session = await BuildSessionAsync(userId, Input.RememberMe);
+        if (session == null)
+        {
+            ErrorMessage = "Invalid username or password";
+            return Page();
+        }
+
+        // A second factor the tenant or the account requires: the session is issued after it, on /account/mfa. An
+        // expired password of an account with MFA is changed there, after the second factor, instead.
+        var (principal, properties) = session.Value;
+        if (await _mfaGate.HoldIfSecondFactorMissingAsync(HttpContext, principal, properties, ReturnUrl, "pwd",
+                cancellationToken: HttpContext.RequestAborted,
+                passwordChangeRequired: passwordMatchedForMfa && result.PasswordExpired,
+                username: Input.Username?.Trim()) is { } secondFactor)
+        {
+            return secondFactor;
+        }
+        if (passwordMatchedForMfa)
+        {
+            _logger.LogError("User {UserId} requires MFA but the sign-in was not held for it", userId);
+            ErrorMessage = "Invalid username or password";
+            return Page();
+        }
+
+        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, properties);
         await _userService.RecordLoginAsync(userId);
 
         if (_signInAuditor != null)
@@ -337,15 +367,8 @@ public class LoginModel : PageModel
     /// </summary>
     private async Task<IActionResult?> BeginExpiredPasswordChangeAsync(ValidatedUser user)
     {
-        var token = await _userService.GeneratePasswordResetTokenAsync(user.Id);
-        if (string.IsNullOrEmpty(token))
-        {
-            return null;
-        }
-
         _logger.LogInformation("Password expired for user {UserId}; redirecting to change it before sign-in", user.Id);
-        ExpiredPasswordTicket.Store(TempData, new ExpiredPasswordTicket(user.Id, token, Input.Username?.Trim()));
-        return RedirectToPage("/Account/ResetPassword", new { expired = true, returnUrl = ReturnUrl });
+        return await ExpiredPasswordTicket.BeginAsync(this, _userService, user.Id, Input.Username?.Trim(), ReturnUrl);
     }
 
     public IActionResult OnPostExternalLogin(string provider, string? returnUrl, string? providerType)
@@ -365,10 +388,12 @@ public class LoginModel : PageModel
         return Challenge(properties, provider);
     }
 
-    private async Task SignInUserAsync(string userId, bool rememberMe)
+    /// <summary>The session principal and cookie properties for a password sign-in; null when the user is gone.</summary>
+    private async Task<(System.Security.Claims.ClaimsPrincipal Principal, AuthenticationProperties Properties)?> BuildSessionAsync(
+        string userId, bool rememberMe)
     {
         var user = await _userService.FindByIdAsync(userId);
-        if (user == null) return;
+        if (user == null) return null;
 
         var claims = (await _userService.GetClaimsAsync(userId)).ToList();
 
@@ -384,6 +409,11 @@ public class LoginModel : PageModel
             claims.Add(new System.Security.Claims.Claim("tenant_id", user.TenantId));
         }
 
+        // The method used (RFC 8176), as the journey's local login records it: tokens carry it as amr, and acr is
+        // derived from it.
+        claims.RemoveAll(c => c.Type == "amr");
+        claims.Add(new System.Security.Claims.Claim("amr", "pwd"));
+
         var identity = new System.Security.Claims.ClaimsIdentity(claims, "Oluso");
         var principal = new System.Security.Claims.ClaimsPrincipal(identity);
 
@@ -393,7 +423,7 @@ public class LoginModel : PageModel
             ExpiresUtc = rememberMe ? DateTimeOffset.UtcNow.AddDays(30) : null
         };
 
-        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, authProperties);
+        return (principal, authProperties);
     }
 
     private async Task LoadExternalProvidersAsync()

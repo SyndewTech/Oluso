@@ -216,8 +216,18 @@ public class OrganizationSignInController : Controller
             identity.AddClaim(new Claim("amr", method));
         }
 
-        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal,
-            new AuthenticationProperties { IsPersistent = false });
+        // The organization's sign-in is an external one here: a tenant that requires MFA asks for the second factor
+        // when that sign-in had none, before the session is issued.
+        var properties = new AuthenticationProperties { IsPersistent = false };
+        var mfaGate = HttpContext.RequestServices.GetRequiredService<Oluso.Authentication.MfaSignInGate>();
+        if (await mfaGate.HoldIfSecondFactorMissingAsync(HttpContext, principal, properties, request.ReturnUrl,
+                "organization", request.ClientId, cancellationToken) is { } secondFactor)
+        {
+            await _signIn.FinishAsync(HttpContext, result, cancellationToken);
+            return secondFactor;
+        }
+
+        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, properties);
         await _users.RecordLoginAsync(user.Id, cancellationToken);
 
         if (_signInAuditor != null)

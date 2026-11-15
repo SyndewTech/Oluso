@@ -20,6 +20,7 @@ public class ClientConfiguration : IEntityTypeConfiguration<Client>
         builder.Property(c => c.Description).HasMaxLength(1000);
         builder.Property(c => c.ClientUri).HasMaxLength(2000);
         builder.Property(c => c.LogoUri).HasMaxLength(2000);
+        builder.Property(c => c.JwksUri).HasMaxLength(2000);
 
         // Stored as a JSON array, like the other list fields, with an empty list for existing rows
         // on every provider.

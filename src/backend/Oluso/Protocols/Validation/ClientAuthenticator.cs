@@ -28,6 +28,8 @@ public class ClientAuthenticator : IClientAuthenticator
     private readonly IDistributedCache _cache;
     private readonly IClientCertificateExtractor _certExtractor;
     private readonly MtlsOptions _mtlsOptions;
+    private readonly IClientSecretProtector _secrets;
+    private readonly IClientJwksUriKeys? _jwksUriKeys;
     private readonly ILogger<ClientAuthenticator> _logger;
 
     // Cache for JTI replay protection (5 minute window)
@@ -41,8 +43,12 @@ public class ClientAuthenticator : IClientAuthenticator
         IDistributedCache cache,
         IClientCertificateExtractor certExtractor,
         MtlsOptions mtlsOptions,
-        ILogger<ClientAuthenticator> logger)
+        IClientSecretProtector secrets,
+        ILogger<ClientAuthenticator> logger,
+        IClientJwksUriKeys? jwksUriKeys = null)
     {
+        _secrets = secrets;
+        _jwksUriKeys = jwksUriKeys;
         _clientStore = clientStore;
         _issuerResolver = issuerResolver;
         _endpointConfig = endpointConfig.Value;
@@ -311,116 +317,59 @@ public class ClientAuthenticator : IClientAuthenticator
         //    to prevent replay-cache poisoning attacks with forged tokens.
         var jti = jwt.Id;
 
-        // 7. Get signing key and validate signature
-        var algorithm = jwt.Header.Alg;
-
-        SecurityKey? signingKey = null;
-        var method = ClientAuthenticationMethod.PrivateKeyJwt; // Default, will be overwritten
-
-        // Try to find a matching key from client secrets
-        foreach (var secret in client.ClientSecrets)
+        // 7-8. Find the signing key and validate the signature. A client publishing its keys at a jwks_uri gets one
+        // fresh fetch when no cached key matches or verifies (OpenID Connect Core 1.0 section 10.1.1: it rotated).
+        ClientAuthenticationMethod method = default;
+        for (var attempt = 0; ; attempt++)
         {
-            // Check expiration
-            if (secret.Expiration.HasValue && secret.Expiration.Value < DateTime.UtcNow)
-                continue;
-
-            if (secret.Type == "JsonWebKey")
+            var refresh = attempt > 0;
+            var match = ClientJwtKeys.Find(client, jwt, _secrets, await PublishedKeysAsync(client, refresh, cancellationToken));
+            var canRefresh = !refresh && !string.IsNullOrEmpty(client.JwksUri);
+            if (match == null)
             {
-                // private_key_jwt: Client registered a public key (JWK format)
-                try
+                if (canRefresh) continue;
+                return new ClientAuthenticationResult
                 {
-                    var jwk = new JsonWebKey(secret.Value);
-
-                    // Ensure the JWK has the algorithm set for CryptoProviderFactory resolution.
-                    // Per RFC 7517 Section 4.4, "alg" is optional on the JWK — when absent,
-                    // infer it from the JWT header's "alg" claim so signature validation works.
-                    if (string.IsNullOrEmpty(jwk.Alg) && !string.IsNullOrEmpty(algorithm))
-                    {
-                        jwk.Alg = algorithm;
-                    }
-
-                    var kid = jwt.Header.Kid;
-                    if (string.IsNullOrEmpty(kid) || jwk.Kid == kid)
-                    {
-                        signingKey = jwk;
-                        method = ClientAuthenticationMethod.PrivateKeyJwt;
-                        break;
-                    }
-                }
-                catch
-                {
-                    continue;
-                }
+                    Error = OidcConstants.Errors.InvalidClient,
+                    ErrorDescription = ClientJwtKeys.IsHmac(jwt.Header.Alg)
+                        ? "No client secret can verify this JWT: client_secret_jwt needs a secret issued while the client uses client_secret_jwt"
+                        : "No suitable key found for JWT validation"
+                };
             }
-            else if (secret.Type == "X509CertificateBase64")
+
+            var validationParameters = new TokenValidationParameters
             {
-                // private_key_jwt: Client registered a certificate
-                try
-                {
-                    var certBytes = Convert.FromBase64String(secret.Value);
-                    var cert = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(certBytes);
-                    var certKey = new X509SecurityKey(cert);
-                    var kid = jwt.Header.Kid;
-                    if (string.IsNullOrEmpty(kid) || certKey.KeyId == kid)
-                    {
-                        signingKey = certKey;
-                        method = ClientAuthenticationMethod.PrivateKeyJwt;
-                        break;
-                    }
-                }
-                catch
-                {
-                    continue;
-                }
-            }
-            else if (secret.Type == "SharedSecret" && IsSymmetricAlgorithm(algorithm))
+                ValidateIssuer = true,
+                ValidIssuer = clientId,
+                ValidateAudience = true,
+                ValidAudiences = validAudiences,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKeys = match.Value.Keys,
+                ValidAlgorithms = new[] { jwt.Header.Alg },
+                ClockSkew = TimeSpan.FromMinutes(1)
+            };
+
+            try
             {
-                // client_secret_jwt: Use shared secret as HMAC key
-                var keyBytes = Encoding.UTF8.GetBytes(secret.Value);
-                if (keyBytes.Length < 32)
-                {
-                    // Pad to minimum 256 bits for HS256
-                    keyBytes = Encoding.UTF8.GetBytes(secret.Value.PadRight(32, '\0'));
-                }
-                signingKey = new SymmetricSecurityKey(keyBytes);
-                method = ClientAuthenticationMethod.ClientSecretJwt;
+                handler.ValidateToken(clientAssertion, validationParameters, out _);
+                method = match.Value.Method;
                 break;
             }
-        }
-
-        if (signingKey == null)
-        {
-            return new ClientAuthenticationResult
+            catch (SecurityTokenSignatureKeyNotFoundException) when (canRefresh)
             {
-                Error = OidcConstants.Errors.InvalidClient,
-                ErrorDescription = "No suitable key found for JWT validation"
-            };
-        }
-
-        // 8. Validate the JWT signature
-        var validationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = clientId,
-            ValidateAudience = true,
-            ValidAudiences = validAudiences,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = signingKey,
-            ClockSkew = TimeSpan.FromMinutes(1)
-        };
-
-        try
-        {
-            handler.ValidateToken(clientAssertion, validationParameters, out _);
-        }
-        catch (SecurityTokenException ex)
-        {
-            return new ClientAuthenticationResult
+            }
+            catch (SecurityTokenInvalidSignatureException) when (canRefresh)
             {
-                Error = OidcConstants.Errors.InvalidClient,
-                ErrorDescription = $"JWT validation failed: {ex.Message}"
-            };
+            }
+            catch (SecurityTokenException ex)
+            {
+                return new ClientAuthenticationResult
+                {
+                    Error = OidcConstants.Errors.InvalidClient,
+                    ErrorDescription = $"JWT validation failed: {ex.Message}"
+                };
+            }
         }
 
         // 8b. JTI replay protection — only after signature is cryptographically verified.
@@ -451,9 +400,17 @@ public class ClientAuthenticator : IClientAuthenticator
         };
     }
 
-    private static bool IsSymmetricAlgorithm(string algorithm)
+
+    /// <summary>The keys the client publishes at its jwks_uri, or none when it has none.</summary>
+    private async Task<IReadOnlyList<string>?> PublishedKeysAsync(Client client, bool refresh, CancellationToken cancellationToken)
     {
-        return algorithm.StartsWith("HS", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrEmpty(client.JwksUri)) return null;
+        if (_jwksUriKeys == null)
+        {
+            _logger.LogError("Client {ClientId} publishes its keys at a jwks_uri, but no IClientJwksUriKeys is registered", client.ClientId);
+            return null;
+        }
+        return await _jwksUriKeys.GetAsync(client.JwksUri, refresh, cancellationToken);
     }
 
     private async Task<ClientAuthenticationResult?> TryMtlsClientAuthAsync(
@@ -726,16 +683,9 @@ public class ClientAuthenticator : IClientAuthenticator
             // Validate based on secret type
             if (secret.Type == "SharedSecret")
             {
-                // Hash and compare
-                var hashedInput = HashSecret(clientSecret);
-                if (SecureCompare(hashedInput, secret.Value))
-                {
-                    secretValid = true;
-                    break;
-                }
-
-                // Also try direct comparison for non-hashed secrets (development)
-                if (SecureCompare(clientSecret, secret.Value))
+                // Hashed, or encrypted for a client that signs JWTs with its secret. The stored value itself is
+                // never accepted as the secret: anyone who could read it (a hash) would hold a working credential.
+                if (_secrets.Matches(secret.Value, clientSecret))
                 {
                     secretValid = true;
                     break;
@@ -757,26 +707,5 @@ public class ClientAuthenticator : IClientAuthenticator
             Client = client,
             Method = method
         };
-    }
-
-    private static string HashSecret(string secret)
-    {
-        using var sha256 = SHA256.Create();
-        var bytes = Encoding.UTF8.GetBytes(secret);
-        var hash = sha256.ComputeHash(bytes);
-        return Convert.ToBase64String(hash);
-    }
-
-    private static bool SecureCompare(string a, string b)
-    {
-        if (a.Length != b.Length)
-            return false;
-
-        var result = 0;
-        for (var i = 0; i < a.Length; i++)
-        {
-            result |= a[i] ^ b[i];
-        }
-        return result == 0;
     }
 }

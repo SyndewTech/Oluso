@@ -116,6 +116,9 @@ public interface IOlusoDbContext
     // candidate offer-accept, etc.). Hash-only — raw tokens never persist.
     DbSet<ActionToken> ActionTokens { get; }
 
+    // Revoked self-contained (JWT) access tokens, kept until the tokens they cover expire.
+    DbSet<AccessTokenRevocation> AccessTokenRevocations { get; }
+
     // Conversation messages — flat threads keyed by (EntityType, EntityId).
     // Modules attach their own threads by reusing the pair.
     DbSet<ConversationMessage> ConversationMessages { get; }

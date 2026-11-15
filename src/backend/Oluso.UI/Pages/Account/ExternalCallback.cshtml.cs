@@ -1,3 +1,4 @@
+using Oluso.Authentication;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
@@ -28,11 +29,13 @@ public class ExternalCallbackModel : PageModel
     private readonly ISignInAuditor? _signInAuditor;
     private readonly ILogger<ExternalCallbackModel> _logger;
     private readonly IProtocolStateStore? _protocolStateStore;
+    private readonly MfaSignInGate _mfaGate;
 
     public ExternalCallbackModel(
         IOlusoUserService userService,
         IUserClaimsPrincipalFactory<OlusoUser> claimsFactory,
         UserManager<OlusoUser> userManager,
+        MfaSignInGate mfaGate,
         ILogger<ExternalCallbackModel> logger,
         IExternalAuthService? externalAuthService = null,
         ITenantContext? tenantContext = null,
@@ -44,6 +47,7 @@ public class ExternalCallbackModel : PageModel
         _userService = userService;
         _claimsFactory = claimsFactory;
         _userManager = userManager;
+        _mfaGate = mfaGate;
         _externalAuthService = externalAuthService;
         _tenantContext = tenantContext;
         _roleStore = roleStore;
@@ -234,7 +238,9 @@ public class ExternalCallbackModel : PageModel
         // is set on the IdP, surface those into the session principal so
         // downstream code (token issuance, userinfo proxy, etc.) can use
         // them without re-reading the external cookie.
-        await SignInUserAsync(externalResult.UserId!, provider, returnUrl, providerConfig, accessToken, idToken);
+        // Null once the session is issued; else the redirect to the second factor, which issues it.
+        var secondFactor = await SignInUserAsync(externalResult.UserId!, provider, returnUrl, info.Principal,
+            providerConfig, accessToken, idToken);
 
         // Cache external tokens for the local user when configured. Used
         // by the userinfo-proxy endpoint to call back into the IdP on
@@ -259,6 +265,11 @@ public class ExternalCallbackModel : PageModel
         // Clear external cookie - important to do this after successful processing
         // This ensures the temporary external auth cookie doesn't linger
         await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+
+        if (secondFactor != null)
+        {
+            return secondFactor;
+        }
 
         _logger.LogInformation("User {UserId} signed in via external provider {Provider}",
             externalResult.UserId, provider);
@@ -392,16 +403,17 @@ public class ExternalCallbackModel : PageModel
         return Redirect("/");
     }
 
-    private async Task SignInUserAsync(
+    private async Task<IActionResult?> SignInUserAsync(
         string userId,
         string provider,
         string returnUrl,
+        ClaimsPrincipal externalPrincipal,
         ExternalProviderConfig? providerConfig = null,
         string? externalAccessToken = null,
         string? externalIdToken = null)
     {
         var user = await _userManager.FindByIdAsync(userId);
-        if (user == null) return;
+        if (user == null) return null;
 
         // Build the principal via the canonical claims factory so the cookie
         // carries the same authorization claims (allowed_tenants, org_ids,
@@ -428,6 +440,12 @@ public class ExternalCallbackModel : PageModel
         identity.AddClaim(new Claim("idp", provider));
         identity.AddClaim(new Claim("amr", "external"));
 
+        // The provider reported multi-factor authentication (amr, RFC 8176): that sign-in had its second factor.
+        if (MfaSignInGate.ExternalProviderReportsMfa(externalPrincipal))
+        {
+            identity.AddClaim(new Claim("amr", "mfa"));
+        }
+
         // Surface external IdP tokens into the session principal when the
         // provider is configured to include them. Same shape the journey
         // handler emits via output claims, so session looks identical
@@ -447,6 +465,13 @@ public class ExternalCallbackModel : PageModel
             ExpiresUtc = null
         };
 
+        var secondFactor = await _mfaGate.HoldIfSecondFactorMissingAsync(HttpContext, principal, authProperties, returnUrl,
+            AuthenticationMethodFor(provider), cancellationToken: HttpContext.RequestAborted);
+        if (secondFactor != null)
+        {
+            return secondFactor;
+        }
+
         await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, authProperties);
         await _userService.RecordLoginAsync(userId);
 
@@ -461,6 +486,8 @@ public class ExternalCallbackModel : PageModel
                 ReturnUrl = returnUrl
             });
         }
+
+        return null;
     }
 
     // Mirrors the journey step handlers: SAML schemes arrive as "Saml.{idp}" and

@@ -1,3 +1,4 @@
+using Oluso.Core.Services;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -60,6 +61,7 @@ public class MtlsClientAuthenticatorTests : IDisposable
             _cache.Object,
             _certExtractor.Object,
             _mtlsOptions,
+            Mock.Of<IClientSecretProtector>(),
             NullLogger<ClientAuthenticator>.Instance);
 
         _clientCert = CreateSelfSignedCertificate("CN=mtls-client.example.com");
@@ -199,6 +201,7 @@ public class MtlsClientAuthenticatorTests : IDisposable
             _cache.Object,
             _certExtractor.Object,
             disabledOptions,
+            Mock.Of<IClientSecretProtector>(),
             NullLogger<ClientAuthenticator>.Instance);
 
         SetupCertExtractor(_clientCert);

@@ -20,7 +20,7 @@ public class SessionsController : AccountBaseController
     private readonly IOlusoEventService _eventService;
     private readonly IClientStore _clientStore;
     private readonly IServerSideSessionStore? _sessionStore;
-    private readonly IResourceServerLogoutNotifier? _resourceServers;
+    private readonly IBackchannelLogoutService? _backchannelLogout;
     private readonly ILogger<SessionsController> _logger;
 
     public SessionsController(
@@ -30,13 +30,13 @@ public class SessionsController : AccountBaseController
         IClientStore clientStore,
         ILogger<SessionsController> logger,
         IServerSideSessionStore? sessionStore = null,
-        IResourceServerLogoutNotifier? resourceServers = null) : base(tenantContext)
+        IBackchannelLogoutService? backchannelLogout = null) : base(tenantContext)
     {
         _grantStore = grantStore;
         _eventService = eventService;
         _clientStore = clientStore;
         _sessionStore = sessionStore;
-        _resourceServers = resourceServers;
+        _backchannelLogout = backchannelLogout;
         _logger = logger;
     }
 
@@ -181,12 +181,12 @@ public class SessionsController : AccountBaseController
         }
         else
         {
+            // The session's relying parties (and resource servers keeping their own sessions) are told it ended,
+            // before its grants go: they name its clients.
+            await NotifySessionEndedAsync(sessionId, cancellationToken);
             if (grants.Any())
             {
                 await _grantStore.RemoveAllAsync(filter, cancellationToken);
-                // Resource servers keeping their own sessions (a Matrix homeserver) hear that this one ended.
-                if (_resourceServers != null)
-                    await _resourceServers.NotifyAsync(grants, cancellationToken);
             }
             // Ending the cookie session signs that browser out, not just its app tokens.
             if (loginSession != null && _sessionStore != null)
@@ -231,17 +231,16 @@ public class SessionsController : AccountBaseController
             .Distinct()
             .ToList();
 
-        // Revoke each other session's tokens
+        // Revoke each other session's tokens, once its relying parties are told it ended
         foreach (var sessionId in otherSessionIds)
         {
+            await NotifySessionEndedAsync(sessionId, cancellationToken);
             await _grantStore.RemoveAllAsync(new PersistedGrantFilter
             {
                 SubjectId = UserId,
                 SessionId = sessionId
             }, cancellationToken);
         }
-        if (_resourceServers != null)
-            await _resourceServers.NotifyAsync(grants.Where(g => g.SessionId != null && g.SessionId != currentSessionId), cancellationToken);
         // Grants that predate session ids can only be removed by key.
         foreach (var orphan in grants.Where(g => g.SessionId == null))
         {
@@ -271,5 +270,23 @@ public class SessionsController : AccountBaseController
         }, cancellationToken);
 
         return Ok(new { message = $"Revoked {otherSessionIds.Count} sessions", count = otherSessionIds.Count });
+    }
+
+    /// <summary>
+    /// Back-Channel Logout 1.0 to the clients of the ended session, each with that session's sid only. A failed
+    /// delivery does not stop the session from ending.
+    /// </summary>
+    private async Task NotifySessionEndedAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        if (_backchannelLogout == null || string.IsNullOrEmpty(sessionId))
+            return;
+        try
+        {
+            await _backchannelLogout.SendLogoutNotificationsAsync(UserId, sessionId, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Back-channel logout for ended session {SessionId} failed", sessionId);
+        }
     }
 }

@@ -303,7 +303,7 @@ public class JourneyPolicyStore : IJourneyPolicyStore
             {
                 "clientid" or "client_id" => context.ClientId,
                 "tenantid" or "tenant_id" => context.TenantId,
-                "acrvalues" or "acr_values" => context.AcrValues,
+                "acrvalue" or "acrvalues" or "acr_values" => context.AcrValues,
                 "scope" when context.Scopes != null => string.Join(" ", context.Scopes),
                 _ => null
             };

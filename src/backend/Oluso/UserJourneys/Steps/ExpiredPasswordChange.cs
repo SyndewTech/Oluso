@@ -22,6 +22,16 @@ public static class ExpiredPasswordChange
     public const string RememberMeKey = "password_expired_remember_me";
     public const string UsernameKey = "password_expired_username";
 
+    /// <summary>
+    /// Set by a login step for an account with MFA whose password has expired: the sign-in goes on to its second
+    /// factor, then to the password change; no session or code is issued for it.
+    /// </summary>
+    public const string AfterSecondFactorKey = "password_expired_after_mfa";
+
+    /// <summary>The sign-in in <paramref name="data"/> must change its expired password once its second factor passed.</summary>
+    public static bool IsDueAfterSecondFactor(IDictionary<string, object>? data) =>
+        data != null && data.TryGetValue(AfterSecondFactorKey, out var value) && StepValueReader.Read(value, false);
+
     private const string ViewName = "Journey/_PasswordChange";
 
     /// <summary>An expired-password change is waiting for the user's new password.</summary>

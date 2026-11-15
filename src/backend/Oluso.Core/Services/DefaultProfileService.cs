@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Authorization;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Protocols.Models;
 
 namespace Oluso.Core.Services;
 
@@ -224,7 +225,11 @@ public class DefaultProfileService : IExtendedProfileService
             {
                 if (allowedClaimTypes.Contains(type))
                 {
-                    context.IssuedClaims.Add(new Claim(type, value));
+                    // OIDC Core 5.1: the *_verified claims are JSON booleans, not strings.
+                    var valueType = type is OidcConstants.StandardClaims.EmailVerified or OidcConstants.StandardClaims.PhoneNumberVerified
+                        ? ClaimValueTypes.Boolean
+                        : ClaimValueTypes.String;
+                    context.IssuedClaims.Add(new Claim(type, value, valueType));
                 }
             }
 

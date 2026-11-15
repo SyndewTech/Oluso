@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,6 +29,12 @@ namespace Oluso.UserJourneys.Steps;
 /// </remarks>
 public class EmailVerificationStepHandler : IStepHandler
 {
+    /// <summary>
+    /// The send time is stored as UTC (round-trip "O"): read it back as UTC. A plain DateTime.TryParse turns it into
+    /// local time, and the code then looks hours old (or new) on a server away from UTC.
+    /// </summary>
+    private const DateTimeStyles UtcStyles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
+
     public string StepType => "email_verification";
 
     public async Task<StepHandlerResult> ExecuteAsync(StepExecutionContext context, CancellationToken cancellationToken = default)
@@ -135,7 +142,7 @@ public class EmailVerificationStepHandler : IStepHandler
                 return StepHandlerResult.Fail("session_expired", "This verification link has already been used or the session has expired.");
             }
 
-            if (DateTime.TryParse(sentAtForLink, out var linkSentTime) &&
+            if (DateTime.TryParse(sentAtForLink, CultureInfo.InvariantCulture, UtcStyles, out var linkSentTime) &&
                 DateTime.UtcNow - linkSentTime > TimeSpan.FromMinutes(expirationMinutes))
             {
                 logger.LogWarning("Email-verification magic link expired");
@@ -172,7 +179,7 @@ public class EmailVerificationStepHandler : IStepHandler
                 return StepHandlerResult.Fail("session_expired", "Session expired. Please try again.");
             }
 
-            if (DateTime.TryParse(sentAt, out var sentTime) &&
+            if (DateTime.TryParse(sentAt, CultureInfo.InvariantCulture, UtcStyles, out var sentTime) &&
                 DateTime.UtcNow - sentTime > TimeSpan.FromMinutes(expirationMinutes))
             {
                 logger.LogWarning("Email-verification code expired");

@@ -20,7 +20,7 @@ public interface IOidcProtocolService : IProtocolService
     Task<ProtocolRequestResult> ProcessAuthorizeAsync(ProtocolContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Restore context from protocol state
+    /// Restore context from protocol state, for the request now being served
     /// </summary>
-    Task<ProtocolContext> RestoreContextAsync(string correlationId, CancellationToken cancellationToken = default);
+    Task<ProtocolContext> RestoreContextAsync(HttpContext http, string correlationId, CancellationToken cancellationToken = default);
 }

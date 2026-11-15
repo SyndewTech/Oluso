@@ -126,6 +126,9 @@ public interface IAuthorizationCodeIssuer
 {
     const string OriginNotAllowed = "Origin not allowed for this client";
 
+    /// <summary>The sign-in lacks a second factor the tenant or account requires (interaction_required).</summary>
+    const string MfaRequiredDescription = "Multi-factor authentication is required; sign in through the authorize endpoint";
+
     /// <summary>The client may receive codes on this page origin (before anything else is asked of the user).</summary>
     Task<DirectAuthorizationValidation> ValidateClientAsync(
         string? clientId, string? origin, string redirectUri = DirectAuthorizationRequest.PostMessage, CancellationToken cancellationToken = default);

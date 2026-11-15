@@ -1,3 +1,4 @@
+using Oluso.Authentication;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -26,15 +27,19 @@ public class RegisterModel : PageModel
     private readonly ISignInAuditor? _signInAuditor;
     private readonly ILogger<RegisterModel> _logger;
 
+    private readonly MfaSignInGate _mfaGate;
+
     public RegisterModel(
         IOlusoUserService userService,
         IProtocolStateStore protocolStateStore,
+        MfaSignInGate mfaGate,
         ILogger<RegisterModel> logger,
         ITenantContext? tenantContext = null,
         ISignInAuditor? signInAuditor = null)
     {
         _userService = userService;
         _protocolStateStore = protocolStateStore;
+        _mfaGate = mfaGate;
         _tenantContext = tenantContext;
         _logger = logger;
         _signInAuditor = signInAuditor;
@@ -191,7 +196,11 @@ public class RegisterModel : PageModel
         _logger.LogInformation("User {UserId} registered successfully", createResult.UserId);
 
         // Sign in the new user
-        await SignInUserAsync(createResult.UserId!);
+        // A tenant that requires MFA has the new user set it up before the session is issued.
+        if (await SignInUserAsync(createResult.UserId!) is { } secondFactor)
+        {
+            return secondFactor;
+        }
         await _userService.RecordLoginAsync(createResult.UserId!);
 
         if (_signInAuditor != null)
@@ -236,10 +245,11 @@ public class RegisterModel : PageModel
         return Challenge(properties, provider);
     }
 
-    private async Task SignInUserAsync(string userId)
+    /// <summary>Issues the new user's session; or, when a second factor is required first, returns the redirect to it.</summary>
+    private async Task<IActionResult?> SignInUserAsync(string userId)
     {
         var user = await _userService.FindByIdAsync(userId);
-        if (user == null) return;
+        if (user == null) return null;
 
         var claims = (await _userService.GetClaimsAsync(userId)).ToList();
 
@@ -251,10 +261,22 @@ public class RegisterModel : PageModel
             claims.Add(new System.Security.Claims.Claim("tenant_id", _tenantContext.TenantId));
         }
 
+        // The new account signed in with the password it was just given (RFC 8176).
+        claims.RemoveAll(c => c.Type == "amr");
+        claims.Add(new System.Security.Claims.Claim("amr", "pwd"));
+
         var identity = new System.Security.Claims.ClaimsIdentity(claims, "Oluso");
         var principal = new System.Security.Claims.ClaimsPrincipal(identity);
+        var properties = new AuthenticationProperties();
 
-        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal);
+        if (await _mfaGate.HoldIfSecondFactorMissingAsync(HttpContext, principal, properties, ReturnUrl, "signup",
+                cancellationToken: HttpContext.RequestAborted) is { } secondFactor)
+        {
+            return secondFactor;
+        }
+
+        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, properties);
+        return null;
     }
 
     private async Task LoadExternalProvidersAsync()

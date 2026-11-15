@@ -90,6 +90,10 @@
   "mfa_sms_setup_back_link": "Choose a different method",
 
   "mfa_verify_title": "Two-Factor Authentication",
+  "mfa_signin_expired": "Your sign-in expired. Please sign in again.",
+  "mfa_signin_locked": "Too many incorrect codes. Your account is locked for a while; please try again later.",
+  "mfa_signin_failed": "Two-factor authentication could not be completed. Please sign in again.",
+  "mfa_signin_restart": "Sign in again",
   "mfa_verify_totp_subtitle": "Enter the 6-digit code from your authenticator app",
   "mfa_verify_email_subtitle": "Enter the code we sent to your email",
   "mfa_verify_sms_subtitle": "Enter the code we sent to your phone",
@@ -336,6 +340,17 @@
   "consent_remember_decision": "Remember my decision",
   "consent_signed_in_as": "Signed in as {0}.",
   "consent_not_you": "Not you?",
+
+  "signout_page_title": "Sign out",
+  "signout_question": "Do you want to sign out?",
+  "signout_requested_by": "{0} is asking to sign you out.",
+  "signout_confirm_button": "Sign out",
+  "signout_cancel_button": "Stay signed in",
+  "signout_expired": "This sign-out request has expired. Go back to the application and sign out again.",
+  "signedout_page_title": "Signed out",
+  "signedout_title": "You're signed out",
+  "signedout_signing_out_apps": "Signing you out of the applications you used...",
+  "signedout_continue": "Continue",
 
   "forgot_password_check_email_title": "Check Your Email",
   "forgot_password_sent_link": "We've sent a password reset link to {0}. Please check your inbox and follow the instructions.",

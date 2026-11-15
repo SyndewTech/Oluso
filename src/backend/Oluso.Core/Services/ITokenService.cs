@@ -95,6 +95,12 @@ public class TokenCreationRequest
     /// </summary>
     public bool AlwaysIncludeUserClaimsInIdToken { get; set; }
 
+    /// <summary>
+    /// The claims the claims parameter asks for in the ID token (OpenID Connect Core 1.0 section 5.5). Those the
+    /// granted identity scopes release are written into it even when an access token is issued.
+    /// </summary>
+    public ICollection<string> RequestedIdTokenClaims { get; set; } = new List<string>();
+
     // DPoP
     public string? DPoPKeyThumbprint { get; set; }
 

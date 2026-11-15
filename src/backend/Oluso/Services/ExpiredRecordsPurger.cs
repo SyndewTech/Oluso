@@ -11,6 +11,7 @@ public sealed class ExpiredRecordsPurger : IExpiredRecordsPurger
     private readonly IServerSideSessionStore? _sessions;
     private readonly IPushedAuthorizationStore? _pushedAuthorization;
     private readonly IActionTokenStore? _actionTokens;
+    private readonly IAccessTokenRevocationStore? _revocations;
     private readonly ILogger<ExpiredRecordsPurger> _logger;
 
     public ExpiredRecordsPurger(
@@ -18,12 +19,14 @@ public sealed class ExpiredRecordsPurger : IExpiredRecordsPurger
         ILogger<ExpiredRecordsPurger> logger,
         IServerSideSessionStore? sessions = null,
         IPushedAuthorizationStore? pushedAuthorization = null,
-        IActionTokenStore? actionTokens = null)
+        IActionTokenStore? actionTokens = null,
+        IAccessTokenRevocationStore? revocations = null)
     {
         _grants = grants;
         _sessions = sessions;
         _pushedAuthorization = pushedAuthorization;
         _actionTokens = actionTokens;
+        _revocations = revocations;
         _logger = logger;
     }
 
@@ -40,14 +43,17 @@ public sealed class ExpiredRecordsPurger : IExpiredRecordsPurger
         var actionTokens = _actionTokens is null
             ? 0
             : await _actionTokens.RemoveExpiredAsync(DateTime.UtcNow, cancellationToken);
+        var revocations = _revocations is null
+            ? 0
+            : await _revocations.RemoveExpiredAsync(DateTime.UtcNow, cancellationToken);
         stopwatch.Stop();
 
-        if (grants > 0 || sessions > 0 || actionTokens > 0)
+        if (grants > 0 || sessions > 0 || actionTokens > 0 || revocations > 0)
         {
             _logger.LogInformation(
-                "Expired records purged in {ElapsedMs} ms: {Grants} grants, {Sessions} server-side sessions, {ActionTokens} action tokens",
-                stopwatch.ElapsedMilliseconds, grants, sessions, actionTokens);
+                "Expired records purged in {ElapsedMs} ms: {Grants} grants, {Sessions} server-side sessions, {ActionTokens} action tokens, {Revocations} access token revocations",
+                stopwatch.ElapsedMilliseconds, grants, sessions, actionTokens, revocations);
         }
-        return new ExpiredRecordsPurgeResult(grants, sessions, pushed, actionTokens);
+        return new ExpiredRecordsPurgeResult(grants, sessions, pushed, actionTokens, revocations);
     }
 }

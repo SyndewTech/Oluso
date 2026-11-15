@@ -486,6 +486,7 @@ public static class EntityFrameworkExtensions
         builder.Services.AddScoped<IPasswordHistoryStore, PasswordHistoryStore>();
 
         builder.Services.AddScoped<IActionTokenStore, ActionTokenStore>();
+        builder.Services.AddScoped<IAccessTokenRevocationStore, AccessTokenRevocationStore>();
         builder.Services.AddScoped<IActionTokenService, DefaultActionTokenService>();
         builder.Services.AddScoped<Oluso.PublicLinks.IPublicLinkUnlockService, Oluso.PublicLinks.PublicLinkUnlockService>();
 

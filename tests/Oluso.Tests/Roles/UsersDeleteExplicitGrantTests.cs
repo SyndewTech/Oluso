@@ -228,7 +228,7 @@ public class UsersDeleteExplicitGrantTests
         var controller = new ClientsController(
             new TestTenantContext { TenantId = TenantId }, clients.Object, settings.Object, Mock.Of<IIssuerResolver>(),
             Mock.Of<IOlusoEventService>(), Mock.Of<IServiceApiScopeProvisioner>(), authorization.Object,
-            NullLogger<ClientsController>.Instance)
+            Mock.Of<IClientSecretProtector>(), NullLogger<ClientsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {

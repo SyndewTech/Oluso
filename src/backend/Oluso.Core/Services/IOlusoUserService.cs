@@ -443,11 +443,12 @@ public class UserValidationResult
     public bool PasswordExpired { get; init; }
 
     /// <summary>
-    /// True when the password matched, including an expired one. For re-verifying a signed-in
-    /// user's password (sensitive account changes, current-password checks) — never as a
+    /// True when the password matched, including an expired one and one of an account with MFA
+    /// (<see cref="RequiresMfa"/> is only reported after the password matched). For re-verifying a
+    /// signed-in user's password (sensitive account changes, current-password checks) — never as a
     /// sign-in decision; use <see cref="Succeeded"/> for that.
     /// </summary>
-    public bool CredentialsVerified => Success || PasswordExpired;
+    public bool CredentialsVerified => Success || PasswordExpired || RequiresMfa;
 
     public static UserValidationResult Successful(ValidatedUser user) =>
         new() { Success = true, User = user };
@@ -468,8 +469,12 @@ public class UserValidationResult
     public static UserValidationResult LockedOut() =>
         new() { Success = false, IsLockedOut = true, Error = "account_locked" };
 
-    public static UserValidationResult MfaRequired(ValidatedUser user) =>
-        new() { Success = false, RequiresMfa = true, User = user };
+    /// <summary>
+    /// The password was right and the account has MFA: the second factor comes next. With
+    /// <paramref name="passwordExpired"/> the password must also be changed, once the second factor has passed.
+    /// </summary>
+    public static UserValidationResult MfaRequired(ValidatedUser user, bool passwordExpired = false) =>
+        new() { Success = false, RequiresMfa = true, PasswordExpired = passwordExpired, User = user };
 
     public static UserValidationResult MultipleAccountsFound(List<OrganizationOption> organizations) =>
         new()

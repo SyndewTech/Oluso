@@ -131,6 +131,13 @@ public class Tenant
     public bool EnablePasskey { get; set; } = true;
 
     /// <summary>
+    /// Whether every password or external sign-in to this tenant needs a second factor
+    /// (<see cref="Oluso.Core.Authentication.SecondFactorRequirement"/>). A user without one sets it up while
+    /// signing in. Passkey sign-ins already prove two factors and are not asked again.
+    /// </summary>
+    public bool RequireMfa { get; set; }
+
+    /// <summary>
     /// Scheme of the IdentityProvider that should be auto-selected when a
     /// "Login with SSO" flow targets this tenant. Returned by the public
     /// /api/tenant/resolve endpoint and used by host apps as the

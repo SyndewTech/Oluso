@@ -1,3 +1,4 @@
+using Oluso.Authentication;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
@@ -22,9 +23,12 @@ public class ExternalRegisterModel : PageModel
     private readonly ILogger<ExternalRegisterModel> _logger;
     private readonly IProtocolStateStore? _protocolStateStore;
 
+    private readonly MfaSignInGate _mfaGate;
+
     public ExternalRegisterModel(
         IOlusoUserService userService,
         ITenantEmailDomainStore emailDomains,
+        MfaSignInGate mfaGate,
         ILogger<ExternalRegisterModel> logger,
         ITenantContext? tenantContext = null,
         ISignInAuditor? signInAuditor = null,
@@ -33,6 +37,7 @@ public class ExternalRegisterModel : PageModel
     {
         _userService = userService;
         _emailDomains = emailDomains;
+        _mfaGate = mfaGate;
         _providers = providers;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -271,7 +276,12 @@ public class ExternalRegisterModel : PageModel
         _logger.LogInformation("User {UserId} registered via external provider {Provider}", createResult.UserId, provider);
 
         // Sign in the new user
-        await SignInUserAsync(createResult.UserId!);
+        var authenticationMethod = provider.StartsWith("Saml.", StringComparison.OrdinalIgnoreCase) ? "saml" : provider.ToLowerInvariant();
+        if (await SignInUserAsync(createResult.UserId!, info.Principal, authenticationMethod) is { } secondFactor)
+        {
+            await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+            return secondFactor;
+        }
         await _userService.RecordLoginAsync(createResult.UserId!);
 
         if (_signInAuditor != null)
@@ -281,7 +291,7 @@ public class ExternalRegisterModel : PageModel
                 SubjectId = createResult.UserId!,
                 Username = createResult.UserId!,
                 TenantId = _tenantContext?.HasTenant == true ? _tenantContext.TenantId : null,
-                AuthenticationMethod = provider.StartsWith("Saml.", StringComparison.OrdinalIgnoreCase) ? "saml" : provider.ToLowerInvariant(),
+                AuthenticationMethod = authenticationMethod,
                 ReturnUrl = ReturnUrl
             });
         }
@@ -298,10 +308,11 @@ public class ExternalRegisterModel : PageModel
         return Redirect("/");
     }
 
-    private async Task SignInUserAsync(string userId)
+    /// <summary>Issues the new user's session; or, when a second factor is required first, returns the redirect to it.</summary>
+    private async Task<IActionResult?> SignInUserAsync(string userId, ClaimsPrincipal externalPrincipal, string authenticationMethod)
     {
         var user = await _userService.FindByIdAsync(userId);
-        if (user == null) return;
+        if (user == null) return null;
 
         var claims = (await _userService.GetClaimsAsync(userId)).ToList();
 
@@ -312,10 +323,26 @@ public class ExternalRegisterModel : PageModel
             claims.Add(new Claim("tenant_id", _tenantContext.TenantId));
         }
 
+        // Signed in by the external provider (RFC 8176), with its own second factor when it reports one.
+        claims.RemoveAll(c => c.Type == "amr");
+        claims.Add(new Claim("amr", "external"));
+        if (MfaSignInGate.ExternalProviderReportsMfa(externalPrincipal))
+        {
+            claims.Add(new Claim("amr", "mfa"));
+        }
+
         var identity = new ClaimsIdentity(claims, "Oluso");
         var principal = new ClaimsPrincipal(identity);
+        var properties = new AuthenticationProperties();
 
-        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal);
+        if (await _mfaGate.HoldIfSecondFactorMissingAsync(HttpContext, principal, properties, ReturnUrl, authenticationMethod,
+                cancellationToken: HttpContext.RequestAborted) is { } secondFactor)
+        {
+            return secondFactor;
+        }
+
+        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, properties);
+        return null;
     }
 
     private static bool LooksLikeEmail(string value)

@@ -6,6 +6,11 @@ public class CreateClientRequest : IClientCollections
     public string? ClientName { get; set; }
     public string? Description { get; set; }
     public string? ClientUri { get; set; }
+    /// <summary>
+    /// Where the client publishes its public keys as a JWK Set (jwks_uri): an https URL on a public host, fetched
+    /// when its JWTs are checked.
+    /// </summary>
+    public string? JwksUri { get; set; }
     public string? LogoUri { get; set; }
     public string? ClientSecret { get; set; }
     public bool? Enabled { get; set; }

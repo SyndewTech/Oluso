@@ -1,3 +1,5 @@
+using Oluso.Core.Services;
+using Microsoft.AspNetCore.DataProtection;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,6 +14,7 @@ using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
+using Oluso.Core.Protocols.Validation;
 using Oluso.Protocols.Mtls;
 using Oluso.Protocols.Validation;
 using Xunit;
@@ -32,6 +35,7 @@ public class ClientAuthenticatorTests : IDisposable
     private readonly Mock<IIssuerResolver> _issuerResolver;
     private readonly Mock<IDistributedCache> _cache;
     private readonly ClientAuthenticator _authenticator;
+    private readonly ClientSecretProtector _secrets = new(new EphemeralDataProtectionProvider(), NullLogger<ClientSecretProtector>.Instance);
     private readonly ECDsa _clientKey;
     private readonly string _testClientId = "test-client";
     private readonly string _testClientSecret = "super-secret-key-12345";
@@ -67,6 +71,7 @@ public class ClientAuthenticatorTests : IDisposable
             _cache.Object,
             certExtractor.Object,
             mtlsOptions,
+            _secrets,
             NullLogger<ClientAuthenticator>.Instance);
 
         // Generate client signing key for JWT tests
@@ -580,45 +585,101 @@ public class ClientAuthenticatorTests : IDisposable
     [Fact]
     public async Task AuthenticateAsync_WithClientSecretJwt_ReturnsSuccess()
     {
-        // For client_secret_jwt, the secret must be stored raw (not hashed)
-        // because it's used as an HMAC key
+        // client_secret_jwt keys HMAC with the secret itself (OIDC Core 10.1), so the client's secret is stored
+        // recoverable (encrypted), and the JWT is signed with its exact UTF-8 octets.
+        var secret = ClientSecretProtector.GenerateSecret(hmac: true);
+        var client = HmacClient(_secrets.ToStoredValue(secret, recoverable: true));
+
+        var result = await AuthenticateWithAssertionAsync(SignHmacAssertion(secret, SecurityAlgorithms.HmacSha256));
+
+        result.Client.Should().NotBeNull();
+        result.Method.Should().Be(ClientAuthenticationMethod.ClientSecretJwt);
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithClientSecretJwt_AndOnlyAHashedSecret_Fails()
+    {
+        // A one-way hash is never an HMAC key: a JWT keyed with the stored hash (anyone who read it) must fail,
+        // as must one keyed with the secret, which the server cannot recover.
+        var secret = ClientSecretProtector.GenerateSecret(hmac: true);
+        var stored = _secrets.ToStoredValue(secret, recoverable: false);
+        HmacClient(stored);
+
+        (await AuthenticateWithAssertionAsync(SignHmacAssertion(stored.PadRight(32, 'x'), SecurityAlgorithms.HmacSha256)))
+            .Client.Should().BeNull();
+        (await AuthenticateWithAssertionAsync(SignHmacAssertion(secret, SecurityAlgorithms.HmacSha256)))
+            .Client.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithClientSecretJwt_SecretShorterThanTheHash_Fails()
+    {
+        // RFC 7518 section 3.2: an HMAC key at least as long as the hash output. A 44-byte secret is enough for
+        // HS256, not for HS512; the key is never padded to make up the difference.
+        var secret = ClientSecretProtector.GenerateSecret(hmac: false);
+        HmacClient(_secrets.ToStoredValue(secret, recoverable: true));
+
+        (await AuthenticateWithAssertionAsync(SignHmacAssertion(secret, SecurityAlgorithms.HmacSha256)))
+            .Client.Should().NotBeNull();
+        (await AuthenticateWithAssertionAsync(SignHmacAssertion(secret + secret, SecurityAlgorithms.HmacSha512)))
+            .Client.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_PresentingTheStoredHashAsTheSecret_Fails()
+    {
+        // The stored value is never itself accepted as the secret: a leaked hash is not a credential.
         var client = new Client
         {
             ClientId = _testClientId,
             Enabled = true,
             RequireClientSecret = true,
-            ClientSecrets = new List<ClientSecret>
-            {
-                new() { Type = "SharedSecret", Value = _testClientSecret }
-            }
+            ClientSecrets = new List<ClientSecret> { new() { Type = "SharedSecret", Value = _hashedSecret } }
         };
-        _clientStore.Setup(x => x.FindClientByIdAsync(_testClientId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(client);
+        _clientStore.Setup(x => x.FindClientByIdAsync(_testClientId, It.IsAny<CancellationToken>())).ReturnsAsync(client);
 
-        // Create HMAC-signed JWT (client_secret_jwt)
-        var secretBytes = Encoding.UTF8.GetBytes(_testClientSecret.PadRight(32, '\0'));
-        var key = new SymmetricSecurityKey(secretBytes);
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var result = await _authenticator.AuthenticateAsync(CreateRequestWithBasicAuth(_testClientId, _hashedSecret), CancellationToken.None);
+
+        result.Client.Should().BeNull();
+        result.Error.Should().Be(OidcConstants.Errors.InvalidClient);
+    }
+
+    private Client HmacClient(string storedSecret)
+    {
+        var client = new Client
+        {
+            ClientId = _testClientId,
+            Enabled = true,
+            RequireClientSecret = true,
+            TokenEndpointAuthMethod = "client_secret_jwt",
+            ClientSecrets = new List<ClientSecret> { new() { Type = "SharedSecret", Value = storedSecret } }
+        };
+        _clientStore.Setup(x => x.FindClientByIdAsync(_testClientId, It.IsAny<CancellationToken>())).ReturnsAsync(client);
+        return client;
+    }
+
+    private string SignHmacAssertion(string key, string algorithm)
+    {
+        var credentials = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)), algorithm);
         var handler = new JwtSecurityTokenHandler();
-
         var jwt = handler.CreateJwtSecurityToken(
             issuer: _testClientId,
             audience: "https://auth.example.com/connect/token",
             expires: DateTime.UtcNow.AddMinutes(5),
             signingCredentials: credentials);
+        jwt.Payload["sub"] = _testClientId;
+        jwt.Payload["jti"] = Guid.NewGuid().ToString("N");
+        return handler.WriteToken(jwt);
+    }
 
-        var assertion = handler.WriteToken(jwt);
-
+    private Task<ClientAuthenticationResult> AuthenticateWithAssertionAsync(string assertion)
+    {
         var request = CreateRequest();
         request.ContentType = "application/x-www-form-urlencoded";
         request.Body = CreateFormBody(
             $"client_assertion_type={Uri.EscapeDataString(ClientAssertionTypes.JwtBearer)}" +
             $"&client_assertion={Uri.EscapeDataString(assertion)}");
-
-        var result = await _authenticator.AuthenticateAsync(request, CancellationToken.None);
-
-        result.Client.Should().NotBeNull();
-        result.Method.Should().Be(ClientAuthenticationMethod.ClientSecretJwt);
+        return _authenticator.AuthenticateAsync(request, CancellationToken.None);
     }
 
     #endregion

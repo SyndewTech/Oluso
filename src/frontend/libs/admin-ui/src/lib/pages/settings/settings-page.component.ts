@@ -157,6 +157,7 @@ export class SettingsPageComponent implements OnInit {
       requireEmailVerification: true,
       enableLocalLogin: true,
       enablePasskey: true,
+      requireMfa: false,
     },
     protocolSettings: { ...DEFAULT_PROTOCOL_SETTINGS },
     accountEmailSettings: { ...DEFAULT_ACCOUNT_EMAIL_SETTINGS },
@@ -236,6 +237,7 @@ export class SettingsPageComponent implements OnInit {
         requireEmailVerification: true,
         enableLocalLogin: true,
         enablePasskey: true,
+        requireMfa: false,
       };
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

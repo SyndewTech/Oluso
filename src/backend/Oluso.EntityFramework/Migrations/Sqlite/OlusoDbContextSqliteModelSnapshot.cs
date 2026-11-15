@@ -15,7 +15,47 @@ namespace Oluso.EntityFramework.Migrations.Sqlite
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.5");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.AccessTokenRevocation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("ClientId", "SessionId");
+
+                    b.HasIndex("ClientId", "TokenId");
+
+                    b.ToTable("AccessTokenRevocations", (string)null);
+                });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ActionToken", b =>
                 {
@@ -292,6 +332,10 @@ namespace Oluso.EntityFramework.Migrations.Sqlite
 
                     b.Property<bool>("IsDynamicallyRegistered")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("JwksUri")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("LastAccessed")
                         .HasColumnType("TEXT");
@@ -3391,6 +3435,9 @@ namespace Oluso.EntityFramework.Migrations.Sqlite
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("RequireEmailVerification")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("RequireMfa")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("RequireTermsAcceptance")

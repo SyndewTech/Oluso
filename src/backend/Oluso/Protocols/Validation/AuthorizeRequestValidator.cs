@@ -277,6 +277,12 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         parameters.TryGetValue("response_mode", out var responseMode);
         authorizeRequest.ResponseMode = responseMode;
 
+        var responseModeFailure = ValidateResponseMode(authorizeRequest, validatedRedirectUri);
+        if (responseModeFailure != null)
+        {
+            return responseModeFailure;
+        }
+
         parameters.TryGetValue("prompt", out var prompt);
         authorizeRequest.Prompt = prompt;
 
@@ -294,6 +300,14 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
 
         parameters.TryGetValue("acr_values", out var acrValues);
         authorizeRequest.AcrValues = acrValues;
+
+        parameters.TryGetValue(ClaimsRequest.ParameterName, out var claimsParameter);
+        authorizeRequest.Claims = claimsParameter;
+        var claimsFailure = ValidateClaimsParameter(authorizeRequest, protocolSettings, validatedRedirectUri);
+        if (claimsFailure != null)
+        {
+            return claimsFailure;
+        }
 
         parameters.TryGetValue("domain_hint", out var domainHint);
         authorizeRequest.DomainHint = domainHint;
@@ -521,6 +535,18 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
                 validatedRedirectUri: validatedRedirectUriPar);
         }
 
+        var parResponseModeFailure = ValidateResponseMode(authorizeRequest, validatedRedirectUriPar);
+        if (parResponseModeFailure != null)
+        {
+            return parResponseModeFailure;
+        }
+
+        var parClaimsFailure = ValidateClaimsParameter(authorizeRequest, protocolSettings, validatedRedirectUriPar);
+        if (parClaimsFailure != null)
+        {
+            return parClaimsFailure;
+        }
+
         // 7. Request objects (JAR) - for PAR, request_uri is not allowed (checked in controller)
         if (client.RequireRequestObject && string.IsNullOrEmpty(authorizeRequest.Request) && string.IsNullOrEmpty(authorizeRequest.RequestUri))
         {
@@ -585,54 +611,89 @@ public class AuthorizeRequestValidator : IAuthorizeRequestValidator
         var hasToken = responseTypes.Contains(ResponseTypes.Token);
         var hasIdToken = responseTypes.Contains(ResponseTypes.IdToken);
 
-        // Determine required grant type based on response type combination
-        // See: https://openid.net/specs/openid-connect-core-1_0.html#Authentication
-        string requiredGrantType;
-        string flowName;
+        // The grant types a response type needs (OpenID Connect Dynamic Client Registration §2, RFC 7591 §2.1):
+        // the hybrid flow issues tokens from this endpoint and a code redeemed at the token endpoint, so it needs both.
+        var requiredGrantTypes = new List<string>();
+        if (hasCode)
+            requiredGrantTypes.Add(OidcConstants.GrantTypes.AuthorizationCode);
+        if (hasToken || hasIdToken)
+            requiredGrantTypes.Add(OidcConstants.GrantTypes.Implicit);
 
-        if (hasCode && (hasToken || hasIdToken))
+        if (requiredGrantTypes.Count == 0)
         {
-            // Hybrid flow: code + (token and/or id_token)
-            requiredGrantType = OidcConstants.GrantTypes.Hybrid;
-            flowName = "hybrid flow";
-        }
-        else if (hasCode)
-        {
-            // Authorization code flow: code only
-            requiredGrantType = OidcConstants.GrantTypes.AuthorizationCode;
-            flowName = "authorization_code grant";
-        }
-        else if (hasToken || hasIdToken)
-        {
-            // Implicit flow: token and/or id_token (without code)
-            requiredGrantType = OidcConstants.GrantTypes.Implicit;
-            flowName = "implicit grant";
-        }
-        else
-        {
-            // Unknown/unsupported response type
             return AuthorizeValidationResult.Failure(
                 OidcConstants.Errors.UnsupportedResponseType,
                 "Unsupported response_type");
         }
 
-        // Check tenant-level grant type restrictions first
-        if (tenantAllowedGrantTypes?.Count > 0 && !tenantAllowedGrantTypes.Contains(requiredGrantType))
+        foreach (var requiredGrantType in requiredGrantTypes)
         {
-            return AuthorizeValidationResult.Failure(
-                OidcConstants.Errors.UnauthorizedClient,
-                $"Grant type '{requiredGrantType}' is not allowed for this tenant");
-        }
+            // Check tenant-level grant type restrictions first
+            if (tenantAllowedGrantTypes?.Count > 0 && !tenantAllowedGrantTypes.Contains(requiredGrantType))
+            {
+                return AuthorizeValidationResult.Failure(
+                    OidcConstants.Errors.UnauthorizedClient,
+                    $"Grant type '{requiredGrantType}' is not allowed for this tenant");
+            }
 
-        // Check client-level grant type restrictions
-        if (!clientAllowedGrantTypes.Contains(requiredGrantType))
-        {
-            return AuthorizeValidationResult.Failure(
-                OidcConstants.Errors.UnauthorizedClient,
-                $"Client is not authorized for {flowName}");
+            // Check client-level grant type restrictions
+            if (!clientAllowedGrantTypes.Contains(requiredGrantType))
+            {
+                return AuthorizeValidationResult.Failure(
+                    OidcConstants.Errors.UnauthorizedClient,
+                    $"Client is not authorized for the {requiredGrantType} grant");
+            }
         }
 
         return AuthorizeValidationResult.Success(null!, null!, Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// A requested response_mode must be one this server answers in, and never query for a response that carries
+    /// a token (Multiple Response Type Encoding Practices §2.1). The error itself goes back in the default mode.
+    /// </summary>
+    /// <summary>
+    /// The claims parameter (OpenID Connect Core 1.0 section 5.5). A tenant that does not support it ignores it, as an
+    /// OP does any parameter it does not understand (section 3.1.2.1), so it is dropped from the request; one that
+    /// does refuses a value that is not the section 5.5 JSON object.
+    /// </summary>
+    private static AuthorizeValidationResult? ValidateClaimsParameter(
+        AuthorizeRequest request, TenantProtocolSettings protocolSettings, string? validatedRedirectUri)
+    {
+        if (string.IsNullOrEmpty(request.Claims) || !protocolSettings.ClaimsParameterSupported)
+        {
+            request.Claims = null;
+            return null;
+        }
+
+        if (!ClaimsRequest.TryParse(request.Claims, out _, out var error))
+        {
+            return AuthorizeValidationResult.Failure(
+                OidcConstants.Errors.InvalidRequest,
+                error,
+                redirectUriValidated: true,
+                validatedRedirectUri: validatedRedirectUri);
+        }
+
+        return null;
+    }
+
+    private static AuthorizeValidationResult? ValidateResponseMode(AuthorizeRequest request, string? validatedRedirectUri)
+    {
+        if (string.IsNullOrEmpty(request.ResponseMode)
+            || ResponseModes.IsAllowed(request.ResponseMode, request.RequestedResponseTypes))
+        {
+            return null;
+        }
+
+        var description = ResponseModes.Supported.Contains(request.ResponseMode, StringComparer.Ordinal)
+            ? $"response_mode '{request.ResponseMode}' cannot be used for response_type '{request.ResponseType}'"
+            : $"Unsupported response_mode '{request.ResponseMode}'";
+        return AuthorizeValidationResult.Failure(
+            OidcConstants.Errors.InvalidRequest,
+            description,
+            redirectUriValidated: true,
+            validatedRedirectUri: validatedRedirectUri);
     }
 
     /// <summary>

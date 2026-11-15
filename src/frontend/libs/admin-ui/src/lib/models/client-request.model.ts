@@ -12,6 +12,8 @@ export interface ClientRequest {
   clientName?: string;
   description?: string;
   clientUri?: string;
+  /** Where the client publishes its public keys (jwks_uri); fetched when its JWTs are checked. */
+  jwksUri?: string;
   logoUri?: string;
   /** Only used for create - secrets are managed via regenerateSecret/removeClientSecret for existing clients */
   clientSecret?: string;

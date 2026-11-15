@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
-using Oluso.Core.UserJourneys;
+using Oluso.Core.Security;
 
 namespace Oluso.Admin.Services.ProviderIcons;
 
@@ -37,8 +37,6 @@ public sealed class SafeIconFetcher : IProviderIconFetcher
     public const int MaxRedirects = 3;
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(6);
 
-    private static readonly HttpRequestOptionsKey<IPAddress> PinnedAddress = new("Oluso.ProviderIcons.PinnedAddress");
-
     private readonly IHttpClientFactory _httpClientFactory;
 
     public SafeIconFetcher(IHttpClientFactory httpClientFactory)
@@ -46,49 +44,11 @@ public sealed class SafeIconFetcher : IProviderIconFetcher
         _httpClientFactory = httpClientFactory;
     }
 
-    /// <summary>
-    /// Handler configuration for the named client: no automatic redirects,
-    /// no cookies, and connections go to the address pinned on the request.
-    /// </summary>
-    public static SocketsHttpHandler CreateHandler() => new()
-    {
-        AllowAutoRedirect = false,
-        UseCookies = false,
-        UseProxy = false,
-        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-        ConnectCallback = PinnedConnectAsync,
-    };
+    /// <summary>Handler configuration for the named client (see <see cref="PublicHttpTargets.CreateHandler"/>).</summary>
+    public static SocketsHttpHandler CreateHandler() => PublicHttpTargets.CreateHandler();
 
     /// <summary>Returns a rejection reason, or null when the URL may be fetched.</summary>
-    public static string? ValidateTarget(Uri url)
-    {
-        if (!url.IsAbsoluteUri)
-            return "URL must be absolute";
-        if (!string.Equals(url.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            return "only https URLs are fetched";
-        if (!string.IsNullOrEmpty(url.UserInfo))
-            return "URLs with embedded credentials are not fetched";
-        if (url.Port != 443 && url.Port < 1024)
-            return $"port {url.Port} is not allowed";
-
-        var host = url.IdnHost;
-        if (string.IsNullOrEmpty(host))
-            return "URL has no host";
-        if (PluginNetworkPolicyValidator.IsForbiddenHostname(host))
-            return $"'{host}' is a reserved internal hostname";
-
-        if (IPAddress.TryParse(host.Trim('[', ']'), out var literal))
-        {
-            if (PluginNetworkPolicyValidator.IsBlockedAddress(literal))
-                return $"'{host}' is a private, loopback or link-local address";
-            return null;
-        }
-
-        if (!host.Contains('.'))
-            return $"'{host}' is not a public DNS name";
-
-        return null;
-    }
+    public static string? ValidateTarget(Uri url) => PublicHttpTargets.ValidateTarget(url);
 
     public async Task<IconFetchResult> FetchAsync(Uri url, int maxBytes, CancellationToken cancellationToken = default)
     {
@@ -102,12 +62,12 @@ public sealed class SafeIconFetcher : IProviderIconFetcher
             if (rejection != null)
                 return IconFetchResult.Fail($"{current}: {rejection}");
 
-            var address = await ResolvePublicAddressAsync(current, cancellationToken);
+            var address = await PublicHttpTargets.ResolvePublicAddressAsync(current, cancellationToken);
             if (address.Error != null)
                 return IconFetchResult.Fail($"{current}: {address.Error}");
 
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
-            request.Options.Set(PinnedAddress, address.Address!);
+            PublicHttpTargets.Pin(request, address.Address!);
             request.Headers.Accept.ParseAdd("image/*;q=1.0, text/html;q=0.9, application/xml;q=0.8, */*;q=0.1");
             request.Headers.UserAgent.ParseAdd("Oluso-ProviderIcon/1.0");
 
@@ -152,57 +112,6 @@ public sealed class SafeIconFetcher : IProviderIconFetcher
         }
 
         return IconFetchResult.Fail($"{url}: too many redirects");
-    }
-
-    private static async Task<(IPAddress? Address, string? Error)> ResolvePublicAddressAsync(Uri url, CancellationToken cancellationToken)
-    {
-        var host = url.IdnHost;
-        if (IPAddress.TryParse(host.Trim('[', ']'), out var literal))
-            return PluginNetworkPolicyValidator.IsBlockedAddress(literal) ? (null, "address is not public") : (literal, null);
-
-        IPAddress[] addresses;
-        try
-        {
-            addresses = await Dns.GetHostAddressesAsync(host, cancellationToken);
-        }
-        catch (SocketException ex)
-        {
-            return (null, $"DNS lookup failed ({ex.SocketErrorCode})");
-        }
-
-        if (addresses.Length == 0)
-            return (null, "DNS lookup returned no addresses");
-
-        // Every address must be public: a name that resolves to one public
-        // and one private address is still an attempt to reach the private one.
-        var blocked = addresses.FirstOrDefault(PluginNetworkPolicyValidator.IsBlockedAddress);
-        if (blocked != null)
-            return (null, $"resolves to a private, loopback or link-local address ({blocked})");
-
-        var preferred = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork) ?? addresses[0];
-        return (preferred, null);
-    }
-
-    /// <summary>Connects to the address validated for this request rather than re-resolving the host.</summary>
-    private static async ValueTask<Stream> PinnedConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
-    {
-        if (context.InitialRequestMessage?.Options.TryGetValue(PinnedAddress, out var address) != true || address == null)
-            throw new HttpRequestException("Refusing to connect: no validated address pinned to the request");
-
-        if (PluginNetworkPolicyValidator.IsBlockedAddress(address))
-            throw new HttpRequestException("Refusing to connect to a non-public address");
-
-        var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        try
-        {
-            await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), cancellationToken);
-            return new NetworkStream(socket, ownsSocket: true);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
     }
 
     private static async Task<byte[]?> ReadBoundedAsync(HttpContent content, int maxBytes, CancellationToken cancellationToken)

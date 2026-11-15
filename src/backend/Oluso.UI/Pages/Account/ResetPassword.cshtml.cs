@@ -281,4 +281,21 @@ public sealed record ExpiredPasswordTicket(string UserId, string Token, string? 
         tempData.Peek(Key) is string json ? JsonSerializer.Deserialize<ExpiredPasswordTicket>(json) : null;
 
     public static void Clear(ITempDataDictionary tempData) => tempData.Remove(Key);
+
+    /// <summary>
+    /// Sends a user whose password matched but has expired to the reset-password page with a fresh reset token; no
+    /// session is issued. Null when no reset token can be issued.
+    /// </summary>
+    public static async Task<IActionResult?> BeginAsync(
+        PageModel page, IOlusoUserService users, string userId, string? username, string? returnUrl)
+    {
+        var token = await users.GeneratePasswordResetTokenAsync(userId);
+        if (string.IsNullOrEmpty(token))
+        {
+            return null;
+        }
+
+        Store(page.TempData, new ExpiredPasswordTicket(userId, token, username));
+        return page.RedirectToPage("/Account/ResetPassword", new { expired = true, returnUrl });
+    }
 }

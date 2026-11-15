@@ -1,0 +1,28 @@
+@page "/account/mfa"
+@model Oluso.UI.Pages.Account.MfaModel
+@{
+    ViewData["Title"] = Localizer["mfa_verify_title"].Value;
+}
+
+<div class="auth-container">
+    <div class="auth-card auth-card-mfa">
+        @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+        {
+            <h1 class="auth-title">@Localizer["mfa_verify_title"]</h1>
+            <div class="alert alert-danger" role="alert">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="alert-icon">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+                <span>@Model.ErrorMessage</span>
+            </div>
+            @if (!string.IsNullOrEmpty(Model.RestartUrl))
+            {
+                <a class="btn btn-primary btn-block" href="@Model.RestartUrl">@Localizer["mfa_signin_restart"]</a>
+            }
+        }
+        else if (!string.IsNullOrEmpty(Model.StepView))
+        {
+            @await Html.PartialAsync(Model.StepView, Model.StepViewModel)
+        }
+    </div>
+</div>

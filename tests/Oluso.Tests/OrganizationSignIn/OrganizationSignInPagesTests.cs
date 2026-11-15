@@ -40,7 +40,9 @@ public class OrganizationSignInPagesTests
 
     private static LoginModel Login(OrganizationSignInRig rig, HttpContext http, string returnUrl)
     {
-        var page = new LoginModel(Mock.Of<IOlusoUserService>(), rig.ProtocolState, NullLogger<LoginModel>.Instance,
+        var page = new LoginModel(Mock.Of<IOlusoUserService>(), rig.ProtocolState,
+            new Oluso.Authentication.MfaSignInGate(rig.ProtocolState, Mock.Of<IOlusoUserService>(), NullLogger<Oluso.Authentication.MfaSignInGate>.Instance),
+            NullLogger<LoginModel>.Instance,
             tenantContext: rig.TenantContext, organizationSignIn: rig.Service)
         {
             ReturnUrl = returnUrl,

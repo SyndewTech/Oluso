@@ -47,6 +47,8 @@ public class OidcGrantTypeTests : IntegrationTestBase
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+        // RFC 6749 section 5.1: token responses must not be cached.
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
 
         var tokenResponse = await response.Content.ReadFromJsonAsync<JsonDocument>();
         tokenResponse.Should().NotBeNull();

@@ -190,7 +190,16 @@ public interface ISigningKeyStore
 public interface IAuthorizationCodeStore
 {
     Task StoreAsync(AuthorizationCode code, CancellationToken cancellationToken = default);
+    /// <summary>The code, if it exists and has not expired from the store; <see cref="AuthorizationCode.IsConsumed"/> says whether it was redeemed.</summary>
     Task<AuthorizationCode?> GetAsync(string code, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks the code redeemed. True for the one caller that does so; false when it was already redeemed (or does not
+    /// exist), so two redemptions racing each other can never both succeed. A redeemed code is kept until it expires,
+    /// so a later attempt to use it is recognised as a replay (RFC 6749 section 4.1.2).
+    /// </summary>
+    Task<bool> TryConsumeAsync(string code, CancellationToken cancellationToken = default);
+
     Task RemoveAsync(string code, CancellationToken cancellationToken = default);
 }
 

@@ -217,8 +217,9 @@ public class RefreshTokenGrantHandler : IGrantHandler
                 : await _profileService.GetProfileClaimsForTenantAsync(
                     grant.SubjectId, fullClient, effectiveScopes.ToList(), targetTenantId, "TokenEndpoint", "oidc",
                     request.Resource, cancellationToken);
-            // Rebuilt claims describe the user; when they signed in still comes from the original sign-in.
-            foreach (var signInClaim in new[] { OidcConstants.StandardClaims.AuthTime, "max_age_requested" })
+            // Rebuilt claims describe the user; when they signed in, and what the ID token was asked to carry, still
+            // come from the original sign-in.
+            foreach (var signInClaim in new[] { OidcConstants.StandardClaims.AuthTime, "max_age_requested", ClaimsRequest.IdTokenClaimsCarrier })
             {
                 if (tokenData.ClaimText(signInClaim) is { } value) claims[signInClaim] = value;
             }

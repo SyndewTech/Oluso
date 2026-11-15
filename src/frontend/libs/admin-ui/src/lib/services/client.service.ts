@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
 import { Client } from '../models/client.model';
+import { AddClientKeyRequest, ClientSecret } from '../models/client-secret.model';
 import { ClientRequest } from '../models/client-request.model';
 import { ClientConnection } from '../models/client-connection.model';
 
@@ -72,6 +73,11 @@ export class ClientService {
   /**
    * Remove a secret from a client
    */
+  /** Add a public key (JWK) or certificate to a client. */
+  addClientKey(id: number, request: AddClientKeyRequest): Observable<ClientSecret> {
+    return this.api.post<ClientSecret>(`${this.endpoint}/${id}/keys`, request);
+  }
+
   removeClientSecret(id: number, secretId: number): Observable<void> {
     return this.api.delete<void>(`${this.endpoint}/${id}/secrets/${secretId}`);
   }

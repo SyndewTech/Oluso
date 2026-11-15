@@ -37,7 +37,7 @@ public class SessionHintMatcher : ISessionHintMatcher
     {
         if (!string.IsNullOrWhiteSpace(idTokenHint))
         {
-            var subject = await ReadSubjectAsync(idTokenHint, clientId, cancellationToken);
+            var subject = await ReadIdTokenHintSubjectAsync(idTokenHint, clientId, cancellationToken);
             if (subject == null) return false;
 
             // The client knows the user by the sub it was issued, which is pairwise for some clients.
@@ -66,7 +66,7 @@ public class SessionHintMatcher : ISessionHintMatcher
     /// audience must hold; expiry doesn't matter, because the token is only a hint about who
     /// the user is (OpenID Connect Core 1.0 §3.1.2.1).
     /// </summary>
-    private async Task<string?> ReadSubjectAsync(string idTokenHint, string clientId, CancellationToken cancellationToken)
+    public async Task<string?> ReadIdTokenHintSubjectAsync(string idTokenHint, string clientId, CancellationToken cancellationToken = default)
     {
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
         if (!handler.CanReadToken(idTokenHint))

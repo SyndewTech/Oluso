@@ -316,6 +316,7 @@ In development the sample serves Swagger UI at `/swagger` with separate Admin, A
 - [Feature matrix](docs/FEATURE_MATRIX.md)
 - [Prefix scopes](docs/prefix-scopes.md)
 - [Matrix homeservers](docs/matrix.md)
+- [Authentication context (acr)](docs/acr.md)
 - [Database migrations](docs/migrations.md)
 
 ## License
