@@ -29,6 +29,12 @@ public class AuthorizeRequest
     public string? LoginHint { get; set; }
     public string? AcrValues { get; set; }
 
+    /// <summary>
+    /// The claims parameter (OpenID Connect Core 1.0 section 5.5) as JSON, kept only when the tenant supports it
+    /// (<see cref="ClaimsRequest"/>).
+    /// </summary>
+    public string? Claims { get; set; }
+
     // Domain hint for IdP selection (used with Azure AD, Google Workspace, etc.)
     public string? DomainHint { get; set; }
 
@@ -95,6 +101,33 @@ public static class ResponseModes
     public const string QueryJwt = "query.jwt";
     public const string FragmentJwt = "fragment.jwt";
     public const string FormPostJwt = "form_post.jwt";
+
+    /// <summary>The modes the authorization endpoint answers in; the JWT-secured (JARM) modes are not offered.</summary>
+    public static readonly IReadOnlyList<string> Supported = new[] { Query, Fragment, FormPost, WebMessage };
+
+    /// <summary>
+    /// OAuth 2.0 Multiple Response Type Encoding Practices §2.1 and §5: a response that carries a token
+    /// (token or id_token) is fragment encoded by default, a code-only response is query encoded.
+    /// </summary>
+    public static string DefaultFor(IEnumerable<string> responseTypes) =>
+        CarriesToken(responseTypes) ? Fragment : Query;
+
+    /// <summary>
+    /// Whether a request may ask for this mode: a supported one, and never query for a response that
+    /// carries a token (Multiple Response Type Encoding Practices §2.1).
+    /// </summary>
+    public static bool IsAllowed(string mode, IEnumerable<string> responseTypes) =>
+        Supported.Contains(mode, StringComparer.Ordinal) && !(mode == Query && CarriesToken(responseTypes));
+
+    /// <summary>
+    /// The mode a response, success or error, is delivered in: the one the request asked for when it may be
+    /// used, otherwise the default for its response type.
+    /// </summary>
+    public static string Resolve(string? requested, IEnumerable<string> responseTypes) =>
+        !string.IsNullOrEmpty(requested) && IsAllowed(requested, responseTypes) ? requested : DefaultFor(responseTypes);
+
+    private static bool CarriesToken(IEnumerable<string> responseTypes) =>
+        responseTypes.Any(t => t is ResponseTypes.Token or ResponseTypes.IdToken);
 }
 
 /// <summary>

@@ -382,6 +382,12 @@ public static class ProfileServiceExtensions
                 }
             }
 
+            if (values.Count == 1 && group.First().ValueType == ClaimValueTypes.Boolean && bool.TryParse(values[0], out var flag))
+            {
+                result[group.Key] = flag;
+                continue;
+            }
+
             result[group.Key] = values.Count == 1 ? (object)values[0] : values;
         }
 

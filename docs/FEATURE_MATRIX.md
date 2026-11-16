@@ -22,11 +22,13 @@
 | JWT Access Tokens | ✅ | Configurable per client |
 | Pairwise Subject Identifiers | ✅ | Per-client subject salt |
 | Client Authentication | ✅ | `client_secret_basic`, `client_secret_post`, `client_secret_jwt`, `private_key_jwt`, `none` |
-| Dynamic Client Registration | ✅ | RFC 7591, enabled per tenant |
+| Dynamic Client Registration | ✅ | RFC 7591 and RFC 7592, enabled per tenant: public keys in `jwks` or published at a `jwks_uri` (fetched, cached and fetched again for a new key), a registration access token that does not expire and is replaced by every update |
+| Client Public Keys | ✅ | A client's public JWKs and certificates, added in the admin portal, or published at its `jwks_uri`, for `private_key_jwt`, request objects and self-signed mTLS |
 | Token Introspection & Revocation | ✅ | RFC 7662 and RFC 7009 |
 | Back-Channel Logout | ✅ | Logout tokens sent to clients' back-channel logout URIs |
 | FedCM | ✅ | Browser Federated Credential Management endpoints |
 | Re-authentication | ✅ | `prompt=login` and `max_age` force a fresh sign-in |
+| Claims Request Parameter | ✅ | OpenID Connect Core section 5.5, turned on per tenant: claims asked for in the ID token are put in it when a granted scope releases them, an essential `acr` must be met ([acr.md](acr.md)), and a named `sub` is answered only for that user |
 
 ## Multi-Factor & Passwordless Authentication
 
@@ -39,6 +41,8 @@
 | FIDO2/WebAuthn | ✅ | Security keys and passkeys as a second factor or for passwordless sign-in (add-on) |
 | Passwordless Email / SMS | ✅ | Journey steps that sign in with a code sent by email or SMS |
 | MFA Per Application | ✅ | Journey policies matched to a client can include an MFA step |
+| Required MFA Per Tenant | ✅ | Every password or external sign-in needs a second factor, on the standard pages and in journeys; users without one set it up while signing in |
+| MFA on the Standard Pages | ✅ | Users who turned MFA on are asked for a code after their password on the standard sign-in pages too |
 
 ## Multi-Tenancy & Organizations
 

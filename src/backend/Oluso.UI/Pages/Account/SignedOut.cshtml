@@ -1,0 +1,37 @@
+@page "/account/signedout"
+@model Oluso.UI.Pages.Account.SignedOutModel
+@{
+    ViewData["Title"] = Localizer["signedout_page_title"].Value;
+}
+
+<div class="auth-container">
+    <div class="consent-card" id="signedOut" data-continue="@Model.Continue" data-timeout="@Oluso.UI.Pages.Account.SignedOutModel.FrameTimeoutMilliseconds">
+        <div class="consent-header">
+            <h1 class="consent-title">@Localizer["signedout_title"]</h1>
+            <p class="consent-subtitle">@Localizer["signedout_signing_out_apps"]</p>
+        </div>
+        <noscript>
+            <p><a href="@Model.Continue" class="btn btn-primary">@Localizer["signedout_continue"]</a></p>
+        </noscript>
+        @foreach (var frame in Model.Frames)
+        {
+            <iframe src="@frame" class="frontchannel-logout" title="@Localizer["signedout_page_title"]" hidden width="0" height="0"></iframe>
+        }
+    </div>
+</div>
+
+<script>
+    (function () {
+        var page = document.getElementById('signedOut');
+        var frames = document.querySelectorAll('iframe.frontchannel-logout');
+        var target = page.getAttribute('data-continue');
+        var left = frames.length;
+        var done = false;
+        function go() { if (!done) { done = true; window.location.replace(target); } }
+        frames.forEach(function (frame) {
+            frame.addEventListener('load', function () { if (--left <= 0) go(); });
+            frame.addEventListener('error', function () { if (--left <= 0) go(); });
+        });
+        setTimeout(go, parseInt(page.getAttribute('data-timeout'), 10));
+    })();
+</script>

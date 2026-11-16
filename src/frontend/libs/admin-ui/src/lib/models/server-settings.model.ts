@@ -43,10 +43,14 @@ export interface TenantSettings {
   allowedEmailDomains?: string;
   enableLocalLogin: boolean;
   enablePasskey: boolean;
+  /** Every password or external sign-in needs a second factor; users without one set it up at sign-in. */
+  requireMfa: boolean;
 }
 
 export interface ProtocolSettings {
   enforceOAuth21: boolean;
+  /** Authorization requests may use the claims parameter (OpenID Connect Core section 5.5). */
+  claimsParameterSupported: boolean;
   enableDynamicClientRegistration: boolean;
   allowOpenDynamicRegistration: boolean;
   dynamicRegistrationAllowedScopes?: string[];
@@ -75,6 +79,7 @@ export function prefixScopeSuffixMaxLengthError(value: number | string | null | 
 
 export const DEFAULT_PROTOCOL_SETTINGS: ProtocolSettings = {
   enforceOAuth21: false,
+  claimsParameterSupported: false,
   enableDynamicClientRegistration: false,
   allowOpenDynamicRegistration: false,
   dynamicRegistrationRequirePkce: true,

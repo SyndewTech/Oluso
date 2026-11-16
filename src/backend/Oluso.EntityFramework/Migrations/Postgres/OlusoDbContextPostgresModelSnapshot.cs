@@ -18,10 +18,50 @@ namespace Oluso.EntityFramework.Migrations.Postgres
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.5")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.AccessTokenRevocation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("character varying(36)");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("character varying(36)");
+
+                    b.Property<string>("TokenId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("ClientId", "SessionId");
+
+                    b.HasIndex("ClientId", "TokenId");
+
+                    b.ToTable("AccessTokenRevocations", (string)null);
+                });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ActionToken", b =>
                 {
@@ -306,6 +346,10 @@ namespace Oluso.EntityFramework.Migrations.Postgres
 
                     b.Property<bool>("IsDynamicallyRegistered")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("JwksUri")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<DateTime?>("LastAccessed")
                         .HasColumnType("timestamp with time zone");
@@ -3453,6 +3497,9 @@ namespace Oluso.EntityFramework.Migrations.Postgres
                         .HasColumnType("character varying(2000)");
 
                     b.Property<bool>("RequireEmailVerification")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("RequireMfa")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("RequireTermsAcceptance")

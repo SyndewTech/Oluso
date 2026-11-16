@@ -23,7 +23,8 @@ namespace Oluso.Tests.Services;
 public class ResourceServerLogoutTests
 {
     private const string Watcher = "chat-homeserver";
-    private const string LogoutUri = "https://client.example/oauth/backchannel-logout";
+    // A public IP literal (TEST-NET-3), so the request forgery guard passes it without a DNS lookup.
+    private const string LogoutUri = "https://203.0.113.10/oauth/backchannel-logout";
 
     private sealed class CapturingHandler : HttpMessageHandler
     {
@@ -38,11 +39,14 @@ public class ResourceServerLogoutTests
     }
 
     private static (BackchannelLogoutService Service, CapturingHandler Http, Mock<ILogoutTokenGenerator> Tokens) Build(
-        params ResourceServerLogoutWatcher[] watchers)
+        params ResourceServerLogoutWatcher[] watchers) => Build(LogoutUri, watchers);
+
+    private static (BackchannelLogoutService Service, CapturingHandler Http, Mock<ILogoutTokenGenerator> Tokens) Build(
+        string logoutUri, params ResourceServerLogoutWatcher[] watchers)
     {
         var clients = new Mock<IClientStore>();
         clients.Setup(c => c.FindClientByIdAsync(Watcher, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Client { ClientId = Watcher, BackChannelLogoutUri = LogoutUri, BackChannelLogoutSessionRequired = true });
+            .ReturnsAsync(new Client { ClientId = Watcher, BackChannelLogoutUri = logoutUri, BackChannelLogoutSessionRequired = true });
         var tokens = new Mock<ILogoutTokenGenerator>();
         tokens.Setup(t => t.GenerateLogoutTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string client, string subject, string? sid, CancellationToken _) => $"{client}|{subject}|{sid}");
@@ -52,6 +56,7 @@ public class ResourceServerLogoutTests
         var options = new ResourceServerLogoutOptions();
         options.Watchers.AddRange(watchers);
         var service = new BackchannelLogoutService(clients.Object, Mock.Of<IPersistedGrantStore>(), tokens.Object, factory.Object,
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
             NullLogger<BackchannelLogoutService>.Instance, Options.Create(options));
         return (service, http, tokens);
     }
@@ -86,6 +91,23 @@ public class ResourceServerLogoutTests
         });
 
         http.LogoutTokens.Should().BeEquivalentTo($"{Watcher}|user-1|sid-a", $"{Watcher}|user-1|sid-c");
+    }
+
+    [Theory]
+    [InlineData("https://169.254.169.254/latest/meta-data")]
+    [InlineData("https://127.0.0.1/logout")]
+    [InlineData("https://10.1.2.3/logout")]
+    [InlineData("https://localhost/logout")]
+    [InlineData("http://203.0.113.10/logout")]
+    public async Task A_logout_uri_on_a_private_network_or_plain_http_is_never_posted_to(string logoutUri)
+    {
+        // A tenant administrator sets backchannel_logout_uri, so it must not reach the platform's own network
+        // (cloud metadata, internal services) or go out unencrypted.
+        var (service, http, _) = Build(logoutUri, Homeserver);
+
+        await service.NotifyAsync(new[] { Grant("sid-a", "urn:matrix:client:api:*") });
+
+        http.LogoutTokens.Should().BeEmpty();
     }
 
     [Fact]

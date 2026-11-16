@@ -109,6 +109,19 @@ public class DefaultProfileServiceScopeClaimsTests
     }
 
     [Fact]
+    public async Task Verified_claims_are_json_booleans_in_the_claim_dictionary()
+    {
+        SetupUser(TestUser());
+
+        var claims = await _service.GetProfileClaimsAsync("user-1", new[] { "openid", "email", "phone" }, "oidc");
+
+        // OIDC Core 5.1: email_verified and phone_number_verified are booleans, not "true"/"false" strings.
+        claims["email_verified"].Should().Be(true);
+        claims["phone_number_verified"].Should().Be(false);
+        claims["email"].Should().Be("alice@example.com");
+    }
+
+    [Fact]
     public async Task Openid_only_withholds_profile_and_email_but_keeps_platform_claims()
     {
         SetupUser(TestUser());

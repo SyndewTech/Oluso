@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Oluso.Core.Authentication;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
@@ -20,6 +21,7 @@ public sealed class AuthorizationCodeIssuer : IAuthorizationCodeIssuer
     private readonly IPkceValidator _pkce;
     private readonly ITenantSettingsProvider _tenantSettings;
     private readonly IConsentStore _consents;
+    private readonly IPersistedGrantStore _grants;
     private readonly IAuthorizationCodeStore _codes;
     private readonly IOlusoUserService _users;
     private readonly ITenantContext _tenant;
@@ -36,6 +38,7 @@ public sealed class AuthorizationCodeIssuer : IAuthorizationCodeIssuer
         ITenantSettingsProvider tenantSettings,
         IConsentStore consents,
         IAuthorizationCodeStore codes,
+        IPersistedGrantStore grants,
         IOlusoUserService users,
         ITenantContext tenant,
         IClientUsageRecorder usage,
@@ -52,6 +55,7 @@ public sealed class AuthorizationCodeIssuer : IAuthorizationCodeIssuer
         _tenantSettings = tenantSettings;
         _consents = consents;
         _codes = codes;
+        _grants = grants;
         _users = users;
         _tenant = tenant;
         _usage = usage;
@@ -195,6 +199,15 @@ public sealed class AuthorizationCodeIssuer : IAuthorizationCodeIssuer
             return AuthorizationCodeIssueResult.Failure(OidcConstants.Errors.AccessDenied, "User not found or inactive");
         }
 
+        // A second factor the tenant or the account requires: there is no page here to ask for it, so no code until a
+        // sign-in that passed one.
+        if (SecondFactorRequirement.IsMissing(_tenant.Tenant?.RequireMfa == true, user.TwoFactorEnabled,
+                signIn.Amr.Prepend(signIn.AuthenticationMethod)))
+        {
+            _logger.LogWarning("No code for user {UserId}: the sign-in has no second factor, which is required", user.Id);
+            return AuthorizationCodeIssueResult.Failure(OidcConstants.Errors.InteractionRequired, IAuthorizationCodeIssuer.MfaRequiredDescription);
+        }
+
         // A tenant's host issues only its own tokens: no code for a user without access to it.
         if (_tokenTenants != null && !await _tokenTenants.CanIssueOnRoutedTenantAsync(user.Id, cancellationToken))
         {
@@ -251,6 +264,8 @@ public sealed class AuthorizationCodeIssuer : IAuthorizationCodeIssuer
             LifetimeSeconds = client.AuthorizationCodeLifetime
         });
         await _codes.StoreAsync(code, cancellationToken);
+        // The client took part in this sign-in session: it is told, and its session grants end, when the session does.
+        await SessionClients.RecordAsync(_grants, user.Id, sessionId, client.ClientId, cancellationToken);
 
         if (signIn.IsNewSignIn && _auditor != null)
         {
@@ -281,6 +296,14 @@ public sealed class AuthorizationCodeIssuer : IAuthorizationCodeIssuer
             && value?.ToString() is { Length: > 0 } granted)
         {
             consented = granted.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        // An account with MFA whose password expired changes it on the sign-in pages first; a page gets no code.
+        if (Oluso.UserJourneys.Steps.ExpiredPasswordChange.IsDueAfterSecondFactor(journey.Data))
+        {
+            _logger.LogInformation("No code for user {UserId}: the expired password must be changed first", completion.UserId);
+            return Task.FromResult(AuthorizationCodeIssueResult.Failure(OidcConstants.Errors.InteractionRequired,
+                "The password has expired; sign in through the authorize endpoint to change it"));
         }
 
         var methods = JourneyAuthenticationMethods.Read(journey.Data);

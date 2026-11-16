@@ -1,0 +1,35 @@
+@page "/account/signout"
+@model Oluso.UI.Pages.Account.SignOutModel
+@{
+    ViewData["Title"] = Localizer["signout_page_title"].Value;
+}
+
+<div class="auth-container">
+    <div class="consent-card">
+        @if (Model.Expired)
+        {
+            <div class="alert alert-danger" role="alert">
+                <span>@Localizer["signout_expired"]</span>
+            </div>
+        }
+        else
+        {
+            <div class="consent-header">
+                <h1 class="consent-title">@Localizer["signout_question"]</h1>
+                @if (!string.IsNullOrEmpty(Model.ClientName))
+                {
+                    <p class="consent-subtitle">@Localizer["signout_requested_by", Model.ClientName]</p>
+                }
+            </div>
+
+            <form method="post" action="@Model.EndSessionPath">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="logout_id" value="@Model.LogoutId" />
+                <div class="consent-actions">
+                    <a href="/account" class="btn btn-outline btn-deny">@Localizer["signout_cancel_button"]</a>
+                    <button type="submit" class="btn btn-primary btn-allow">@Localizer["signout_confirm_button"]</button>
+                </div>
+            </form>
+        }
+    </div>
+</div>

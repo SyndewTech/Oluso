@@ -26,6 +26,9 @@ public class OidcAuthorizeRequest : IProtocolRequest
     public string? LoginHint { get; set; }
     public string? AcrValues { get; set; }
 
+    /// <summary>The claims parameter (OpenID Connect Core 1.0 section 5.5) as JSON, once the validator kept it.</summary>
+    public string? Claims { get; set; }
+
     // Domain hint for IdP selection (used with Azure AD, Google Workspace, etc.)
     public string? DomainHint { get; set; }
 
@@ -36,6 +39,13 @@ public class OidcAuthorizeRequest : IProtocolRequest
     // Request objects (JAR)
     public string? Request { get; set; }
     public string? RequestUri { get; set; }
+
+    /// <summary>
+    /// Why the request object could not be used (an OpenID Connect section 6 error such as
+    /// invalid_request_object), reported once the client and redirect_uri outside it are validated.
+    /// </summary>
+    public string? RequestObjectError { get; set; }
+    public string? RequestObjectErrorDescription { get; set; }
 
     // Resource indicators
     public IList<string>? Resource { get; set; }

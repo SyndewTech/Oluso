@@ -116,8 +116,17 @@ public static class OidcConstants
         public const string InteractionRequired = "interaction_required";
         public const string LoginRequired = "login_required";
         public const string ConsentRequired = "consent_required";
+
+        /// <summary>
+        /// The sign-in did not meet an essential acr the request asked for (OpenID Connect Core Error Code
+        /// unmet_authentication_requirements 1.0, Core 1.0 section 5.5.1.1).
+        /// </summary>
+        public const string UnmetAuthenticationRequirements = "unmet_authentication_requirements";
+
         public const string RequestNotSupported = "request_not_supported";
         public const string RequestUriNotSupported = "request_uri_not_supported";
+        public const string InvalidRequestObject = "invalid_request_object";
+        public const string InvalidRequestUri = "invalid_request_uri";
         public const string RegistrationNotSupported = "registration_not_supported";
 
         // DPoP

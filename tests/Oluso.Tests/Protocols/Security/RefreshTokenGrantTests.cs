@@ -496,7 +496,12 @@ public class RefreshTokenGrantTests
         {
             CreatedAt = DateTime.UtcNow.AddHours(-1),
             Scopes = new[] { "openid", "profile" },
-            Claims = new Dictionary<string, string> { ["auth_time"] = "1700000000", ["max_age_requested"] = "true" },
+            Claims = new Dictionary<string, string>
+            {
+                ["auth_time"] = "1700000000",
+                ["max_age_requested"] = "true",
+                [ClaimsRequest.IdTokenClaimsCarrier] = "email",
+            },
             Amr = new[] { "pwd" }
         });
         _grantStore.Setup(x => x.GetAsync(TestRefreshToken, It.IsAny<CancellationToken>())).ReturnsAsync(grant);
@@ -506,6 +511,7 @@ public class RefreshTokenGrantTests
         result.IsValid.Should().BeTrue();
         result.Claims["auth_time"].Should().Be("1700000000");
         result.Claims["max_age_requested"].Should().Be("true");
+        result.Claims[ClaimsRequest.IdTokenClaimsCarrier].Should().Be("email");
         result.Amr.Should().Equal("pwd");
     }
 

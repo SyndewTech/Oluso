@@ -59,7 +59,8 @@ public class MfaStepHandler : IStepHandler
         }
 
         // Check configuration
-        var requireMfa = context.GetConfig("required", false);
+        // The tenant can require a second factor for every sign-in; the step then always asks.
+        var requireMfa = context.GetConfig("required", false) || tenantContext.Tenant?.RequireMfa == true;
         var allowedMethods = AllowedMethods(context);
         var allowSetup = context.GetConfig("allowSetup", true);
         var rememberDevice = context.GetConfig("rememberDevice", true);

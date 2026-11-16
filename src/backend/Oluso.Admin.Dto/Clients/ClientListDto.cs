@@ -7,6 +7,9 @@ public class ClientListDto
     public string? ClientName { get; set; }
     public string? Description { get; set; }
     public bool Enabled { get; set; }
+
+    /// <summary>A module created this client and keeps it up to date: shown, not editable by administrators.</summary>
+    public bool NonEditable { get; set; }
     public List<string> AllowedGrantTypes { get; set; } = new();
     public bool RequireClientSecret { get; set; }
     public bool RequirePkce { get; set; }

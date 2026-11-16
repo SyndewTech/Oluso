@@ -1,3 +1,5 @@
+using Microsoft.IdentityModel.Tokens;
+using System.Security.Cryptography;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -95,6 +97,59 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         var result = await response.Content.ReadFromJsonAsync<DcrResponse>(JsonOptions);
         result!.ClientSecret.Should().NotBeNullOrEmpty();
+
+        // RFC 7591 section 3.2.1: client_secret_expires_at is required with a secret (0 = never expires), and the
+        // response must not be cached.
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        body.RootElement.GetProperty("client_secret_expires_at").GetInt64().Should().Be(0);
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Register_StoresAndReturnsJwksAndRequestObjectSigningAlg()
+    {
+        using var rsa = RSA.Create(2048);
+        var parameters = rsa.ExportParameters(false);
+        var registration = new
+        {
+            redirect_uris = new[] { "https://example.com/callback" },
+            token_endpoint_auth_method = "private_key_jwt",
+            request_object_signing_alg = "RS256",
+            jwks = new
+            {
+                keys = new[]
+                {
+                    new { kty = "RSA", kid = "k1", use = "sig", n = Base64UrlEncoder.Encode(parameters.Modulus), e = Base64UrlEncoder.Encode(parameters.Exponent) }
+                }
+            }
+        };
+
+        var response = await Client.PostAsJsonAsync(RegisterEndpoint, registration);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        body.RootElement.GetProperty("request_object_signing_alg").GetString().Should().Be("RS256");
+        body.RootElement.GetProperty("jwks").GetProperty("keys")[0].GetProperty("kid").GetString().Should().Be("k1");
+    }
+
+    [Fact]
+    public async Task Register_RefusesPrivateKeysAndUnsupportedAlgorithms()
+    {
+        using var rsa = RSA.Create(2048);
+        var p = rsa.ExportParameters(true);
+        var withPrivateKey = new
+        {
+            redirect_uris = new[] { "https://example.com/callback" },
+            jwks = new { keys = new[] { new { kty = "RSA", n = Base64UrlEncoder.Encode(p.Modulus), e = Base64UrlEncoder.Encode(p.Exponent), d = Base64UrlEncoder.Encode(p.D) } } }
+        };
+        var unsupportedAlgorithm = new
+        {
+            redirect_uris = new[] { "https://example.com/callback" },
+            request_object_signing_alg = "RSA-OAEP"
+        };
+
+        (await Client.PostAsJsonAsync(RegisterEndpoint, withPrivateKey)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await Client.PostAsJsonAsync(RegisterEndpoint, unsupportedAlgorithm)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -112,6 +167,9 @@ public class DynamicClientRegistrationTests : IntegrationTestBase
 
         var result = await response.Content.ReadFromJsonAsync<DcrResponse>(JsonOptions);
         result!.ClientSecret.Should().BeNull();
+
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        body.RootElement.TryGetProperty("client_secret_expires_at", out _).Should().BeFalse();
     }
 
     [Fact]

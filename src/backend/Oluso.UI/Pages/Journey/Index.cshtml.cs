@@ -525,12 +525,22 @@ public class IndexModel : PageModel
         // by looking for the authenticated_at flag set by login steps
         var journeyState = await _stateStore.GetAsync(result.JourneyId);
         var shouldIssueSession = ShouldIssueSession(journeyState);
+        var target = await CompletionTargetAsync(result, journeyState);
 
-        if (shouldIssueSession && !string.IsNullOrEmpty(result.Completion?.UserId))
+        // A sign-in still short of a second factor the tenant or account requires gets it on /account/mfa, which
+        // issues the session and then goes where the journey would have.
+        if (shouldIssueSession && !string.IsNullOrEmpty(result.Completion?.UserId)
+            && await IssueSessionAsync(result.Completion.UserId, journeyState!, TargetUrl(target)) is { } secondFactor)
         {
-            await IssueSessionAsync(result.Completion.UserId, journeyState!);
+            return secondFactor;
         }
 
+        return target;
+    }
+
+    /// <summary>Where the browser goes once the journey is complete.</summary>
+    private async Task<IActionResult> CompletionTargetAsync(JourneyResult result, JourneyState? journeyState)
+    {
         // If there's a redirect URI in the completion, use it. A protocol callback for the
         // request this journey ran for also gets the journey, so its claims reach the tokens.
         if (!string.IsNullOrEmpty(result.Completion?.RedirectUri))
@@ -583,7 +593,7 @@ public class IndexModel : PageModel
 
         // ...or a journey run on the existing session added MFA, which the cookie must record.
         return state.Data.ContainsKey(JourneyStartContext.SessionUserIdDataKey)
-            && GetAuthenticationMethods(state.Data).Any(IsSecondFactor);
+            && SecondFactorRequirement.IsMet(GetAuthenticationMethods(state.Data));
     }
 
     /// <summary>
@@ -639,14 +649,22 @@ public class IndexModel : PageModel
         return value?.ToString();
     }
 
-    private static bool IsSecondFactor(string method) =>
-        method is "mfa" or "otp" or "recovery_code" or "hwk" or "swk";
-
     // The same reading as the codes embedded and headless journeys complete with.
     private static IEnumerable<string> GetAuthenticationMethods(IDictionary<string, object>? data) =>
         JourneyAuthenticationMethods.Read(data);
 
-    private async Task IssueSessionAsync(string userId, JourneyState state)
+    private string TargetUrl(IActionResult target) => target switch
+    {
+        RedirectResult redirect => redirect.Url,
+        RedirectToPageResult page => Url.Page(page.PageName, page.RouteValues) ?? "/",
+        _ => "/"
+    };
+
+    /// <summary>
+    /// Issues the session for the journey's sign-in; or, when it lacks a second factor the tenant or account requires,
+    /// holds it for /account/mfa (returning to <paramref name="returnUrl"/>) and returns that redirect.
+    /// </summary>
+    private async Task<IActionResult?> IssueSessionAsync(string userId, JourneyState state, string returnUrl)
     {
         var signInManager = _serviceProvider.GetService<SignInManager<OlusoUser>>();
         var userManager = _serviceProvider.GetService<UserManager<OlusoUser>>();
@@ -654,14 +672,14 @@ public class IndexModel : PageModel
         if (signInManager == null || userManager == null)
         {
             _logger.LogDebug("SignInManager or UserManager not available, skipping session issuance");
-            return;
+            return null;
         }
 
         var user = await userManager.FindByIdAsync(userId);
         if (user == null)
         {
             _logger.LogWarning("Cannot issue session: user {UserId} not found", userId);
-            return;
+            return null;
         }
 
         // Sign in the user using SignInManager which will use OlusoClaimsPrincipalFactory
@@ -690,8 +708,37 @@ public class IndexModel : PageModel
 
         // The cookie records how and when this sign-in happened, so max_age and a later
         // policy run's MFA step can tell whether the session already passed MFA.
-        await signInManager.SignInWithClaimsAsync(user, isPersistent: rememberMe,
-            SessionAuthenticationClaims.Create(methods, authTime));
+        // An account with MFA whose password expired: no session. After the second factor it changes the password,
+        // then signs in with the new one.
+        var passwordChangeDue = Oluso.UserJourneys.Steps.ExpiredPasswordChange.IsDueAfterSecondFactor(state.Data);
+        var signedInAs = GetStringFromData(state.Data!, Oluso.UserJourneys.Steps.ExpiredPasswordChange.UsernameKey);
+        if (passwordChangeDue && SecondFactorRequirement.IsMet(methods))
+        {
+            return await Oluso.UI.Pages.Account.ExpiredPasswordTicket.BeginAsync(this, _serviceProvider.GetRequiredService<IOlusoUserService>(),
+                    userId, signedInAs ?? user.UserName, returnUrl)
+                ?? await RedirectToErrorAsync(state.PolicyId, "password_expired",
+                    Oluso.Core.Locale.UiStringDefaults.Resolve("password_expired_signin_error"), state.CallbackUrl);
+        }
+
+        var sessionClaims = SessionAuthenticationClaims.Create(methods, authTime);
+        var principal = await signInManager.CreateUserPrincipalAsync(user);
+        ((System.Security.Claims.ClaimsIdentity)principal.Identity!).AddClaims(sessionClaims);
+        var mfaGate = _serviceProvider.GetRequiredService<Oluso.Authentication.MfaSignInGate>();
+        if (await mfaGate.HoldIfSecondFactorMissingAsync(HttpContext, principal,
+                new AuthenticationProperties { IsPersistent = rememberMe }, returnUrl,
+                GetStringFromData(state.Data!, "auth_method") ?? "journey", state.ClientId, HttpContext.RequestAborted,
+                passwordChangeRequired: passwordChangeDue, username: signedInAs) is { } secondFactor)
+        {
+            return secondFactor;
+        }
+        if (passwordChangeDue)
+        {
+            _logger.LogError("User {UserId} must change an expired password but the sign-in was not held for it", userId);
+            return await RedirectToErrorAsync(state.PolicyId, "password_expired",
+                Oluso.Core.Locale.UiStringDefaults.Resolve("password_expired_signin_error"), state.CallbackUrl);
+        }
+
+        await signInManager.SignInWithClaimsAsync(user, isPersistent: rememberMe, sessionClaims);
 
         _logger.LogInformation("Session issued for user {UserId} after journey completion", userId);
 
@@ -712,6 +759,8 @@ public class IndexModel : PageModel
                 IpAddress = GetStringFromData(state.Data!, "ip_address")
             });
         }
+
+        return null;
     }
 }
 

@@ -17,10 +17,50 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.5")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
+
+            modelBuilder.Entity("Oluso.Core.Domain.Entities.AccessTokenRevocation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("RevokedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("TenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("nvarchar(36)");
+
+                    b.Property<string>("TokenId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("ClientId", "SessionId");
+
+                    b.HasIndex("ClientId", "TokenId");
+
+                    b.ToTable("AccessTokenRevocations", (string)null);
+                });
 
             modelBuilder.Entity("Oluso.Core.Domain.Entities.ActionToken", b =>
                 {
@@ -306,6 +346,10 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
 
                     b.Property<bool>("IsDynamicallyRegistered")
                         .HasColumnType("bit");
+
+                    b.Property<string>("JwksUri")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<DateTime?>("LastAccessed")
                         .HasColumnType("datetime2");
@@ -3466,6 +3510,9 @@ namespace Oluso.EntityFramework.Migrations.SqlServer
                         .HasColumnType("nvarchar(2000)");
 
                     b.Property<bool>("RequireEmailVerification")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RequireMfa")
                         .HasColumnType("bit");
 
                     b.Property<bool>("RequireTermsAcceptance")

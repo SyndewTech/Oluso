@@ -36,6 +36,7 @@ public class OidcProtocolServiceInterstitialTests
             Options.Create(new OidcEndpointConfiguration()),
             Mock.Of<IProtocolStateStore>(),
             Mock.Of<IAuthorizeRequestValidator>(),
+            Mock.Of<IRequestObjectValidator>(),
             _codeStore.Object,
             Mock.Of<IConsentStore>(),
             Mock.Of<ITokenRequestValidator>(),
@@ -43,11 +44,13 @@ public class OidcProtocolServiceInterstitialTests
             Mock.Of<ITokenService>(),
             Mock.Of<IProfileService>(),
             Mock.Of<IPushedAuthorizationStore>(),
+            Mock.Of<IPersistedGrantStore>(),
             Mock.Of<ITenantContext>(),
             Mock.Of<IIssuerResolver>(),
             Mock.Of<Oluso.Protocols.Services.IAudienceResolver>(),
             Mock.Of<Oluso.Protocols.Services.IClientUsageRecorder>(),
             ClientUserAccessKit.Open(),
+            Mock.Of<IClientStore>(),
             NullLogger<OidcProtocolService>.Instance);
     }
 

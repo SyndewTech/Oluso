@@ -98,6 +98,13 @@ public class Client : TenantEntity
     public string? TokenEndpointAuthMethod { get; set; }
 
     /// <summary>
+    /// Where the client publishes its public keys as a JWK Set (<c>jwks_uri</c>, OpenID Connect Dynamic Client
+    /// Registration 1.0 section 2, preferred over registering the keys themselves because the client rotates them
+    /// itself). Fetched when one of the client's JWTs is checked, cached, and fetched again for a key not yet seen.
+    /// </summary>
+    public string? JwksUri { get; set; }
+
+    /// <summary>
     /// For tls_client_auth: expected subject DN of the client certificate (RFC 8705 §2.1.1).
     /// </summary>
     public string? TlsClientAuthSubjectDn { get; set; }

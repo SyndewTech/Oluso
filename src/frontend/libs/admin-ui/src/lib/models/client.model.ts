@@ -13,8 +13,12 @@ export interface Client {
   clientName?: string;
   description?: string;
   clientUri?: string;
+  /** Where the client publishes its public keys (jwks_uri); fetched when its JWTs are checked. */
+  jwksUri?: string;
   logoUri?: string;
   enabled: boolean;
+  /** A module created this client and keeps it up to date: shown to tenant administrators, not editable. */
+  nonEditable?: boolean;
   created: string;
   updated?: string;
   lastAccessed?: string;

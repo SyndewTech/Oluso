@@ -25,6 +25,7 @@ public class OidcAuthorizePromptNoneTests
     private const string Jkt = "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I";
     private readonly Mock<IConsentStore> _consents = new();
     private readonly Mock<IAuthorizationCodeStore> _codes = new();
+    private readonly Mock<ITenantContext> _tenant = new();
     private readonly Client _client = new() { ClientId = "native-app", RequireConsent = true };
     private readonly OidcProtocolService _service;
 
@@ -39,6 +40,7 @@ public class OidcAuthorizePromptNoneTests
             Options.Create(new OidcEndpointConfiguration()),
             Mock.Of<IProtocolStateStore>(),
             validator.Object,
+            Mock.Of<IRequestObjectValidator>(),
             _codes.Object,
             _consents.Object,
             Mock.Of<ITokenRequestValidator>(),
@@ -46,19 +48,22 @@ public class OidcAuthorizePromptNoneTests
             Mock.Of<ITokenService>(),
             Mock.Of<IProfileService>(),
             Mock.Of<IPushedAuthorizationStore>(),
-            Mock.Of<ITenantContext>(),
+            Mock.Of<IPersistedGrantStore>(),
+            _tenant.Object,
             Mock.Of<IIssuerResolver>(),
             Mock.Of<Oluso.Protocols.Services.IAudienceResolver>(),
             Mock.Of<Oluso.Protocols.Services.IClientUsageRecorder>(),
             ClientUserAccessKit.Open(),
+            Mock.Of<IClientStore>(),
             NullLogger<OidcProtocolService>.Instance);
     }
 
-    private static ProtocolContext Context(string? prompt, bool signedIn, string? dpopJkt = null)
+    private static ProtocolContext Context(string? prompt, bool signedIn, string? dpopJkt = null, string? claims = null)
     {
         var http = new DefaultHttpContext();
         if (signedIn)
-            http.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "user-1") }, "Identity.Application"));
+            http.User = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim("sub", "user-1"), new Claim("amr", "pwd") }, "Identity.Application"));
         var raw = new Dictionary<string, string> { ["client_id"] = "native-app", ["redirect_uri"] = "nativeapp://oluso-callback" };
         if (dpopJkt != null) raw["dpop_jkt"] = dpopJkt;
         return new ProtocolContext
@@ -75,9 +80,57 @@ public class OidcAuthorizePromptNoneTests
                 Prompt = prompt,
                 RequestedScopes = new List<string> { "openid", "offline_access", "suite.pulse" },
                 RequestedResponseTypes = new List<string> { ResponseTypes.Code },
+                Claims = claims,
                 Raw = raw,
             },
         };
+    }
+
+    [Fact]
+    public async Task A_tenant_that_requires_mfa_signs_a_session_without_one_in_again()
+    {
+        _tenant.Setup(t => t.Tenant).Returns(new Tenant { Id = "acme", RequireMfa = true });
+        var result = await _service.ProcessAuthorizeAsync(Context(null, signedIn: true));
+        result.Type.Should().Be(ProtocolResultType.RequiresAuthentication);
+        result.AuthRequirement!.ForceFreshLogin.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_tenant_that_requires_mfa_answers_prompt_none_for_a_session_without_one_with_login_required()
+    {
+        _tenant.Setup(t => t.Tenant).Returns(new Tenant { Id = "acme", RequireMfa = true });
+        var result = await _service.ProcessAuthorizeAsync(Context("none", signedIn: true));
+        result.Error!.Code.Should().Be(OidcConstants.Errors.LoginRequired);
+    }
+
+    private const string EssentialMfa = """{"id_token":{"acr":{"essential":true,"values":["https://oluso.io/acr/mfa"]}}}""";
+
+    [Fact]
+    public async Task A_session_short_of_an_essential_acr_is_login_required_under_prompt_none()
+    {
+        _consents.Setup(c => c.HasConsentAsync("user-1", "native-app", It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var result = await _service.ProcessAuthorizeAsync(Context("none", signedIn: true, claims: EssentialMfa));
+        result.Error!.Code.Should().Be(OidcConstants.Errors.LoginRequired);
+    }
+
+    [Fact]
+    public async Task A_session_short_of_an_essential_acr_signs_in_again_with_the_values_for_the_journey()
+    {
+        var result = await _service.ProcessAuthorizeAsync(Context(null, signedIn: true, claims: EssentialMfa));
+        result.Type.Should().Be(ProtocolResultType.RequiresAuthentication);
+        result.AuthRequirement!.ForceFreshLogin.Should().BeTrue();
+        result.AuthRequirement.AcrValues.Should().Be(AuthenticationContextClasses.MultiFactor);
+    }
+
+    [Fact]
+    public async Task A_session_that_meets_the_essential_acr_goes_on()
+    {
+        _consents.Setup(c => c.HasConsentAsync("user-1", "native-app", It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var result = await _service.ProcessAuthorizeAsync(Context("none", signedIn: true,
+            claims: """{"id_token":{"acr":{"essential":true,"values":["https://oluso.io/acr/sfa"]}}}"""));
+        result.Type.Should().Be(ProtocolResultType.Success);
     }
 
     [Fact]

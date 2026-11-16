@@ -71,6 +71,8 @@ public class OlusoBuilder
         Services.AddScoped<Protocols.IConsentDecisions, Protocols.ConsentDecisions>();
         Services.AddScoped<Protocols.Device.IDeviceVerificationService, Protocols.Device.DeviceVerificationService>();
         Services.AddSingleton<IProtocolStateStore, InMemoryProtocolStateStore>();
+        // Sign-ins held for their second factor (/account/mfa).
+        Services.AddScoped<Oluso.Authentication.MfaSignInGate>();
 
         // Plugin registry - collects all managed plugins
         Services.TryAddSingleton<IManagedPluginRegistry, DefaultManagedPluginRegistry>();
@@ -122,6 +124,8 @@ public class OlusoBuilder
         // scoped, so a singleton would be a captive-dependency violation.
         Services.TryAddScoped<Core.UserJourneys.IJourneyStepSecretResolver, Core.UserJourneys.JourneyStepSecretResolver>();
         Services.TryAddScoped<Core.UserJourneys.IJourneyStepSecretProtector, Core.UserJourneys.JourneyStepSecretProtector>();
+        // Client shared secrets: hashed, or encrypted at rest for clients that sign JWTs with them (HMAC).
+        Services.TryAddSingleton<Core.Services.IClientSecretProtector, Core.Services.ClientSecretProtector>();
 
         // Profile service - uses claims provider registry
         Services.TryAddScoped<IProfileService, DefaultProfileService>();
@@ -386,6 +390,16 @@ public class OlusoBuilder
         Services.AddScoped<IRedirectUriValidator, RedirectUriValidator>();
         Services.AddScoped<IClientAuthenticator, ClientAuthenticator>();
         Services.AddScoped<IAuthorizeRequestValidator, AuthorizeRequestValidator>();
+        Services.AddScoped<IRequestObjectValidator, RequestObjectValidator>();
+        // request_uri fetches: the client chose the URL, so they go through the server-side request forgery guard.
+        Services.AddHttpClient(RequestObjectValidator.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(Core.Security.PublicHttpTargets.CreateHandler);
+        // A client's published keys (jwks_uri): the client chose the URL too, so the same guard; cached in memory.
+        Services.AddMemoryCache();
+        Services.AddHttpClient(ClientJwksUriKeys.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(Core.Security.PublicHttpTargets.CreateHandler);
+        Services.AddOptions<Core.Security.ClientJwksUriOptions>();
+        Services.TryAddSingleton<IClientJwksUriKeys, ClientJwksUriKeys>();
         Services.AddScoped<ITokenRequestValidator, TokenRequestValidator>();
         Services.AddScoped<IBearerTokenValidator, BearerTokenValidator>();
 
@@ -436,6 +450,9 @@ public class OlusoBuilder
         Services.AddScoped<ICibaNotificationChannel, Protocols.Ciba.CibaEmailNotificationChannel>();
 
         // Register backchannel logout services
+        // Logout tokens go to tenant-set URIs, so delivery goes through the server-side request forgery guard.
+        Services.AddHttpClient(global::Oluso.Services.BackchannelLogoutService.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(Core.Security.PublicHttpTargets.CreateHandler);
         Services.AddScoped<Services.BackchannelLogoutService>();
         Services.AddScoped<IBackchannelLogoutService>(sp => sp.GetRequiredService<Services.BackchannelLogoutService>());
         Services.AddScoped<IResourceServerLogoutNotifier>(sp => sp.GetRequiredService<Services.BackchannelLogoutService>());
@@ -600,6 +617,21 @@ public class OlusoBuilder
                                 });
                                 return;
                             }
+                        }
+
+                        // A revoked token (RFC 7009), or one of a session whose authorization code was replayed
+                        // (RFC 6749 section 4.1.2), is refused although its signature and lifetime are still good.
+                        // The issue time is nbf, which every access token sets to the moment it was issued.
+                        var revocations = services.GetService<IAccessTokenRevocationStore>();
+                        var tokenClientId = context.Principal?.FindFirst("client_id")?.Value;
+                        if (revocations != null && !string.IsNullOrEmpty(tokenClientId) && await revocations.IsRevokedAsync(
+                                tokenTenantId, tokenClientId,
+                                context.Principal?.FindFirst("sid")?.Value, context.Principal?.FindFirst("jti")?.Value,
+                                context.SecurityToken.ValidFrom, context.HttpContext.RequestAborted))
+                        {
+                            logger?.LogInformation("Revoked access token presented for client {ClientId}", tokenClientId);
+                            context.Fail(new SecurityTokenException("The access token has been revoked."));
+                            return;
                         }
 
                         // A sender-constrained token is usable only by the holder of what it is bound to:

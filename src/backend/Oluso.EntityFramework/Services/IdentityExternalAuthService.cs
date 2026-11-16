@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
@@ -296,7 +297,7 @@ public class IdentityExternalAuthService : IExternalAuthService
         var expiresAt = authResult.Properties?.GetTokenValue("expires_at");
 
         DateTime? tokenExpiresAt = null;
-        if (!string.IsNullOrEmpty(expiresAt) && DateTime.TryParse(expiresAt, out var expiry))
+        if (!string.IsNullOrEmpty(expiresAt) && DateTime.TryParse(expiresAt, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var expiry))
         {
             tokenExpiresAt = expiry;
         }

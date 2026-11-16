@@ -30,6 +30,7 @@ public class PlatformClientsController : AdminBaseController
     private readonly ICorsOriginsCacheInvalidator? _corsCache;
     private readonly IIssuerResolver _issuerResolver;
     private readonly IServiceApiScopeProvisioner _serviceApiScopeProvisioner;
+    private readonly IClientSecretProtector _secrets;
     private readonly ILogger<PlatformClientsController> _logger;
 
     public PlatformClientsController(
@@ -37,10 +38,12 @@ public class PlatformClientsController : AdminBaseController
         IClientStore clientStore,
         IIssuerResolver issuerResolver,
         IServiceApiScopeProvisioner serviceApiScopeProvisioner,
+        IClientSecretProtector secrets,
         ILogger<PlatformClientsController> logger,
         ICorsOriginsCacheInvalidator? corsCache = null)
         : base(tenantContext)
     {
+        _secrets = secrets;
         _corsCache = corsCache;
         _clientStore = clientStore;
         _issuerResolver = issuerResolver;
@@ -161,6 +164,10 @@ public class PlatformClientsController : AdminBaseController
         {
             return BadRequest(new { error = resourceError });
         }
+        if (ClientsController.InvalidJwksUri(request.JwksUri) is { } jwksUriError)
+        {
+            return BadRequest(new { error = jwksUriError });
+        }
 
         if (ClientsController.InvalidAllowedResource(request.IntrospectionResources, "Introspection resource") is { } introspectionResourceError)
         {
@@ -181,14 +188,12 @@ public class PlatformClientsController : AdminBaseController
         // Generate client secret if needed
         if (request.RequireClientSecret != false && !string.IsNullOrEmpty(request.ClientSecret))
         {
-            client.ClientSecrets = new List<ClientSecret>
+            if (ClientsController.HmacSecretTooShort(client, request.ClientSecret) is { } tooShort)
             {
-                new ClientSecret
-                {
-                    Value = ClientsController.HashSecret(request.ClientSecret),
-                    LastThreeChars = ClientsController.GetLastThreeChars(request.ClientSecret)
-                }
-            };
+                return BadRequest(new { error = tooShort });
+            }
+
+            client.ClientSecrets = new List<ClientSecret> { ClientsController.NewSecret(_secrets, client, request.ClientSecret) };
         }
 
         var created = await _clientStore.AddPlatformClientAsync(client, cancellationToken);
@@ -243,6 +248,10 @@ public class PlatformClientsController : AdminBaseController
         if (ClientsController.InvalidAllowedResource(request.AllowedResources) is { } resourceError)
         {
             return BadRequest(new { error = resourceError });
+        }
+        if (ClientsController.InvalidJwksUri(request.JwksUri) is { } jwksUriError)
+        {
+            return BadRequest(new { error = jwksUriError });
         }
 
         if (ClientsController.InvalidAllowedResource(request.IntrospectionResources, "Introspection resource") is { } introspectionResourceError)
@@ -302,12 +311,8 @@ public class PlatformClientsController : AdminBaseController
             return BadRequest(new { error = "Client does not require a secret" });
         }
 
-        var newSecret = ClientsController.GenerateClientSecret();
-        client.ClientSecrets.Add(new ClientSecret
-        {
-            Value = ClientsController.HashSecret(newSecret),
-            LastThreeChars = ClientsController.GetLastThreeChars(newSecret)
-        });
+        var newSecret = ClientSecretProtector.GenerateSecret(ClientSecretProtector.UsesHmac(client));
+        client.ClientSecrets.Add(ClientsController.NewSecret(_secrets, client, newSecret));
 
         await _clientStore.UpdatePlatformClientAsync(client, cancellationToken);
 
@@ -320,6 +325,31 @@ public class PlatformClientsController : AdminBaseController
             ClientSecret = newSecret,
             SecretId = client.ClientSecrets.Last().Id
         });
+    }
+
+    /// <summary>
+    /// Adds a public key or certificate to a platform client (see <see cref="ClientsController.AddKey"/>).
+    /// </summary>
+    [HttpPost("{id:int}/keys")]
+    [RequirePermission(AdminPermissions.PlatformClientsWrite)]
+    public async Task<ActionResult<ClientSecretDto>> AddKey(int id, [FromBody] AddClientKeyRequest request, CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetPlatformClientByIdAsync(id, cancellationToken);
+        if (client == null) return NotFound();
+
+        var (secret, error) = ClientsController.NewPublicKey(client, request);
+        if (error != null)
+        {
+            return BadRequest(new { error });
+        }
+
+        client.ClientSecrets.Add(secret!);
+        await _clientStore.UpdatePlatformClientAsync(client, cancellationToken);
+
+        _logger.LogInformation("SuperAdmin {AdminUser} added a {Type} to platform client {ClientId}",
+            AdminUserName, secret!.Type, client.ClientId);
+
+        return Ok(ClientsController.ToSecretDto(secret));
     }
 
     /// <summary>

@@ -86,12 +86,51 @@ public class AuthorizationCodeStore : IAuthorizationCodeStore
         }
 
         var authCode = JsonSerializer.Deserialize<AuthorizationCode>(grant.Data);
-        if (authCode != null)
+        if (authCode == null)
+        {
+            return null;
+        }
+
+        // Redemption is recorded on the row, not in the serialized code. Only an unredeemed code is cached.
+        if (grant.ConsumedTime.HasValue)
+        {
+            authCode.IsConsumed = true;
+            authCode.ConsumedTime = grant.ConsumedTime;
+        }
+        else
         {
             await CacheSetAsync(code, grant.Data, authCode.Expiration, cancellationToken);
         }
 
         return authCode;
+    }
+
+    public async Task<bool> TryConsumeAsync(string code, CancellationToken cancellationToken = default)
+    {
+        // Cache first, so no instance keeps serving the code as unredeemed. Then a single UPDATE guarded on "not yet
+        // redeemed": of two parallel redemptions only one sees a row change.
+        await CacheRemoveAsync(code, cancellationToken);
+
+        var now = DateTime.UtcNow;
+        var unredeemed = _context.PersistedGrants
+            .Where(g => g.Key == code && g.Type == "authorization_code" && g.ConsumedTime == null);
+
+        if (((DbContext)_context).Database.IsRelational())
+        {
+            var affected = await unredeemed.ExecuteUpdateAsync(s => s.SetProperty(g => g.ConsumedTime, now), cancellationToken);
+            return affected > 0;
+        }
+
+        // A non-relational provider (the in-memory test database) has no conditional UPDATE; it has no concurrent
+        // writers either, so a read and a write in turn are equivalent there.
+        var grant = await unredeemed.FirstOrDefaultAsync(cancellationToken);
+        if (grant == null)
+        {
+            return false;
+        }
+        grant.ConsumedTime = now;
+        await _context.SaveChangesAsync(cancellationToken);
+        return true;
     }
 
     public async Task RemoveAsync(string code, CancellationToken cancellationToken = default)

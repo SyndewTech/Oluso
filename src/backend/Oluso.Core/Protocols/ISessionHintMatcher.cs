@@ -19,4 +19,11 @@ public interface ISessionHintMatcher
         string? idTokenHint,
         string? loginHint,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The <c>sub</c> of <paramref name="idTokenHint"/> when it is an ID token this server issued to
+    /// <paramref name="clientId"/> (signature, issuer and audience hold; expiry is ignored, as a hint may be an
+    /// expired token), else null.
+    /// </summary>
+    Task<string?> ReadIdTokenHintSubjectAsync(string idTokenHint, string clientId, CancellationToken cancellationToken = default);
 }

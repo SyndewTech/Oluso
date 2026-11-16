@@ -19,6 +19,7 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
     private readonly IPersistedGrantStore _grantStore;
     private readonly IClientStore _clientStore;
     private readonly IClientUserAccess _clientUserAccess;
+    private readonly IAccessTokenRevocationStore _revocations;
     private readonly ILogger<AuthorizationCodeGrantHandler> _logger;
 
     public string GrantType => OidcConstants.GrantTypes.AuthorizationCode;
@@ -30,9 +31,11 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
         IPersistedGrantStore grantStore,
         IClientStore clientStore,
         IClientUserAccess clientUserAccess,
+        IAccessTokenRevocationStore revocations,
         ILogger<AuthorizationCodeGrantHandler> logger)
     {
         _clientUserAccess = clientUserAccess;
+        _revocations = revocations;
         _codeStore = codeStore;
         _pkceValidator = pkceValidator;
         _profileService = profileService;
@@ -64,25 +67,7 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
         // Check if already consumed
         if (authCode.IsConsumed)
         {
-            // RFC 6749 Section 4.1.2: Code reuse attempt detected
-            // "If an authorization code is used more than once, the authorization server MUST deny the request
-            // and SHOULD revoke (when possible) all tokens previously issued based on that authorization code."
-            _logger.LogWarning(
-                "Authorization code replay attack detected for client {ClientId}, subject {SubjectId}, session {SessionId}. Revoking all session tokens.",
-                authCode.ClientId, authCode.SubjectId, authCode.SessionId);
-
-            // Revoke all tokens issued to this session (access tokens, refresh tokens, etc.)
-            await _grantStore.RemoveAllAsync(new PersistedGrantFilter
-            {
-                SubjectId = authCode.SubjectId,
-                ClientId = authCode.ClientId,
-                SessionId = authCode.SessionId
-            }, cancellationToken);
-
-            // Remove the compromised authorization code
-            await _codeStore.RemoveAsync(request.Code, cancellationToken);
-
-            return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Authorization code has already been used");
+            return await RejectReplayAsync(authCode, request.Code, cancellationToken);
         }
 
         // Check expiration
@@ -165,8 +150,12 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
             }
         }
 
-        // Mark code as consumed by removing it (one-time use)
-        await _codeStore.RemoveAsync(request.Code, cancellationToken);
+        // Redeem the code (one-time use). It stays, marked redeemed, until it expires, so a second use is a
+        // recognisable replay; losing a race with a parallel redemption is one too.
+        if (!await _codeStore.TryConsumeAsync(request.Code, cancellationToken))
+        {
+            return await RejectReplayAsync(authCode, request.Code, cancellationToken);
+        }
 
         // Build claims from user profile based on requested scopes
         var claims = new Dictionary<string, object>();
@@ -256,5 +245,44 @@ public class AuthorizationCodeGrantHandler : IGrantHandler
             Resources = resources.ToList(),
             GrantedResources = authCode.Resources.Count > 0 ? authCode.Resources.ToList() : resources.ToList()
         };
+    }
+
+    /// <summary>
+    /// RFC 6749 section 4.1.2: a code used more than once is refused, and the tokens issued from it are revoked where
+    /// possible. Refresh tokens and reference tokens are grants of the code's session and are removed; the session's
+    /// JWT access tokens issued so far are revoked, and refused from then on until they would have expired.
+    /// </summary>
+    private async Task<GrantResult> RejectReplayAsync(Core.Domain.Entities.AuthorizationCode authCode, string code, CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            "Authorization code replay detected for client {ClientId}, subject {SubjectId}, session {SessionId}. Revoking the session's tokens.",
+            authCode.ClientId, authCode.SubjectId, authCode.SessionId);
+
+        // Every grant of the code's session for this client, the replayed code included: any further attempt then
+        // finds no code and is refused as well.
+        await _grantStore.RemoveAllAsync(new PersistedGrantFilter
+        {
+            SubjectId = authCode.SubjectId,
+            ClientId = authCode.ClientId,
+            SessionId = authCode.SessionId
+        }, cancellationToken);
+
+        if (string.IsNullOrEmpty(authCode.SessionId))
+        {
+            _logger.LogWarning(
+                "Authorization code for client {ClientId} has no session, so its JWT access tokens cannot be told apart and lapse at their expiry",
+                authCode.ClientId);
+        }
+        else
+        {
+            var client = await _clientStore.FindClientByIdAsync(authCode.ClientId, cancellationToken);
+            if (client != null)
+            {
+                await _revocations.RevokeSessionAsync(authCode.TenantId, authCode.ClientId, authCode.SessionId,
+                    DateTime.UtcNow.AddSeconds(client.AccessTokenLifetime), cancellationToken);
+            }
+        }
+
+        return GrantResult.Failure(OidcConstants.Errors.InvalidGrant, "Authorization code has already been used");
     }
 }

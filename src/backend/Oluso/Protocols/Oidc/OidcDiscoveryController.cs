@@ -5,6 +5,7 @@ using Oluso.Core.Services;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Grants;
 using Oluso.Core.Protocols.Models;
+using Oluso.Core.Protocols.Validation;
 
 namespace Oluso.Protocols.Oidc;
 
@@ -132,7 +133,8 @@ public class OidcDiscoveryController : OidcControllerBase
             ["claims_supported"] = claims,
             ["grant_types_supported"] = grantTypes,
             ["response_types_supported"] = responseTypes,
-            ["response_modes_supported"] = new[] { "query", "fragment", "form_post", "web_message" },
+            ["response_modes_supported"] = ResponseModes.Supported,
+            ["acr_values_supported"] = AuthenticationContextClasses.Supported,
             ["authorization_response_iss_parameter_supported"] = true,
             ["token_endpoint_auth_methods_supported"] = tokenEndpointAuthMethods,
             ["subject_types_supported"] = subjectTypes,
@@ -184,6 +186,13 @@ public class OidcDiscoveryController : OidcControllerBase
         if (grantTypes.Contains(OidcConstants.GrantTypes.DeviceCode))
         {
             discovery["device_authorization_endpoint"] = $"{baseUrl}{_endpointConfig.DeviceAuthorizationEndpoint}";
+        }
+
+        // Request objects (OIDC Core section 6, RFC 9101): the algorithms they are verified with. No request object
+        // encryption is supported, so none is advertised.
+        if (protocolSettings.RequestParameterSupported || protocolSettings.RequestUriParameterSupported)
+        {
+            discovery["request_object_signing_alg_values_supported"] = RequestObjectSigningAlgorithms.Supported;
         }
 
         // Dynamic Client Registration (RFC 7591) - only advertise if enabled

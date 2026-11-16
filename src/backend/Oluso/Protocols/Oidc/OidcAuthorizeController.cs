@@ -182,7 +182,7 @@ public class OidcAuthorizeController : OidcControllerBase
 
         try
         {
-            var context = await _protocol.RestoreContextAsync(correlationId, cancellationToken);
+            var context = await _protocol.RestoreContextAsync(HttpContext, correlationId, cancellationToken);
             return await _protocol.BuildAuthenticatedResponseAsync(context, result, cancellationToken);
         }
         catch (InvalidOperationException ex)

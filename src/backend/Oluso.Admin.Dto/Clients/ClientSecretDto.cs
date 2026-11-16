@@ -8,4 +8,7 @@ public class ClientSecretDto
     public string Type { get; set; } = "SharedSecret";
     public DateTime Created { get; set; }
     public string? LastThreeChars { get; set; }
+
+    /// <summary>A public key's identifier: a JWK's kid, a certificate's SHA-256 thumbprint. Null for a shared secret.</summary>
+    public string? KeyId { get; set; }
 }

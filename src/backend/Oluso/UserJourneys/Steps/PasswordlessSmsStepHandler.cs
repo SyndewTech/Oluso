@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -20,6 +21,12 @@ namespace Oluso.UserJourneys.Steps;
 /// </remarks>
 public class PasswordlessSmsStepHandler : IPrimaryAuthenticationStep
 {
+    /// <summary>
+    /// The send time is stored as UTC (round-trip "O"): read it back as UTC. A plain DateTime.TryParse turns it into
+    /// local time, and the code then looks hours old (or new) on a server away from UTC.
+    /// </summary>
+    private const DateTimeStyles UtcStyles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal;
+
     public string StepType => "passwordless_sms";
 
     public bool SignsIn(StepExecutionContext context) => !context.GetConfig("toLinkRecipient", false);
@@ -139,7 +146,7 @@ public class PasswordlessSmsStepHandler : IPrimaryAuthenticationStep
             }
 
             // Check expiration
-            if (DateTime.TryParse(sentAt, out var sentTime) &&
+            if (DateTime.TryParse(sentAt, CultureInfo.InvariantCulture, UtcStyles, out var sentTime) &&
                 DateTime.UtcNow - sentTime > TimeSpan.FromMinutes(expirationMinutes))
             {
                 logger.LogWarning("Passwordless SMS code expired");

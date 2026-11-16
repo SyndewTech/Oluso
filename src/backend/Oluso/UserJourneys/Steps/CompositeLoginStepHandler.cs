@@ -330,13 +330,16 @@ public class CompositeLoginStepHandler : IPrimaryAuthenticationStep, IStepConfig
             return StepHandlerResult.ShowUi("Journey/_Lockout", null);
         }
 
-        if (result.PasswordExpired)
+        // An account with MFA changes an expired password only after its second factor: the sign-in goes on to it,
+        // marked so no session is issued until the password is changed.
+        if (result.PasswordExpired && !result.RequiresMfa)
         {
             logger.LogInformation("Password expired for user {UserId}; requiring a change before sign-in", result.User!.Id);
             return await ExpiredPasswordChange.BeginAsync(context, userService, result.User, cancellationToken);
         }
 
-        if (!result.Succeeded)
+        // The password matched for an account with MFA: the second factor comes next, not a failure.
+        if (!result.Succeeded && !result.RequiresMfa)
         {
             logger.LogWarning("Login failed: {Error} for {Username}", result.Error, username);
             context.SetData("login_error", result.ErrorDescription ?? "Invalid username or password");
@@ -354,6 +357,11 @@ public class CompositeLoginStepHandler : IPrimaryAuthenticationStep, IStepConfig
         {
             context.SetData("mfa_required", true);
             context.SetData("mfa_user_id", user.Id);
+            if (result.PasswordExpired)
+            {
+                context.SetData(ExpiredPasswordChange.AfterSecondFactorKey, true);
+                context.SetData(ExpiredPasswordChange.UsernameKey, username);
+            }
         }
 
         context.UserId = user.Id;

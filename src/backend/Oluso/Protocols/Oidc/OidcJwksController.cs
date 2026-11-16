@@ -22,6 +22,9 @@ public class OidcJwksController : OidcControllerBase
     [HttpGet]
     public async Task<IActionResult> GetJwks(CancellationToken cancellationToken)
     {
+        // Resolve the key this tenant signs with first: a tenant without one gets it provisioned here rather than on
+        // its first token, so a relying party that fetched the key set before then still finds the signing key.
+        await _signingCredentialStore.GetSigningCredentialsAsync(cancellationToken);
         var keys = await _signingCredentialStore.GetValidationKeysAsync(cancellationToken);
         var jwks = new
         {

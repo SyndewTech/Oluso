@@ -1375,11 +1375,37 @@ Recovery codes are accepted in place of a code. Passkeys are a separate first fa
 
 ### Requiring MFA
 
-MFA is set per journey, not per client: set `required: true` on the policy's `mfa` step to make every user of that policy complete MFA. A client that needs MFA names that policy with `?policy=` (see [OIDC Extensions](#oidc-extensions)).
+For a whole tenant, turn on **Settings > General > Require Multi-Factor Authentication** (`requireMfa` in the settings and tenant APIs). Every password or external sign-in to the tenant then needs a second factor:
+
+- **Covered sign-ins:** the standard sign-in pages, journeys, and codes issued to pages (embedded and headless journeys, the SDK) all apply it.
+- **External providers:** a sign-in at an external provider is exempt only when the provider reports multi-factor authentication in its `amr`.
+- **Passkeys:** passkey sign-ins already use two factors and are not asked again.
+- **Proxy-mode providers:** they have no Oluso account to hold a second factor and are not asked.
+- **Existing sessions:** a session that signed in without a second factor, for example one from before the setting was turned on, signs in again. With `prompt=none` the client receives `login_required`.
+
+Per journey, set `required: true` on the policy's `mfa` step to make every user of that policy complete MFA. A client that needs MFA names that policy with `?policy=` (see [OIDC Extensions](#oidc-extensions)). On a tenant that requires MFA every `mfa` step is required.
+
+Independently of the tenant setting, a user who turned MFA on is always asked for a code after their password, on the standard pages as in journeys.
+
+When the password of an account with MFA has expired (the tenant's password policy), the second factor comes first: the user enters the code, then sets a new password, then signs in with it. Someone who has only the old password cannot change it. No session or code is issued for the sign-in that changed the password.
+
+The password grant (`grant_type=password`) issues no tokens for an account with MFA (`MFA required - use authorization_code flow`), since it has no way to ask for the second factor.
+
+### MFA on the standard sign-in pages
+
+The standard pages (used when the tenant or client does not use journeys) ask for the second factor on `/account/mfa`, after the password or external sign-in and before the session is issued:
+
+- **Steps:** the page runs the same `mfa` step as journeys, with the same verify and setup screens, recovery codes and remembered devices.
+- **Wrong codes:** each one counts as a failed sign-in, so the tenant's lockout policy applies as it does for passwords.
+- **Expiry:** the sign-in waits up to 10 minutes for its second factor.
+- **Journeys without an `mfa` step:** a journey that completes a sign-in still short of a required second factor finishes on this page too, then continues where the journey would have gone.
+- **Codes issued to pages:** a page that receives codes directly (an embedded or headless journey, the SDK) cannot show it, so such a sign-in gets the error `interaction_required` instead.
 
 ### MFA Setup
 
 With `allowSetup` (default `true`), a user without MFA who reaches a step with `required: true` sets up one of the allowed methods there and then continues (branch `mfa_setup_complete`). With `allowSetup: false`, such a user cannot continue (`mfa_setup_required`) until an administrator enables MFA for them.
+
+On a tenant that requires MFA, a user without a second factor sets one up on `/account/mfa` while signing in: an authenticator app or an email code, ending with recovery codes. Methods can be added or changed later in the account portal.
 
 ### SMS and Email Messaging
 
@@ -1968,6 +1994,45 @@ Restrictions are enforced at the token endpoint for:
 ```
 
 Only users with `admin` or `super-admin` roles can access this client.
+
+### Client Public Keys
+
+A client that signs its own JWTs registers the public key Oluso verifies them with:
+
+- **Uses:** `private_key_jwt` client assertions at the token endpoint (RFC 7523), signed request objects (RFC 9101), and self-signed mutual TLS (RFC 8705) for a certificate.
+- **Where:** add them on the client's **Authentication** tab, under **Public Keys**, or with `POST /api/admin/clients/{id}/keys` (`/api/admin/platform-clients/{id}/keys` for platform clients):
+
+```json
+{ "type": "jwk", "value": "{\"kty\":\"RSA\",\"kid\":\"2026-11\",\"n\":\"...\",\"e\":\"AQAB\"}", "description": "Signing key", "expiration": "2027-11-01T00:00:00Z" }
+```
+
+- **Types:** `jwk`, a public RSA or EC JWK as JSON; `certificate`, an X.509 certificate as PEM or base64 DER.
+- **Public material only:** a JWK with any private or symmetric member, a certificate sent with its private key, and an expired certificate are refused.
+- **Expiry:** optional; a certificate's own expiry applies when it is sooner. An expired key is no longer accepted.
+- **Identifiers:** each key is listed with the JWK's `kid` or the certificate's SHA-256 thumbprint.
+- **Rotation:** add the new key, move the application to it, then remove the old one. A client holds at most 10 keys.
+
+Set the client's token endpoint authentication method to `private_key_jwt` for client assertions.
+
+A client a module created and keeps up to date (an integration's bridge, a module's own app) is marked **Managed by a module**. Administrators see how it is set up but cannot change or delete it, its keys and secrets included. The module puts back anything that drifts. Platform clients are managed by super admins on the platform pages.
+
+#### Published keys (`jwks_uri`)
+
+A client that publishes its keys as a JWK Set can give that address instead, and rotate its keys without telling Oluso. Set it as **Key set URL (jwks_uri)** in the same card, as `jwksUri` in the admin API, or as `jwks_uri` at dynamic registration (OpenID Connect Dynamic Client Registration 1.0 prefers it over `jwks`).
+
+- **Fetched when needed:** the set is fetched when one of the client's JWTs is checked, alongside any keys stored for it.
+- **Cache:** the set is kept for the response's `Cache-Control` max-age, from 5 minutes to 24 hours, or 1 hour when it sends none.
+- **Rotation:** a JWT whose key the cached set lacks, or whose signature it does not verify, causes one fresh fetch, at most once a minute per URL. A newly published key is accepted at once.
+- **The URL is the client's choice, so every fetch is guarded:**
+  - https only, a public host, and every address it resolves to must be public;
+  - the connection is pinned to the address checked;
+  - redirects are not followed;
+  - limits of 64 KiB and 10 seconds.
+- **Only public RSA and EC keys** in the set are used, at most 20.
+- **When a fetch fails,** the last good set is used until it expires, and nothing after it.
+- **Local test setups only:** `Oluso:ClientJwks:AllowPrivateNetwork` admits private addresses.
+
+In dynamic registration `jwks` and `jwks_uri` are mutually exclusive, and an update replaces whichever the client registered.
 
 ---
 
@@ -2869,7 +2934,7 @@ When a request names no policy, the policy type is `SignUp` for `prompt=create` 
 
 ### ACR Values
 
-`acr_values` from the authorization request is passed into the journey as the `acrValues` value, so a `condition` or `branch` step can route on it:
+`acr_values` from the authorization request is passed into the journey as the `acrValues` value, so a `condition` or `branch` step can route on it. A request without `acr_values` that makes `acr` an essential claim through the `claims` parameter passes the essential values instead (see [acr.md](acr.md)):
 
 ```json
 {

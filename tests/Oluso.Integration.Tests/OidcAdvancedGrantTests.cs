@@ -487,6 +487,21 @@ public class OidcAdvancedGrantTests : IntegrationTestBase
         );
     }
 
+    [Fact]
+    public async Task EndSession_HasNoCallbackThatRedirectsAnywhere()
+    {
+        // There used to be an unauthenticated /connect/endsession/callback that redirected to any URL given.
+        using var client = Factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await client.GetAsync(
+            $"/connect/endsession/callback?postLogoutRedirectUri={Uri.EscapeDataString("https://attacker.example/phish")}");
+
+        response.Headers.Location?.ToString().Should().NotContain("attacker.example");
+    }
+
     #endregion
 
     #region Discovery Extensions

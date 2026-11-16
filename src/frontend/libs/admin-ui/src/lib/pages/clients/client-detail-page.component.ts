@@ -33,7 +33,7 @@ import { ClientRequest } from '../../models/client-request.model';
 import { ClientClaim } from '../../models/client-claim.model';
 import { ClientAuthorizeParameter } from '../../models/client-authorize-parameter.model';
 import { ClientProperty } from '../../models/client-property.model';
-import { ClientSecret } from '../../models/client-secret.model';
+import { ClientSecret, PUBLIC_KEY_SECRET_TYPES } from '../../models/client-secret.model';
 import { AllowedUser } from '../../models/allowed-user.model';
 import { RoleDto } from '../../models/role.model';
 import { UserDto } from '../../models/user.model';
@@ -94,6 +94,12 @@ export class ClientDetailPageComponent implements OnInit {
 
   readonly isNew = signal(false);
   readonly platformMode = signal(false);
+
+  /**
+   * A tenant client a module manages (an integration's bridge, a module's own app): shown read-only. Platform clients
+   * are always stored non-editable for tenants, but the platform view edits them.
+   */
+  readonly managed = computed(() => !this.platformMode() && !this.isNew() && !!this.client()?.nonEditable);
   readonly loading = signal(true);
   readonly saving = signal(false);
   readonly activeTab = signal<TabId>('basic');
@@ -106,6 +112,21 @@ export class ClientDetailPageComponent implements OnInit {
   readonly secretToDelete = signal<ClientSecret | null>(null);
   readonly regeneratingSecret = signal(false);
   readonly deletingSecretId = signal<number | null>(null);
+
+  // Public keys (JWK or certificate) the client signs its JWTs with
+  readonly showAddKey = signal(false);
+  readonly addingKey = signal(false);
+  readonly keyType = signal<'jwk' | 'certificate'>('jwk');
+  readonly keyValue = signal('');
+  readonly keyDescription = signal('');
+  readonly keyExpiration = signal('');
+  readonly keyError = signal<string | null>(null);
+  readonly sharedSecrets = computed(() =>
+    (this.client()?.secrets ?? []).filter((s) => !PUBLIC_KEY_SECRET_TYPES.includes(s.type)),
+  );
+  readonly publicKeys = computed(() =>
+    (this.client()?.secrets ?? []).filter((s) => PUBLIC_KEY_SECRET_TYPES.includes(s.type)),
+  );
 
   readonly client = signal<Client | null>(null);
 
@@ -895,6 +916,62 @@ export class ClientDetailPageComponent implements OnInit {
         this.deletingSecretId.set(null);
       },
     });
+  }
+
+  openAddKey(): void {
+    this.keyType.set('jwk');
+    this.keyValue.set('');
+    this.keyDescription.set('');
+    this.keyExpiration.set('');
+    this.keyError.set(null);
+    this.showAddKey.set(true);
+  }
+
+  cancelAddKey(): void {
+    this.showAddKey.set(false);
+    this.keyError.set(null);
+  }
+
+  addKey(): void {
+    const client = this.client();
+    if (!client) return;
+    if (!this.keyValue().trim()) {
+      this.keyError.set(this.keyType() === 'jwk' ? 'Paste the public JWK.' : 'Paste the certificate.');
+      return;
+    }
+
+    const request = {
+      type: this.keyType(),
+      value: this.keyValue(),
+      description: this.keyDescription().trim() || undefined,
+      expiration: this.keyExpiration() ? new Date(this.keyExpiration()).toISOString() : undefined,
+    };
+    this.addingKey.set(true);
+    this.keyError.set(null);
+    const obs = this.platformMode()
+      ? this.platformClientService.addClientKey(client.id, request)
+      : this.clientService.addClientKey(client.id, request);
+
+    obs.subscribe({
+      next: () => {
+        this.addingKey.set(false);
+        this.showAddKey.set(false);
+        this.toast.success(this.keyType() === 'jwk' ? 'Public key added' : 'Certificate added');
+        this.loadClient(client.id);
+      },
+      error: (error) => {
+        this.addingKey.set(false);
+        this.keyError.set(extractErrorMessage(error, 'The key could not be added'));
+      },
+    });
+  }
+
+  isPublicKey(secret: ClientSecret): boolean {
+    return PUBLIC_KEY_SECRET_TYPES.includes(secret.type);
+  }
+
+  publicKeyLabel(secret: ClientSecret): string {
+    return secret.type === 'JsonWebKey' ? 'Public key (JWK)' : 'Certificate';
   }
 
   closeSecretModal(): void {

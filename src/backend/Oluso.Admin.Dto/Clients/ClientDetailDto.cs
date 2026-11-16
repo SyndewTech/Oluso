@@ -3,10 +3,18 @@ namespace Oluso.Admin.Dto.Clients;
 public class ClientDetailDto : ClientListDto
 {
     public string? ClientUri { get; set; }
+    /// <summary>
+    /// Where the client publishes its public keys as a JWK Set (jwks_uri): an https URL on a public host, fetched
+    /// when its JWTs are checked.
+    /// </summary>
+    public string? JwksUri { get; set; }
     public string? LogoUri { get; set; }
     public DateTime? LastAccessed { get; set; }
     public List<ClientSecretDto> Secrets { get; set; } = new();
     public bool AllowPlainTextPkce { get; set; }
+
+    /// <summary>A module created this client and keeps it up to date: shown, not editable by administrators.</summary>
+    public bool NonEditable { get; set; }
     public bool RequireRequestObject { get; set; }
     public bool RequireDPoP { get; set; }
     public bool RequirePushedAuthorization { get; set; }

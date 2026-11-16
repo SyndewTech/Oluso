@@ -131,6 +131,13 @@ public class TokenService : ITokenService
         }
         tokenRequest.Acr ??= grant.Acr;
 
+        // The claims the authorize request's claims parameter asked for in the ID token
+        if (grant.Claims.TryGetValue(ClaimsRequest.IdTokenClaimsCarrier, out var idTokenClaims)
+            && idTokenClaims?.ToString() is { Length: > 0 } idTokenClaimNames)
+        {
+            tokenRequest.RequestedIdTokenClaims = idTokenClaimNames.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        }
+
         // Nonce from authorization code
         if (grant.Claims.TryGetValue(OidcConstants.StandardClaims.Nonce, out var nonce))
         {
@@ -375,12 +382,14 @@ public class TokenService : ITokenService
             // - "permission" (singular) is a reserved RoleClaim storage type; only "permissions" (plural JSON array) goes in the token
             // - "permissions" (plural) from ClaimsPrincipalFactory is skipped here — the dedicated Permissions path below handles it
             // - "max_age_requested" is an internal flag for auth_time inclusion logic
+            // - ClaimsRequest.IdTokenClaimsCarrier carries the ID token's requested claims to the ID token
             if (claim.Key.StartsWith("http://schemas.xmlsoap.org/", StringComparison.Ordinal) ||
                 claim.Key.StartsWith("http://schemas.microsoft.com/", StringComparison.Ordinal) ||
                 claim.Key.StartsWith("AspNet.Identity.", StringComparison.Ordinal) ||
                 claim.Key == OlusoRole.PermissionClaimType ||
                 claim.Key == "permissions" ||
-                claim.Key == "max_age_requested")
+                claim.Key == "max_age_requested" ||
+                claim.Key == ClaimsRequest.IdTokenClaimsCarrier)
             {
                 continue;
             }
@@ -388,6 +397,10 @@ public class TokenService : ITokenService
             if (claim.Value is string s)
             {
                 claims.Add(new Claim(claim.Key, s));
+            }
+            else if (AsBoolean(claim.Value) is { } flag)
+            {
+                claims.Add(new Claim(claim.Key, flag ? "true" : "false", ClaimValueTypes.Boolean));
             }
             else if (claim.Value is IEnumerable<string> list)
             {
@@ -572,9 +585,10 @@ public class TokenService : ITokenService
         }
 
         // Add acr (authentication context)
-        if (!string.IsNullOrEmpty(request.Acr))
+        var acr = AuthenticationContextClasses.Resolve(request.Acr, request.Amr);
+        if (acr != null)
         {
-            claims.Add(new Claim(OidcConstants.StandardClaims.Acr, request.Acr));
+            claims.Add(new Claim(OidcConstants.StandardClaims.Acr, acr));
         }
 
         // Add at_hash
@@ -603,16 +617,23 @@ public class TokenService : ITokenService
         // per RFC 9068 §2.2.3.1, and remain available at /userinfo.
         // OIDC Core §5.4: when an access token is issued, the identity claims for
         // profile/email/phone are fetched from /userinfo, and the ID token carries
-        // them only if the client asks. A response with no access token (a bare
-        // id_token flow) has no userinfo round trip available at that point, so
-        // the claims go in regardless — an empty at_hash is that signal.
-        var accessTokenIssued = !string.IsNullOrEmpty(accessTokenHash);
+        // them only if the client asks. Only a bare id_token response has no access
+        // token and so no userinfo round trip; there the claims go in regardless. A
+        // code alongside the ID token (c_hash) means the access token follows from
+        // the token endpoint.
+        var accessTokenIssued = !string.IsNullOrEmpty(accessTokenHash) || !string.IsNullOrEmpty(codeHash);
         var includeIdentityClaims =
             request.AlwaysIncludeUserClaimsInIdToken || !accessTokenIssued;
 
-        var identityClaimTypes = includeIdentityClaims
+        // The claims parameter (section 5.5) asks for some of them in the ID token all the same; it releases
+        // nothing the granted scopes do not.
+        var identityClaimTypes = includeIdentityClaims || request.RequestedIdTokenClaims.Count > 0
             ? await _identityScopeClaims.ResolveAsync(request.Scopes, cancellationToken)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!includeIdentityClaims)
+        {
+            identityClaimTypes.IntersectWith(request.RequestedIdTokenClaims);
+        }
 
         // tenant_id is the one authorization-adjacent claim kept, and it is kept
         // unconditionally: in a multi-tenant IdP it says which tenant the user
@@ -636,6 +657,10 @@ public class TokenService : ITokenService
             if (claim.Value is string s)
             {
                 claims.Add(new Claim(claim.Key, s));
+            }
+            else if (AsBoolean(claim.Value) is { } flag)
+            {
+                claims.Add(new Claim(claim.Key, flag ? "true" : "false", ClaimValueTypes.Boolean));
             }
             else if (claim.Value is IEnumerable<string> list)
             {
@@ -829,4 +854,16 @@ public class TokenService : ITokenService
     /// </summary>
     private static string ComputeSubjectId(string subjectId, string clientId, string? pairWiseSalt)
         => SubjectIdentifiers.ForClient(subjectId, clientId, pairWiseSalt);
+
+    /// <summary>
+    /// A boolean claim value, including one read back from stored refresh-token claims, so it is written to the
+    /// token as a JSON boolean (OIDC Core 5.1: email_verified, phone_number_verified).
+    /// </summary>
+    private static bool? AsBoolean(object? value) => value switch
+    {
+        bool b => b,
+        JsonElement { ValueKind: JsonValueKind.True } => true,
+        JsonElement { ValueKind: JsonValueKind.False } => false,
+        _ => null,
+    };
 }

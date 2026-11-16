@@ -106,6 +106,20 @@
 
               <div class="flex items-center justify-between">
                 <div>
+                  <p class="text-sm font-medium text-gray-700">Require Multi-Factor Authentication</p>
+                  <p class="text-sm text-gray-500">Every password or external sign-in needs a second factor. Users who have none set one up when they next sign in. Passkey sign-ins already use two factors and are not asked again</p>
+                </div>
+                <input
+                  type="checkbox"
+                  data-testid="require-mfa"
+                  [ngModel]="formData.tenantSettings?.requireMfa ?? false"
+                  (ngModelChange)="updateTenantSettings('requireMfa', $event)"
+                  class="h-4 w-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500"
+                />
+              </div>
+
+              <div class="flex items-center justify-between">
+                <div>
                   <p class="text-sm font-medium text-gray-700">Allow Self Registration</p>
                   <p class="text-sm text-gray-500">Allow users to create accounts without admin intervention</p>
                 </div>
@@ -407,6 +421,31 @@
               type="checkbox"
               [ngModel]="formData.protocolSettings?.enforceOAuth21 ?? false"
               (ngModelChange)="updateProtocolSettings('enforceOAuth21', $event)"
+              class="h-4 w-4 text-primary-600 rounded"
+            />
+          </div>
+        </div>
+      </ui-card>
+
+      <!-- OpenID Connect -->
+      <ui-card>
+        <div class="px-4 py-5 sm:p-6 space-y-4">
+          <div class="flex items-center gap-2 mb-4">
+            <ui-icon name="key" class="h-5 w-5 text-gray-400" />
+            <h3 class="text-lg font-medium text-gray-900">OpenID Connect</h3>
+          </div>
+          <p class="text-sm text-gray-500 -mt-2 mb-4">Optional sign-in request features for this tenant's applications</p>
+
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700">Claims Request Parameter</p>
+              <p class="text-sm text-gray-500">Applications can ask for individual claims in the ID token and require a sign-in strength (acr). Only claims the granted scopes already cover are released.</p>
+            </div>
+            <input
+              type="checkbox"
+              data-testid="claims-parameter-supported"
+              [ngModel]="formData.protocolSettings?.claimsParameterSupported ?? false"
+              (ngModelChange)="updateProtocolSettings('claimsParameterSupported', $event)"
               class="h-4 w-4 text-primary-600 rounded"
             />
           </div>

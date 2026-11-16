@@ -10,6 +10,7 @@ using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Grants;
+using Oluso.Core.Authentication;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Protocols.Validation;
 using Oluso.Core.Services;
@@ -26,6 +27,8 @@ public class OidcProtocolService : IOidcProtocolService
     private readonly OidcEndpointConfiguration _config;
     private readonly IProtocolStateStore _stateStore;
     private readonly IAuthorizeRequestValidator _authorizeValidator;
+    private readonly IRequestObjectValidator _requestObjectValidator;
+    private readonly IPersistedGrantStore _grantStore;
     private readonly IAuthorizationCodeStore _authorizationCodeStore;
     private readonly IConsentStore _consentStore;
     private readonly ITokenRequestValidator _tokenValidator;
@@ -47,11 +50,13 @@ public class OidcProtocolService : IOidcProtocolService
     private readonly IConsentDecisions? _consentDecisions;
     private readonly ITokenTenantResolver? _tokenTenants;
     private readonly IClientUserAccess _clientUserAccess;
+    private readonly IClientStore _clients;
 
     public OidcProtocolService(
         IOptions<OidcEndpointConfiguration> config,
         IProtocolStateStore stateStore,
         IAuthorizeRequestValidator authorizeValidator,
+        IRequestObjectValidator requestObjectValidator,
         IAuthorizationCodeStore authorizationCodeStore,
         IConsentStore consentStore,
         ITokenRequestValidator tokenValidator,
@@ -59,11 +64,13 @@ public class OidcProtocolService : IOidcProtocolService
         ITokenService tokenService,
         IProfileService profileService,
         IPushedAuthorizationStore parStore,
+        IPersistedGrantStore grantStore,
         ITenantContext tenantContext,
         IIssuerResolver issuerResolver,
         IAudienceResolver audiences,
         IClientUsageRecorder usage,
         IClientUserAccess clientUserAccess,
+        IClientStore clients,
         ILogger<OidcProtocolService> logger,
         IConsentDecisions? consentDecisions = null,
         ITokenTenantResolver? tokenTenants = null)
@@ -71,11 +78,14 @@ public class OidcProtocolService : IOidcProtocolService
         _consentDecisions = consentDecisions;
         _tokenTenants = tokenTenants;
         _clientUserAccess = clientUserAccess;
+        _clients = clients;
         _usage = usage;
         _audiences = audiences;
         _config = config.Value;
         _stateStore = stateStore;
         _authorizeValidator = authorizeValidator;
+        _requestObjectValidator = requestObjectValidator;
+        _grantStore = grantStore;
         _authorizationCodeStore = authorizationCodeStore;
         _consentStore = consentStore;
         _tokenValidator = tokenValidator;
@@ -90,7 +100,7 @@ public class OidcProtocolService : IOidcProtocolService
 
     public async Task<ProtocolContext> BuildContextAsync(HttpContext http, CancellationToken cancellationToken = default)
     {
-        var request = await ParseAuthorizeRequestAsync(http);
+        var request = await ParseAuthorizeRequestAsync(http, cancellationToken);
 
         var context = new ProtocolContext
         {
@@ -116,6 +126,20 @@ public class OidcProtocolService : IOidcProtocolService
 
         // Validate request using existing validator
         var validationResult = await _authorizeValidator.ValidateAsync(authorizeRequest, cancellationToken);
+
+        // A request object that could not be used is reported to the client once its client_id and redirect_uri
+        // (sent outside the request object) are known to be valid; before that, the validator's error stands.
+        if (oidcRequest.RequestObjectError != null && (validationResult.IsValid || validationResult.RedirectUriValidated))
+        {
+            _logger.LogWarning("Authorize request object rejected: {Error} - {Description}",
+                oidcRequest.RequestObjectError, oidcRequest.RequestObjectErrorDescription);
+            return ProtocolRequestResult.Failed(
+                oidcRequest.RequestObjectError,
+                oidcRequest.RequestObjectErrorDescription,
+                true,
+                validationResult.ValidatedRedirectUri);
+        }
+
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Authorize request validation failed: {Error} - {Description}",
@@ -126,6 +150,10 @@ public class OidcProtocolService : IOidcProtocolService
                 validationResult.RedirectUriValidated,
                 validationResult.ValidatedRedirectUri);
         }
+
+        // The claims parameter as the validator kept it: dropped when the tenant does not support it.
+        oidcRequest.Claims = validationResult.Request!.Claims;
+        var essentialAcr = EssentialAcrValues(oidcRequest.Claims);
 
         // Store validated client in context for later use
         var client = validationResult.Client!;
@@ -201,7 +229,7 @@ public class OidcProtocolService : IOidcProtocolService
                 SuggestedPolicyType = DeterminePolicyType(oidcRequest),
                 ExplicitPolicyId = oidcRequest.PolicyId,
                 LoginHint = oidcRequest.LoginHint,
-                AcrValues = oidcRequest.AcrValues,
+                AcrValues = JourneyAcrValues(oidcRequest.AcrValues, essentialAcr),
                 RequestedScopes = validationResult.ValidScopes.ToList(),
                 MaxAge = !string.IsNullOrEmpty(oidcRequest.MaxAge) && int.TryParse(oidcRequest.MaxAge, out var maxAge) ? maxAge : null,
                 Prompt = oidcRequest.Prompt
@@ -223,25 +251,68 @@ public class OidcProtocolService : IOidcProtocolService
         // Check max_age
         if (!string.IsNullOrEmpty(oidcRequest.MaxAge) && int.TryParse(oidcRequest.MaxAge, out var maxAgeSeconds))
         {
+            // A session whose sign-in time is unknown cannot be shown to be within max_age, so it counts as older
+            // (OpenID Connect Core 1.0 section 3.1.2.1: the OP MUST then actively re-authenticate).
             var authTimeClaim = user.FindFirst("auth_time");
-            if (authTimeClaim != null && long.TryParse(authTimeClaim.Value, out var authTime))
+            var knownAuthTime = authTimeClaim != null && long.TryParse(authTimeClaim.Value, out var authTime)
+                ? DateTimeOffset.FromUnixTimeSeconds(authTime).UtcDateTime
+                : (DateTime?)null;
+            if (knownAuthTime == null || DateTime.UtcNow.Subtract(knownAuthTime.Value).TotalSeconds > maxAgeSeconds)
             {
-                var authDateTime = DateTimeOffset.FromUnixTimeSeconds(authTime).UtcDateTime;
-                if (DateTime.UtcNow.Subtract(authDateTime).TotalSeconds > maxAgeSeconds)
+                if (promptNone)
                 {
-                    if (promptNone)
-                    {
-                        return ProtocolRequestResult.Failed(OidcConstants.Errors.LoginRequired, "The sign-in is older than max_age");
-                    }
-                    return ProtocolRequestResult.RequiresAuth(new AuthenticationRequirement
-                    {
-                        SuggestedPolicyType = Core.UserJourneys.JourneyType.SignIn,
-                        ForceFreshLogin = true,
-                        LoginHint = oidcRequest.LoginHint,
-                        RequestedScopes = validationResult.ValidScopes.ToList()
-                    });
+                    return ProtocolRequestResult.Failed(OidcConstants.Errors.LoginRequired, "The sign-in is older than max_age");
                 }
+                return ProtocolRequestResult.RequiresAuth(new AuthenticationRequirement
+                {
+                    SuggestedPolicyType = Core.UserJourneys.JourneyType.SignIn,
+                    ForceFreshLogin = true,
+                    LoginHint = oidcRequest.LoginHint,
+                    RequestedScopes = validationResult.ValidScopes.ToList()
+                });
             }
+        }
+
+        // A tenant that requires MFA does not reuse a session that signed in without a second factor (one from
+        // before the setting was turned on): the user signs in again, and passes one. A proxy-mode provider's session
+        // has no account here to hold a second factor, so it is left alone.
+        if (_tenantContext.Tenant?.RequireMfa == true
+            && user.FindFirst("sub")?.Value?.StartsWith("proxy:", StringComparison.Ordinal) != true
+            && !SecondFactorRequirement.IsMet(user.FindAll(OidcConstants.StandardClaims.Amr).Select(c => c.Value)))
+        {
+            if (promptNone)
+            {
+                return ProtocolRequestResult.Failed(OidcConstants.Errors.LoginRequired,
+                    "The session has no second factor, which this tenant requires");
+            }
+            return ProtocolRequestResult.RequiresAuth(new AuthenticationRequirement
+            {
+                SuggestedPolicyType = Core.UserJourneys.JourneyType.SignIn,
+                ForceFreshLogin = true,
+                LoginHint = oidcRequest.LoginHint,
+                AcrValues = JourneyAcrValues(oidcRequest.AcrValues, essentialAcr),
+                RequestedScopes = validationResult.ValidScopes.ToList()
+            });
+        }
+
+        // An essential acr the session does not meet (OpenID Connect Core 1.0 section 5.5.1.1): the user signs in
+        // again, through the policy for that class; the response is refused if that sign-in does not meet it either.
+        if (essentialAcr != null && !MeetsAcr(essentialAcr, user.FindFirst(OidcConstants.StandardClaims.Acr)?.Value,
+                user.FindAll(OidcConstants.StandardClaims.Amr).Select(c => c.Value)))
+        {
+            if (promptNone)
+            {
+                return ProtocolRequestResult.Failed(OidcConstants.Errors.LoginRequired,
+                    "The session does not meet the essential acr the request asks for");
+            }
+            return ProtocolRequestResult.RequiresAuth(new AuthenticationRequirement
+            {
+                SuggestedPolicyType = Core.UserJourneys.JourneyType.SignIn,
+                ForceFreshLogin = true,
+                LoginHint = oidcRequest.LoginHint,
+                AcrValues = JourneyAcrValues(oidcRequest.AcrValues, essentialAcr),
+                RequestedScopes = validationResult.ValidScopes.ToList()
+            });
         }
 
         // Check consent
@@ -300,7 +371,7 @@ public class OidcProtocolService : IOidcProtocolService
                 ExplicitPolicyId = oidcRequest.PolicyId,
                 LoginHint = oidcRequest.LoginHint,
                 IdTokenHint = oidcRequest.IdTokenHint,
-                AcrValues = oidcRequest.AcrValues,
+                AcrValues = JourneyAcrValues(oidcRequest.AcrValues, essentialAcr),
                 RequestedScopes = validationResult.ValidScopes.ToList()
             });
         }
@@ -310,7 +381,7 @@ public class OidcProtocolService : IOidcProtocolService
         return ProtocolRequestResult.Success();
     }
 
-    public async Task<ProtocolContext> RestoreContextAsync(string correlationId, CancellationToken cancellationToken = default)
+    public async Task<ProtocolContext> RestoreContextAsync(HttpContext http, string correlationId, CancellationToken cancellationToken = default)
     {
         var state = await _stateStore.GetAsync(correlationId, cancellationToken);
         if (state == null)
@@ -322,13 +393,26 @@ public class OidcProtocolService : IOidcProtocolService
         _logger.LogDebug("Restored protocol state for correlation ID {CorrelationId}", correlationId);
         var request = JsonSerializer.Deserialize<OidcAuthorizeRequest>(state.SerializedRequest);
 
+        // Only string properties are kept in the protocol state, so the client validated at /authorize is loaded
+        // again: its user restrictions, pairwise salt, lifetimes and claim settings apply to what is issued now.
+        var client = await _clients.FindClientByIdAsync(state.ClientId, cancellationToken);
+        if (client == null || !client.Enabled)
+        {
+            _logger.LogWarning("Client {ClientId} is no longer available for correlation ID {CorrelationId}", state.ClientId, correlationId);
+            throw new InvalidOperationException("This application is no longer available. Please contact its owner.");
+        }
+
+        var properties = state.Properties.ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        properties["ValidatedClient"] = client;
+
         return new ProtocolContext
         {
+            HttpContext = http,
             ProtocolName = ProtocolName,
             EndpointType = state.EndpointType,
             Request = request,
             CorrelationId = correlationId,
-            Properties = state.Properties.ToDictionary(kv => kv.Key, kv => (object)kv.Value)
+            Properties = properties
         };
     }
 
@@ -405,6 +489,53 @@ public class OidcProtocolService : IOidcProtocolService
             validatedClient = c;
         }
 
+        // The claims parameter (OpenID Connect Core 1.0 section 5.5), as validated at /authorize.
+        ClaimsRequest? claimsRequest = null;
+        if (!string.IsNullOrEmpty(request.Claims) && !ClaimsRequest.TryParse(request.Claims, out claimsRequest, out var claimsError))
+        {
+            return BuildErrorResponse(context, new ProtocolError
+            {
+                Code = OidcConstants.Errors.InvalidRequest,
+                Description = claimsError,
+                RedirectUriValidated = true,
+                ValidatedRedirectUri = request.RedirectUri
+            });
+        }
+
+        if (claimsRequest != null && !string.IsNullOrEmpty(authResult.UserId))
+        {
+            // Section 5.5.1: a request naming the sub is answered only for that user, never for another one signed in.
+            if (claimsRequest.IdToken.TryGetValue(OidcConstants.StandardClaims.Subject, out var requestedSubject)
+                && requestedSubject.Values is { Count: > 0 } subjects
+                && !subjects.Contains(
+                    SubjectIdentifiers.ForClient(authResult.UserId, request.ClientId!, validatedClient?.PairWiseSubjectSalt),
+                    StringComparer.Ordinal))
+            {
+                return BuildErrorResponse(context, new ProtocolError
+                {
+                    Code = OidcConstants.Errors.LoginRequired,
+                    Description = "The signed-in user is not the subject the request names",
+                    RedirectUriValidated = true,
+                    ValidatedRedirectUri = request.RedirectUri
+                });
+            }
+
+            // Section 5.5.1.1: an essential acr the sign-in did not meet is a failed authentication.
+            if (EssentialAcrValues(claimsRequest) is { } essentialAcr && !MeetsAcr(essentialAcr, authResult.Acr, authResult.Amr))
+            {
+                return BuildErrorResponse(context, new ProtocolError
+                {
+                    Code = OidcConstants.Errors.UnmetAuthenticationRequirements,
+                    Description = "The sign-in does not meet the essential acr the request asks for",
+                    RedirectUriValidated = true,
+                    ValidatedRedirectUri = request.RedirectUri
+                });
+            }
+        }
+
+        // The claims asked for in the ID token: those the granted scopes release go in it too (section 5.5).
+        var idTokenClaims = claimsRequest?.IdToken.Keys.ToList() ?? new List<string>();
+
         string? code = null;
         string? accessToken = null;
         string? idToken = null;
@@ -418,6 +549,11 @@ public class OidcProtocolService : IOidcProtocolService
             if (!string.IsNullOrEmpty(request.MaxAge))
             {
                 codeClaims["max_age_requested"] = "true";
+            }
+
+            if (idTokenClaims.Count > 0)
+            {
+                codeClaims[ClaimsRequest.IdTokenClaimsCarrier] = string.Join(' ', idTokenClaims);
             }
 
             // Carry allowlisted custom authorize parameters through to the token
@@ -515,6 +651,7 @@ public class OidcProtocolService : IOidcProtocolService
                 PairWiseSubjectSalt = validatedClient?.PairWiseSubjectSalt,
                 IncludeJwtId = validatedClient?.IncludeJwtId ?? true,
                 AlwaysIncludeUserClaimsInIdToken = validatedClient?.AlwaysIncludeUserClaimsInIdToken ?? false,
+                RequestedIdTokenClaims = idTokenClaims,
                 // Same audience rule as the token endpoint (RFC 8707 / RFC 9068 §3).
                 Audiences = await _audiences.ResolveAsync(
                     request.Resource, scopes, request.ClientId!,
@@ -536,12 +673,10 @@ public class OidcProtocolService : IOidcProtocolService
             }
         }
 
-        // Determine default response mode: fragment for implicit/hybrid, query for code
-        var responseMode = request.ResponseMode;
-        if (string.IsNullOrEmpty(responseMode))
-        {
-            responseMode = isImplicitOrHybrid ? "fragment" : "query";
-        }
+        // The client took part in this sign-in session: it is told, and its session grants end, when the session does.
+        await SessionClients.RecordAsync(_grantStore, authResult.UserId, authResult.SessionId, request.ClientId!, cancellationToken);
+
+        var responseMode = ResponseModes.Resolve(request.ResponseMode, responseTypes);
 
         _logger.LogInformation(
             "Authorization response issued for client {ClientId}, user {UserId}, scopes {Scopes}, responseTypes {ResponseTypes}",
@@ -659,11 +794,23 @@ public class OidcProtocolService : IOidcProtocolService
         // would just hang in the hidden iframe — post the error to the opener
         // instead. login_required / interaction_required arrive here when a
         // prompt=none request can't be satisfied without UI.
-        if (!string.IsNullOrEmpty(redirectUri) && IsSafeError(error.Code) && request?.ResponseMode == "web_message")
+        // An error goes back in the same response mode a success would (Multiple Response Type Encoding Practices
+        // §2.1, Form Post Response Mode §2): fragment by default for a response type that carries a token.
+        var responseMode = ResponseModes.Resolve(request?.ResponseMode, request?.RequestedResponseTypes ?? new List<string>());
+
+        if (!string.IsNullOrEmpty(redirectUri) && IsSafeError(error.Code) && responseMode == ResponseModes.WebMessage)
         {
             _logger.LogInformation("Posting web_message error {Error} to {RedirectUri}", error.Code, redirectUri);
             if (context?.HttpContext != null) FramePolicy.AllowOriginOf(context.HttpContext, redirectUri);
-            var html = BuildWebMessageErrorResponse(redirectUri, error.Code, error.Description, request.State, issuer);
+            var html = BuildWebMessageErrorResponse(redirectUri, error.Code, error.Description, request?.State, issuer);
+            return new ContentResult { Content = html, ContentType = "text/html", StatusCode = 200 };
+        }
+
+        if (!string.IsNullOrEmpty(redirectUri) && IsSafeError(error.Code) && responseMode == ResponseModes.FormPost)
+        {
+            _logger.LogInformation("Posting form_post error {Error} to {RedirectUri}", error.Code, redirectUri);
+            if (context?.HttpContext != null) FramePolicy.AllowOriginOf(context.HttpContext, redirectUri);
+            var html = RenderFormPostHtml(redirectUri, ErrorParameters(error.Code, error.Description, request?.State, issuer));
             return new ContentResult { Content = html, ContentType = "text/html", StatusCode = 200 };
         }
 
@@ -671,7 +818,7 @@ public class OidcProtocolService : IOidcProtocolService
         if (!string.IsNullOrEmpty(redirectUri) && IsSafeError(error.Code))
         {
             _logger.LogInformation("Redirecting to {RedirectUri} with error {Error}", redirectUri, error.Code);
-            var errorUrl = BuildErrorResponse(redirectUri, error.Code, error.Description, request?.State, request?.ResponseMode, issuer);
+            var errorUrl = BuildErrorResponse(redirectUri, error.Code, error.Description, request?.State, responseMode, issuer);
             return new RedirectResult(errorUrl);
         }
 
@@ -691,7 +838,7 @@ public class OidcProtocolService : IOidcProtocolService
         return new RedirectResult(errorPageUrl);
     }
 
-    private async Task<OidcAuthorizeRequest> ParseAuthorizeRequestAsync(HttpContext http)
+    private async Task<OidcAuthorizeRequest> ParseAuthorizeRequestAsync(HttpContext http, CancellationToken cancellationToken)
     {
         var parameters = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -712,15 +859,51 @@ public class OidcProtocolService : IOidcProtocolService
         }
 
         // Check for PAR request_uri - RFC 9126
+        var pushed = false;
         if (parameters.TryGetValue("request_uri", out var requestUri) &&
             requestUri.StartsWith("urn:ietf:params:oauth:request_uri:", StringComparison.Ordinal))
         {
             parameters = await ResolveParRequestAsync(requestUri, parameters);
+            pushed = true;
+        }
+
+        // Request object (OpenID Connect Core section 6, RFC 9101), by value or by reference. A pushed request's
+        // request object was verified and applied when it was pushed.
+        string? requestObjectError = null;
+        string? requestObjectErrorDescription = null;
+        parameters.TryGetValue("request", out var requestObject);
+        var requestObjectUri = pushed ? null : parameters.GetValueOrDefault("request_uri");
+        if (!pushed && (!string.IsNullOrEmpty(requestObject) || !string.IsNullOrEmpty(requestObjectUri)))
+        {
+            var requestObjectResult = await _requestObjectValidator.ValidateAsync(
+                parameters.GetValueOrDefault("client_id") ?? string.Empty,
+                requestObject,
+                requestObjectUri,
+                cancellationToken);
+
+            if (requestObjectResult.IsValid)
+            {
+                // The request object's parameters supersede the same parameters outside it.
+                foreach (var (name, value) in requestObjectResult.Parameters)
+                {
+                    parameters[name] = value;
+                }
+                requestObject = requestObjectResult.RequestObject;
+            }
+            else
+            {
+                requestObjectError = requestObjectResult.Error;
+                requestObjectErrorDescription = requestObjectResult.ErrorDescription;
+            }
         }
 
         var request = new OidcAuthorizeRequest
         {
-            Raw = parameters
+            Raw = parameters,
+            Request = requestObject,
+            RequestUri = requestObjectUri,
+            RequestObjectError = requestObjectError,
+            RequestObjectErrorDescription = requestObjectErrorDescription
         };
 
         // Parse standard parameters
@@ -765,6 +948,9 @@ public class OidcProtocolService : IOidcProtocolService
 
         parameters.TryGetValue("acr_values", out var acrValues);
         request.AcrValues = acrValues;
+
+        parameters.TryGetValue(ClaimsRequest.ParameterName, out var claimsParameter);
+        request.Claims = claimsParameter;
 
         // Domain hint for IdP selection
         parameters.TryGetValue("domain_hint", out var domainHint);
@@ -823,8 +1009,11 @@ public class OidcProtocolService : IOidcProtocolService
             IdTokenHint = oidcRequest.IdTokenHint,
             LoginHint = oidcRequest.LoginHint,
             AcrValues = oidcRequest.AcrValues,
+            Claims = oidcRequest.Claims,
             CodeChallenge = oidcRequest.CodeChallenge,
             CodeChallengeMethod = oidcRequest.CodeChallengeMethod,
+            Request = oidcRequest.Request,
+            RequestUri = oidcRequest.RequestUri,
             Resource = oidcRequest.Resource?.ToList() ?? new List<string>()
         };
     }
@@ -913,28 +1102,52 @@ public class OidcProtocolService : IOidcProtocolService
         string redirectUri, string? code, string? accessToken, int? expiresIn,
         string? idToken, string? state, string? issuer, string? scope = null)
     {
+        var fields = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrEmpty(code))
+            fields.Add(new("code", code));
+        if (!string.IsNullOrEmpty(accessToken))
+        {
+            fields.Add(new("access_token", accessToken));
+            fields.Add(new("token_type", "Bearer"));
+            if (expiresIn.HasValue)
+                fields.Add(new("expires_in", expiresIn.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            if (scope != null)
+                fields.Add(new("scope", scope));
+        }
+        if (!string.IsNullOrEmpty(idToken))
+            fields.Add(new("id_token", idToken));
+        if (!string.IsNullOrEmpty(state))
+            fields.Add(new("state", state));
+        if (!string.IsNullOrEmpty(issuer))
+            fields.Add(new("iss", issuer));
+
+        return RenderFormPostHtml(redirectUri, fields);
+    }
+
+    private static List<KeyValuePair<string, string>> ErrorParameters(
+        string error, string? description, string? state, string? issuer)
+    {
+        var fields = new List<KeyValuePair<string, string>> { new("error", error) };
+        if (!string.IsNullOrEmpty(description))
+            fields.Add(new("error_description", description));
+        if (!string.IsNullOrEmpty(state))
+            fields.Add(new("state", state));
+        if (!string.IsNullOrEmpty(issuer))
+            fields.Add(new("iss", issuer));
+        return fields;
+    }
+
+    /// <summary>
+    /// OAuth 2.0 Form Post Response Mode §2: the response parameters as hidden fields of a form that the
+    /// browser posts to the redirect_uri, every value HTML encoded.
+    /// </summary>
+    private static string RenderFormPostHtml(string redirectUri, IEnumerable<KeyValuePair<string, string>> fields)
+    {
         var sb = new StringBuilder();
         sb.Append("<!DOCTYPE html><html><head><title>Submit</title></head><body onload=\"document.forms[0].submit()\">");
         sb.Append($"<form method=\"post\" action=\"{WebUtility.HtmlEncode(redirectUri)}\">");
-
-        if (!string.IsNullOrEmpty(code))
-            sb.Append($"<input type=\"hidden\" name=\"code\" value=\"{WebUtility.HtmlEncode(code)}\" />");
-        if (!string.IsNullOrEmpty(accessToken))
-        {
-            sb.Append($"<input type=\"hidden\" name=\"access_token\" value=\"{WebUtility.HtmlEncode(accessToken)}\" />");
-            sb.Append("<input type=\"hidden\" name=\"token_type\" value=\"Bearer\" />");
-            if (expiresIn.HasValue)
-                sb.Append($"<input type=\"hidden\" name=\"expires_in\" value=\"{expiresIn.Value}\" />");
-            if (scope != null)
-                sb.Append($"<input type=\"hidden\" name=\"scope\" value=\"{WebUtility.HtmlEncode(scope)}\" />");
-        }
-        if (!string.IsNullOrEmpty(idToken))
-            sb.Append($"<input type=\"hidden\" name=\"id_token\" value=\"{WebUtility.HtmlEncode(idToken)}\" />");
-        if (!string.IsNullOrEmpty(state))
-            sb.Append($"<input type=\"hidden\" name=\"state\" value=\"{WebUtility.HtmlEncode(state)}\" />");
-        if (!string.IsNullOrEmpty(issuer))
-            sb.Append($"<input type=\"hidden\" name=\"iss\" value=\"{WebUtility.HtmlEncode(issuer)}\" />");
-
+        foreach (var (name, value) in fields)
+            sb.Append($"<input type=\"hidden\" name=\"{WebUtility.HtmlEncode(name)}\" value=\"{WebUtility.HtmlEncode(value)}\" />");
         sb.Append("<noscript><button type=\"submit\">Continue</button></noscript>");
         sb.Append("</form></body></html>");
         return sb.ToString();
@@ -1166,12 +1379,17 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
             resolvedParameters["login_hint"] = storedRequest.LoginHint;
         if (!string.IsNullOrEmpty(storedRequest.AcrValues))
             resolvedParameters["acr_values"] = storedRequest.AcrValues;
+        if (!string.IsNullOrEmpty(storedRequest.Claims))
+            resolvedParameters[ClaimsRequest.ParameterName] = storedRequest.Claims;
         if (!string.IsNullOrEmpty(storedRequest.UiLocales))
             resolvedParameters["ui_locales"] = storedRequest.UiLocales;
         if (storedRequest.Resource is { Count: > 0 })
             resolvedParameters[OidcResourceParameters.Name] = string.Join(' ', storedRequest.Resource);
         if (!string.IsNullOrEmpty(storedRequest.DPoPKeyThumbprint))
             resolvedParameters[DPoPJktParameter] = storedRequest.DPoPKeyThumbprint;
+        // The request object pushed with it (already verified and applied at the PAR endpoint).
+        if (!string.IsNullOrEmpty(storedRequest.Request))
+            resolvedParameters["request"] = storedRequest.Request;
 
         // State can be provided in the authorize request (not required to be in PAR)
         if (originalParameters.TryGetValue("state", out var state) && !string.IsNullOrEmpty(state))
@@ -1185,6 +1403,31 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 
         return resolvedParameters;
     }
+
+    /// <summary>
+    /// The acr values an essential acr in the claims parameter allows (OpenID Connect Core 1.0 section 5.5.1.1), or
+    /// null when it asks for none. The parameter was validated at /authorize.
+    /// </summary>
+    internal static IReadOnlyList<string>? EssentialAcrValues(string? claimsParameter) =>
+        !string.IsNullOrEmpty(claimsParameter) && ClaimsRequest.TryParse(claimsParameter, out var claims, out _)
+            ? EssentialAcrValues(claims!)
+            : null;
+
+    private static IReadOnlyList<string>? EssentialAcrValues(ClaimsRequest claims) =>
+        claims.Find(OidcConstants.StandardClaims.Acr) is { Essential: true, Values.Count: > 0 } acr ? acr.Values : null;
+
+    /// <summary>Whether the sign-in's class (recorded, or from its methods) is one of <paramref name="allowed"/>.</summary>
+    private static bool MeetsAcr(IReadOnlyList<string> allowed, string? acr, IEnumerable<string>? amr) =>
+        AuthenticationContextClasses.Resolve(acr, amr) is { } signedIn && allowed.Contains(signedIn, StringComparer.Ordinal);
+
+    /// <summary>
+    /// The journey's acrValues: acr_values, else the essential acr values, so a condition step can route to a step
+    /// that meets them.
+    /// </summary>
+    private static string? JourneyAcrValues(string? acrValues, IReadOnlyList<string>? essentialAcr) =>
+        !string.IsNullOrEmpty(acrValues) ? acrValues
+        : essentialAcr != null ? string.Join(' ', essentialAcr)
+        : null;
 
     /// <summary>The authorize parameter binding the code to a DPoP key (RFC 9449 §10).</summary>
     public const string DPoPJktParameter = "dpop_jkt";
@@ -1211,6 +1454,13 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
             "unsupported_response_type" => true,
             "invalid_scope" => true,
             "temporarily_unavailable" => true,
+            // Request object errors (OpenID Connect Core section 3.1.2.6), reported once redirect_uri is validated
+            OidcConstants.Errors.InvalidRequestObject => true,
+            OidcConstants.Errors.InvalidRequestUri => true,
+            OidcConstants.Errors.RequestNotSupported => true,
+            OidcConstants.Errors.RequestUriNotSupported => true,
+            // An essential acr the sign-in did not meet (OpenID Connect Core 1.0 section 5.5.1.1)
+            OidcConstants.Errors.UnmetAuthenticationRequirements => true,
             _ => false
         };
     }

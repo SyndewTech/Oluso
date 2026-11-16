@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Protocols;
 using Oluso.Core.Protocols.Models;
 using Oluso.Core.Services;
 
@@ -16,15 +17,18 @@ namespace Oluso.Protocols.Oidc;
 public class OidcUserInfoController : OidcControllerBase
 {
     private readonly IProfileService _profileService;
+    private readonly IClientStore _clientStore;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<OidcUserInfoController> _logger;
 
     public OidcUserInfoController(
         IProfileService profileService,
+        IClientStore clientStore,
         ITenantContext tenantContext,
         ILogger<OidcUserInfoController> logger)
     {
         _profileService = profileService;
+        _clientStore = clientStore;
         _tenantContext = tenantContext;
         _logger = logger;
     }
@@ -67,11 +71,21 @@ public class OidcUserInfoController : OidcControllerBase
             "oidc",
             cancellationToken);
 
-        // Ensure subject is always included
-        if (!claims.ContainsKey(OidcConstants.StandardClaims.Subject))
+        // The sub is the one the client was issued in its ID token (OpenID Connect Core 1.0 section 5.3.2: they must
+        // match), so pairwise for a pairwise client. The access token carries the user's own id, which is what the
+        // profile is looked up by and what Oluso's APIs use; a pairwise client must not learn it here.
+        var clientId = User.FindFirst(OidcConstants.StandardClaims.ClientId)?.Value;
+        var client = string.IsNullOrEmpty(clientId) ? null : await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
+        if (client == null)
         {
-            claims[OidcConstants.StandardClaims.Subject] = subjectClaim.Value;
+            return Unauthorized(new TokenErrorResponse
+            {
+                Error = OidcConstants.Errors.InvalidToken,
+                ErrorDescription = "The client the token was issued to is not known"
+            });
         }
+        claims[OidcConstants.StandardClaims.Subject] =
+            SubjectIdentifiers.ForClient(subjectClaim.Value, client.ClientId, client.PairWiseSubjectSalt);
 
         // Include permissions if the "permissions" scope was granted in the token
         if (scopeClaims.Contains(OidcConstants.Scopes.Permissions))

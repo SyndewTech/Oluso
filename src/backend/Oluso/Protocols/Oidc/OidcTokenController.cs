@@ -20,6 +20,8 @@ namespace Oluso.Protocols.Oidc;
 /// </summary>
 
 [EnableRateLimiting(SignInRateLimitPolicies.Token)]
+// RFC 6749 section 5.1: responses carrying tokens must not be cached.
+[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public class OidcTokenController : OidcControllerBase
 {
     private readonly ITokenRequestValidator _requestValidator;

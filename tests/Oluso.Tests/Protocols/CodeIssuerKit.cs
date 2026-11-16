@@ -40,6 +40,15 @@ internal sealed class CodeIssuerKit
             .Returns(Task.CompletedTask);
         CodeStore.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string code, CancellationToken _) => Codes.FirstOrDefault(c => c.Code == code));
+        // Redeeming marks a stored code consumed, once.
+        CodeStore.Setup(c => c.TryConsumeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string code, CancellationToken _) =>
+            {
+                var stored = Codes.FirstOrDefault(c => c.Code == code);
+                if (stored == null || stored.IsConsumed) return false;
+                stored.IsConsumed = true;
+                return true;
+            });
     }
 
     /// <summary>The SPA client: authorization code + PKCE, openid/profile/email, registered on <see cref="AppOrigin"/>.</summary>
@@ -76,6 +85,7 @@ internal sealed class CodeIssuerKit
                 settings.Object,
                 Consents.Object,
                 CodeStore.Object,
+                Mock.Of<IPersistedGrantStore>(),
                 Users.Object,
                 Tenant.Object,
                 Mock.Of<IClientUsageRecorder>(),

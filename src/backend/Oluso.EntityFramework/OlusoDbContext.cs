@@ -207,6 +207,9 @@ public class OlusoDbContext : IdentityDbContext<
     // Single-use action tokens
     public DbSet<ActionToken> ActionTokens => Set<ActionToken>();
 
+    // Revoked self-contained access tokens
+    public DbSet<AccessTokenRevocation> AccessTokenRevocations => Set<AccessTokenRevocation>();
+
     // Conversation messages
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
 
@@ -314,6 +317,7 @@ public class OlusoDbContext : IdentityDbContext<
         builder.ApplyConfiguration(new UserModuleAccessConfiguration());
         builder.ApplyConfiguration(new UserNotificationProfileConfiguration());
         builder.ApplyConfiguration(new ActionTokenConfiguration());
+        builder.ApplyConfiguration(new AccessTokenRevocationConfiguration());
         builder.ApplyConfiguration(new ConversationMessageConfiguration());
         builder.ApplyConfiguration(new TerminologyOverrideConfiguration());
         builder.ApplyConfiguration(new ConversationMentionReadConfiguration());

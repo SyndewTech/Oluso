@@ -24,6 +24,7 @@ public class TenantDto
     public bool HideEmbedBranding { get; set; }
     public bool EnableLocalLogin { get; set; }
     public bool EnablePasskey { get; set; }
+    public bool RequireMfa { get; set; }
     public string? DefaultIdpScheme { get; set; }
     public string? DefaultSignInPolicyId { get; set; }
     public string? DefaultSsoUiMode { get; set; }
@@ -56,6 +57,7 @@ public class UpdateTenantRequest
     public bool? HideEmbedBranding { get; set; }
     public bool? EnableLocalLogin { get; set; }
     public bool? EnablePasskey { get; set; }
+    public bool? RequireMfa { get; set; }
     public string? DefaultIdpScheme { get; set; }
     public string? DefaultSignInPolicyId { get; set; }
     public string? DefaultSsoUiMode { get; set; }

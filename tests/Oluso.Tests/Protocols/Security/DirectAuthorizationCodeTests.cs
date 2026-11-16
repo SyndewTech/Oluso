@@ -310,6 +310,67 @@ public class DirectAuthorizationCodeTests
         _kit.SignIns.Should().ContainSingle(s => s.AuthenticationMethod == "pwd" && s.SessionId == "j1");
     }
 
+    [Theory]
+    [InlineData(new[] { "pwd" }, true, false)]
+    [InlineData(new[] { "external" }, true, false)]
+    [InlineData(new[] { "pwd" }, false, false)]
+    [InlineData(new[] { "pwd", "mfa" }, true, true)]
+    [InlineData(new[] { "hwk" }, true, true)]
+    public async Task A_tenant_that_requires_mfa_gets_a_code_only_for_a_sign_in_with_a_second_factor(
+        string[] methods, bool tenantRequiresMfa, bool issued)
+    {
+        _kit.Tenant.Setup(t => t.Tenant).Returns(new Tenant { Id = "acme", RequireMfa = tenantRequiresMfa });
+        var journey = new JourneyState
+        {
+            Id = "j2",
+            TenantId = "acme",
+            ClientId = "spa",
+            PolicyId = "p1",
+            CurrentStepId = "done",
+            Data = new Dictionary<string, object>
+            {
+                ["auth_method"] = methods[0],
+                ["amr"] = methods.Skip(1).ToArray(),
+                ["authenticated_at"] = DateTime.UtcNow
+            }
+        };
+
+        var result = await _kit.Issuer.IssueForJourneyAsync(new DirectAuthorizationRequest
+        {
+            ClientId = "spa",
+            Scope = "openid",
+            CodeChallenge = CodeIssuerKit.Challenge,
+            Origin = CodeIssuerKit.AppOrigin
+        }, journey, new JourneyCompletionResult { UserId = "u1" });
+
+        // tenantRequiresMfa false and a password: the account has no MFA, so nothing is missing.
+        result.Succeeded.Should().Be(issued || !tenantRequiresMfa, result.ErrorDescription);
+        if (!result.Succeeded)
+        {
+            result.Error.Should().Be(OidcConstants.Errors.InteractionRequired);
+            _kit.Codes.Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task A_password_sign_in_by_a_user_with_mfa_gets_no_code_without_the_second_factor()
+    {
+        _kit.Users.Setup(u => u.FindByIdAsync("u1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OlusoUserInfo { Id = "u1", Username = "u1", TenantId = "acme", TwoFactorEnabled = true });
+        var journey = new JourneyState
+        {
+            Id = "j3", TenantId = "acme", ClientId = "spa", PolicyId = "p1", CurrentStepId = "done",
+            Data = new Dictionary<string, object> { ["auth_method"] = "pwd", ["authenticated_at"] = DateTime.UtcNow }
+        };
+
+        var result = await _kit.Issuer.IssueForJourneyAsync(new DirectAuthorizationRequest
+        {
+            ClientId = "spa", Scope = "openid", CodeChallenge = CodeIssuerKit.Challenge, Origin = CodeIssuerKit.AppOrigin
+        }, journey, new JourneyCompletionResult { UserId = "u1" });
+
+        result.Error.Should().Be(OidcConstants.Errors.InteractionRequired);
+    }
+
     private async Task<Core.Protocols.GrantResult> Redeem(string code, string verifier, string redirectUri)
     {
         var profile = new Mock<IProfileService>();
@@ -317,7 +378,7 @@ public class DirectAuthorizationCodeTests
         profile.Setup(p => p.GetProfileDataAsync(It.IsAny<ProfileDataRequestContext>())).Returns(Task.CompletedTask);
         var handler = new AuthorizationCodeGrantHandler(
             _kit.CodeStore.Object, new PkceValidator(), profile.Object, Mock.Of<IPersistedGrantStore>(), _kit.Clients.Object,
-            ClientUserAccessKit.For(profile.Object), NullLogger<AuthorizationCodeGrantHandler>.Instance);
+            ClientUserAccessKit.For(profile.Object), Mock.Of<IAccessTokenRevocationStore>(), NullLogger<AuthorizationCodeGrantHandler>.Instance);
 
         return await handler.HandleAsync(new TokenRequest
         {

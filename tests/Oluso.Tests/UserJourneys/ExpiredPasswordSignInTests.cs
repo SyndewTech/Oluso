@@ -81,6 +81,47 @@ public class ExpiredPasswordSignInTests
 
     [Theory]
     [MemberData(nameof(LoginSteps))]
+    public async Task An_account_with_mfa_goes_on_to_its_second_factor_before_changing_an_expired_password(IStepHandler step)
+    {
+        _users.Setup(u => u.ValidateCredentialsAsync("jo", "old-password", It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(UserValidationResult.MfaRequired(Jo, passwordExpired: true));
+        var context = Context(step.StepType, Credentials());
+
+        var result = await step.ExecuteAsync(context);
+
+        result.StepResult?.ViewName.Should().NotBe("Journey/_PasswordChange");
+        context.UserId.Should().Be("u1");
+        _journeyData.Should().NotContainKey(ExpiredPasswordChange.UserIdKey);
+        ExpiredPasswordChange.IsDueAfterSecondFactor(_journeyData).Should().BeTrue();
+        _journeyData["mfa_user_id"].Should().Be("u1");
+    }
+
+    [Theory]
+    [MemberData(nameof(LoginSteps))]
+    public async Task An_account_with_mfa_signs_in_with_its_password_and_goes_on_to_the_second_factor(IStepHandler step)
+    {
+        _users.Setup(u => u.ValidateCredentialsAsync("jo", "old-password", It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(UserValidationResult.MfaRequired(Jo));
+        var context = Context(step.StepType, Credentials());
+
+        var result = await step.ExecuteAsync(context);
+
+        result.FailedAttempt.Should().BeFalse();
+        context.UserId.Should().Be("u1");
+        _journeyData["mfa_required"].Should().Be(true);
+        ExpiredPasswordChange.IsDueAfterSecondFactor(_journeyData).Should().BeFalse();
+    }
+
+    [Fact]
+    public void The_password_of_an_account_with_mfa_counts_as_verified_for_account_changes()
+    {
+        UserValidationResult.MfaRequired(Jo).CredentialsVerified.Should().BeTrue();
+        UserValidationResult.MfaRequired(Jo).Succeeded.Should().BeFalse();
+        UserValidationResult.Failed("invalid_credentials").CredentialsVerified.Should().BeFalse();
+    }
+
+    [Theory]
+    [MemberData(nameof(LoginSteps))]
     public async Task An_expired_password_shows_the_change_form_without_authenticating(IStepHandler step)
     {
         var context = Context(step.StepType, Credentials());
@@ -180,7 +221,9 @@ public class ExpiredPasswordSignInTests
     {
         var (http, auth) = Http();
         var tempData = new TempDataDictionary(http, Mock.Of<ITempDataProvider>());
-        var page = new LoginModel(_users.Object, Mock.Of<IProtocolStateStore>(), NullLogger<LoginModel>.Instance)
+        var page = new LoginModel(_users.Object, Mock.Of<IProtocolStateStore>(),
+            new Oluso.Authentication.MfaSignInGate(Mock.Of<IProtocolStateStore>(), _users.Object, NullLogger<Oluso.Authentication.MfaSignInGate>.Instance),
+            NullLogger<LoginModel>.Instance)
         {
             ReturnUrl = ReturnUrl,
             Input = new LoginInputModel { Username = "jo", Password = "old-password" }

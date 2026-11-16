@@ -267,14 +267,16 @@ public class IdentityUserService : IOlusoUserService
             return UserValidationResult.LockedOut();
         }
 
-        if (result.RequiresTwoFactor)
-        {
-            return UserValidationResult.MfaRequired(MapToValidatedUser(user));
-        }
-
         if (!result.Succeeded)
         {
             return UserValidationResult.Failed("invalid_credentials", "Invalid username or password");
+        }
+
+        // CheckPasswordSignInAsync checks only the password (it never reports RequiresTwoFactor): an account with MFA
+        // still owes its second factor, and changes an expired password only after it.
+        if (await _userManager.GetTwoFactorEnabledAsync(user))
+        {
+            return UserValidationResult.MfaRequired(MapToValidatedUser(user), await IsPasswordExpiredAsync(user));
         }
 
         if (await IsPasswordExpiredAsync(user))

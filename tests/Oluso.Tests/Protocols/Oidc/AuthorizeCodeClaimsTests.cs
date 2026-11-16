@@ -31,6 +31,7 @@ public class AuthorizeCodeClaimsTests
 
     public AuthorizeCodeClaimsTests()
     {
+        _codeStore.Setup(x => x.TryConsumeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _codeStore.Setup(x => x.StoreAsync(It.IsAny<AuthorizationCode>(), It.IsAny<CancellationToken>()))
             .Callback<AuthorizationCode, CancellationToken>((c, _) => _codes.Add(c))
             .Returns(Task.CompletedTask);
@@ -52,6 +53,7 @@ public class AuthorizeCodeClaimsTests
         Options.Create(new OidcEndpointConfiguration()),
         Mock.Of<IProtocolStateStore>(),
         Mock.Of<IAuthorizeRequestValidator>(),
+        Mock.Of<IRequestObjectValidator>(),
         _codeStore.Object,
         Mock.Of<IConsentStore>(),
         Mock.Of<ITokenRequestValidator>(),
@@ -59,11 +61,13 @@ public class AuthorizeCodeClaimsTests
         Mock.Of<ITokenService>(),
         _profile.Object,
         Mock.Of<IPushedAuthorizationStore>(),
+        Mock.Of<IPersistedGrantStore>(),
         Mock.Of<ITenantContext>(),
         Mock.Of<IIssuerResolver>(),
         Mock.Of<Oluso.Protocols.Services.IAudienceResolver>(),
         Mock.Of<Oluso.Protocols.Services.IClientUsageRecorder>(),
         ClientUserAccessKit.For(_profile.Object),
+        Mock.Of<IClientStore>(),
         NullLogger<OidcProtocolService>.Instance);
 
     private static ProtocolContext Context() => new()
@@ -115,7 +119,7 @@ public class AuthorizeCodeClaimsTests
         var code = _codes.Single();
         var handler = new AuthorizationCodeGrantHandler(_codeStore.Object, new PkceValidator(), _profile.Object,
             Mock.Of<IPersistedGrantStore>(), Mock.Of<IClientStore>(), ClientUserAccessKit.For(_profile.Object),
-            NullLogger<AuthorizationCodeGrantHandler>.Instance);
+            Mock.Of<IAccessTokenRevocationStore>(), NullLogger<AuthorizationCodeGrantHandler>.Instance);
 
         var grant = await handler.HandleAsync(new TokenRequest
         {
@@ -134,23 +138,53 @@ public class AuthorizeCodeClaimsTests
     [Fact]
     public async Task Userinfo_answers_for_the_scopes_in_the_access_token()
     {
-        var controller = new OidcUserInfoController(_profile.Object, Mock.Of<ITenantContext>(), NullLogger<OidcUserInfoController>.Instance)
+        var claims = await UserInfoAsync(new Client { ClientId = "web" }, "openid", "profile");
+
+        claims["name"].Should().Be("Jo Bloggs");
+        claims["sub"].Should().Be("u1");
+        claims.Should().NotContainKey("email");
+    }
+
+    [Fact]
+    public async Task Userinfo_gives_a_pairwise_client_the_sub_of_its_id_token_never_the_user_id()
+    {
+        // OIDC Core 5.3.2: the userinfo sub must be the ID token's sub, pairwise for a pairwise client.
+        var client = new Client { ClientId = "web", PairWiseSubjectSalt = "salt-1" };
+
+        var claims = await UserInfoAsync(client, "openid", "profile");
+
+        claims["sub"].Should().Be(Oluso.Core.Protocols.SubjectIdentifiers.ForClient("u1", "web", "salt-1"));
+        claims["sub"].Should().NotBe("u1");
+    }
+
+    [Fact]
+    public async Task Userinfo_refuses_a_token_for_a_client_that_no_longer_exists()
+    {
+        var result = await UserInfoResultAsync(clientStoreHas: null, "openid");
+
+        result.Should().BeOfType<UnauthorizedObjectResult>();
+    }
+
+    private async Task<IDictionary<string, object>> UserInfoAsync(Client client, params string[] scopes) =>
+        (IDictionary<string, object>)((OkObjectResult)await UserInfoResultAsync(client, scopes)).Value!;
+
+    private async Task<IActionResult> UserInfoResultAsync(Client? clientStoreHas, params string[] scopes)
+    {
+        var clients = new Mock<IClientStore>();
+        clients.Setup(c => c.FindClientByIdAsync("web", It.IsAny<CancellationToken>())).ReturnsAsync(clientStoreHas);
+        var controller = new OidcUserInfoController(_profile.Object, clients.Object, Mock.Of<ITenantContext>(), NullLogger<OidcUserInfoController>.Instance)
         {
             ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
                 {
-                    User = new ClaimsPrincipal(new ClaimsIdentity(new[]
-                    {
-                        new Claim("sub", "u1"), new Claim("scope", "openid"), new Claim("scope", "profile")
-                    }, "Bearer"))
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim("sub", "u1"), new Claim("client_id", "web") }
+                            .Concat(scopes.Select(s => new Claim("scope", s))), "Bearer"))
                 }
             }
         };
 
-        var claims = (IDictionary<string, object>)((OkObjectResult)await controller.GetUserInfo(default)).Value!;
-
-        claims["name"].Should().Be("Jo Bloggs");
-        claims.Should().NotContainKey("email");
+        return await controller.GetUserInfo(default);
     }
 }

@@ -3,11 +3,13 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Security;
 using Oluso.Core.Services;
 
 namespace Oluso.Services;
@@ -19,10 +21,27 @@ namespace Oluso.Services;
 /// </summary>
 public class BackchannelLogoutService : IBackchannelLogoutService, IResourceServerLogoutNotifier
 {
+    /// <summary>
+    /// The named HttpClient logout tokens go to clients through (configured with
+    /// <see cref="PublicHttpTargets.CreateHandler"/>): a client's backchannel_logout_uri is set by a tenant
+    /// administrator, so delivery is held to the server-side request forgery guard.
+    /// </summary>
+    public const string HttpClientName = "Oluso.BackchannelLogout";
+
+    /// <summary>
+    /// Admits backchannel_logout_uri targets on private, loopback and link-local addresses, for a deployment whose
+    /// relying parties live on its own network and whose tenant administrators are all trusted. Off by default.
+    /// </summary>
+    public const string AllowPrivateNetworkSetting = "Oluso:BackchannelLogout:AllowPrivateNetworkTargets";
+
+    /// <summary>How long one client gets to accept its logout token.</summary>
+    public static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IClientStore _clientStore;
     private readonly IPersistedGrantStore _grantStore;
     private readonly ILogoutTokenGenerator _logoutTokenGenerator;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<BackchannelLogoutService> _logger;
     private readonly ResourceServerLogoutOptions _resourceServers;
 
@@ -31,9 +50,11 @@ public class BackchannelLogoutService : IBackchannelLogoutService, IResourceServ
         IPersistedGrantStore grantStore,
         ILogoutTokenGenerator logoutTokenGenerator,
         IHttpClientFactory httpClientFactory,
+        IConfiguration configuration,
         ILogger<BackchannelLogoutService> logger,
         IOptions<ResourceServerLogoutOptions>? resourceServers = null)
     {
+        _configuration = configuration;
         _clientStore = clientStore;
         _grantStore = grantStore;
         _logoutTokenGenerator = logoutTokenGenerator;
@@ -96,6 +117,19 @@ public class BackchannelLogoutService : IBackchannelLogoutService, IResourceServ
         return Array.Empty<string>();
     }
 
+    /// <summary>
+    /// How many logout tokens are posted at once: enough that one slow relying party does not hold up the rest,
+    /// few enough that a logout never floods the outbound connection pool.
+    /// </summary>
+    public const int MaxParallelDeliveries = 4;
+
+    /// <summary>
+    /// Tells the relying parties of the ended session(s) (Back-Channel Logout 1.0). With a session id, the clients
+    /// that took part in that session (<see cref="Protocols.SessionClients"/> and the session's grants) each get a
+    /// logout token carrying its sid; another session of the same user, on another device or browser, is not
+    /// touched. Without one (the user signed out everywhere), every session gets its own token, so each client
+    /// ends exactly the sessions it holds. Call it before the session's grants are removed: they name its clients.
+    /// </summary>
     public async Task<BackchannelLogoutResult> SendLogoutNotificationsAsync(
         string subjectId,
         string? sessionId = null,
@@ -103,43 +137,62 @@ public class BackchannelLogoutService : IBackchannelLogoutService, IResourceServ
     {
         var result = new BackchannelLogoutResult();
 
-        // Find all clients that have grants for this user
         var grants = (await _grantStore.GetAllAsync(
-            new PersistedGrantFilter { SubjectId = subjectId },
+            new PersistedGrantFilter { SubjectId = subjectId, SessionId = sessionId },
             cancellationToken)).ToList();
 
-        // Resource servers watching the ended session(s): the session's own grants, or all the user's.
-        await NotifyAsync(
-            string.IsNullOrEmpty(sessionId) ? grants : grants.Where(g => g.SessionId == sessionId),
-            cancellationToken);
+        // Resource servers watching the ended session(s).
+        await NotifyAsync(grants, cancellationToken);
 
-        var clientIds = grants
-            .Select(g => g.ClientId)
+        // One delivery per client and session. Grants from before session ids were recorded name no session: their
+        // clients get a token without sid, which ends all of the user's sessions there (section 2.4).
+        var targets = grants
+            .Select(g => (ClientId: g.ClientId, SessionId: string.IsNullOrEmpty(g.SessionId) ? null : g.SessionId))
+            .Where(t => !string.IsNullOrEmpty(t.ClientId))
             .Distinct()
             .ToList();
 
-        _logger.LogDebug("Found {Count} clients with active grants for subject {SubjectId}",
-            clientIds.Count, subjectId);
-
-        foreach (var clientId in clientIds)
+        // Clients and tokens one after another (they come from the scoped stores); then the posts in parallel.
+        var deliveries = new List<(string ClientId, Uri Target, string LogoutToken)>();
+        foreach (var (clientId, targetSession) in targets)
         {
+            var prepared = await PrepareAsync(clientId, subjectId, targetSession, cancellationToken);
+            if (prepared != null)
+            {
+                deliveries.Add((clientId, prepared.Value.Target, prepared.Value.LogoutToken));
+            }
+        }
+
+        using var gate = new SemaphoreSlim(MaxParallelDeliveries);
+        var outcomes = await Task.WhenAll(deliveries.Select(async d =>
+        {
+            await gate.WaitAsync(cancellationToken);
             try
             {
-                var success = await SendLogoutNotificationAsync(
-                    clientId, subjectId, sessionId, cancellationToken);
-
-                if (success)
-                {
-                    result.SuccessCount++;
-                }
+                return (d.ClientId, Delivered: await PostAsync(d.ClientId, d.Target, d.LogoutToken, cancellationToken), Error: (string?)null);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogWarning(ex, "Failed to send backchannel logout to client {ClientId}", clientId);
+                return (d.ClientId, Delivered: false, Error: ex.Message);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
+
+        foreach (var outcome in outcomes)
+        {
+            if (outcome.Delivered)
+            {
+                result.SuccessCount++;
+            }
+            else
+            {
                 result.FailedClients.Add(new BackchannelLogoutFailure
                 {
-                    ClientId = clientId,
-                    Error = ex.Message
+                    ClientId = outcome.ClientId,
+                    Error = outcome.Error ?? "The client did not accept the logout token"
                 });
             }
         }
@@ -157,68 +210,102 @@ public class BackchannelLogoutService : IBackchannelLogoutService, IResourceServ
         string? sessionId = null,
         CancellationToken cancellationToken = default)
     {
+        var prepared = await PrepareAsync(clientId, subjectId, sessionId, cancellationToken);
+        if (prepared == null)
+        {
+            return true; // Nothing to send: not configured, or not deliverable (logged)
+        }
+
+        return await PostAsync(clientId, prepared.Value.Target, prepared.Value.LogoutToken, cancellationToken);
+    }
+
+    /// <summary>
+    /// The client's backchannel logout URI and the logout token for it, or null when the client has none, cannot
+    /// receive one here, or requires a sid that is not known.
+    /// </summary>
+    private async Task<(Uri Target, string LogoutToken)?> PrepareAsync(
+        string clientId,
+        string subjectId,
+        string? sessionId,
+        CancellationToken cancellationToken)
+    {
         var client = await _clientStore.FindClientByIdAsync(clientId, cancellationToken);
-        if (client == null)
+        if (client == null || string.IsNullOrEmpty(client.BackChannelLogoutUri))
         {
-            _logger.LogDebug("Client {ClientId} not found, skipping backchannel logout", clientId);
-            return false;
+            return null;
         }
 
-        // Check if client has backchannel logout configured
-        if (string.IsNullOrEmpty(client.BackChannelLogoutUri))
-        {
-            _logger.LogDebug("Client {ClientId} has no backchannel logout URI configured", clientId);
-            return true; // Not a failure, just not configured
-        }
-
-        // Check if session ID is required but not provided
+        // backchannel_logout_session_required: the client can only act on a token with a sid (section 2.2).
         if (client.BackChannelLogoutSessionRequired && string.IsNullOrEmpty(sessionId))
         {
             _logger.LogWarning(
-                "Client {ClientId} requires session in logout token but no session ID provided",
-                clientId);
-            // Still try to send without session - some clients may accept it
+                "Client {ClientId} requires a sid in its logout token and none is known; not sent", clientId);
+            return null;
         }
 
+        var allowPrivateNetwork = _configuration.GetValue<bool>(AllowPrivateNetworkSetting);
+        var rejection = Uri.TryCreate(client.BackChannelLogoutUri, UriKind.Absolute, out var target)
+            ? PublicHttpTargets.ValidateTarget(target, allowPrivateNetwork)
+            : "not an absolute URL";
+        if (rejection != null)
+        {
+            _logger.LogWarning("Backchannel logout URI of client {ClientId} refused: {Reason}", clientId, rejection);
+            return null;
+        }
+
+        // The sub the client was issued, pairwise for a pairwise client, so the token names the user it knows.
+        var clientSubject = Oluso.Core.Protocols.SubjectIdentifiers.ForClient(subjectId, client.ClientId, client.PairWiseSubjectSalt);
+        var logoutToken = await _logoutTokenGenerator.GenerateLogoutTokenAsync(
+            clientId, clientSubject, sessionId, cancellationToken);
+        return (target!, logoutToken);
+    }
+
+    /// <summary>
+    /// Posts a logout token through the request forgery guard: every resolved address public (unless the deployment
+    /// allows its private network), the connection pinned to the checked address, no redirects, a short timeout.
+    /// </summary>
+    private async Task<bool> PostAsync(string clientId, Uri target, string logoutToken, CancellationToken cancellationToken)
+    {
         try
         {
-            // Generate the logout token
-            var logoutToken = await _logoutTokenGenerator.GenerateLogoutTokenAsync(
-                clientId, subjectId, sessionId, cancellationToken);
-
-            // Send the logout token to the client's backchannel logout URI
-            using var httpClient = _httpClientFactory.CreateClient();
-            httpClient.DefaultRequestHeaders.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("application/json"));
-
-            var content = new FormUrlEncodedContent(new[]
+            var allowPrivateNetwork = _configuration.GetValue<bool>(AllowPrivateNetworkSetting);
+            var address = await PublicHttpTargets.ResolvePublicAddressAsync(target, cancellationToken, allowPrivateNetwork);
+            if (address.Error != null)
             {
-                new KeyValuePair<string, string>("logout_token", logoutToken)
-            });
+                _logger.LogWarning("Backchannel logout URI of client {ClientId} refused: {Reason}", clientId, address.Error);
+                return false;
+            }
 
-            var response = await httpClient.PostAsync(
-                client.BackChannelLogoutUri, content, cancellationToken);
+            var httpClient = _httpClientFactory.CreateClient(HttpClientName);
+            httpClient.Timeout = SendTimeout;
+            using var message = new HttpRequestMessage(HttpMethod.Post, target)
+            {
+                Content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("logout_token", logoutToken)
+                })
+            };
+            PublicHttpTargets.Pin(message, address.Address!, allowPrivateNetwork);
+            message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            using var response = await httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogDebug(
-                    "Successfully sent backchannel logout to client {ClientId} at {Uri}",
-                    clientId, client.BackChannelLogoutUri);
+                _logger.LogDebug("Successfully sent backchannel logout to client {ClientId} at {Uri}", clientId, target);
                 return true;
             }
 
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            // The response body is the target's, not ours: never read into the logs.
             _logger.LogWarning(
-                "Backchannel logout to client {ClientId} failed with status {StatusCode}: {Response}",
-                clientId, (int)response.StatusCode, responseBody);
-
+                "Backchannel logout to client {ClientId} failed with status {StatusCode}",
+                clientId, (int)response.StatusCode);
             return false;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException ||
+                                   (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            _logger.LogWarning(ex,
-                "HTTP error sending backchannel logout to client {ClientId} at {Uri}",
-                clientId, client.BackChannelLogoutUri);
+            _logger.LogWarning("Backchannel logout to client {ClientId} failed: {Reason}", clientId, ex.Message);
             throw;
         }
     }

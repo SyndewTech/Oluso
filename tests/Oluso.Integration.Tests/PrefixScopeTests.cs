@@ -432,43 +432,7 @@ public class PrefixScopeTests : IntegrationTestBase, IDisposable
         return properties;
     }
 
-    /// <summary>An admin API client for the super admin, signed in to admin-portal and working in <see cref="Tenant"/>.</summary>
-    private async Task<HttpClient> SuperAdminClientAsync()
-    {
-        string userId = null!, clientId = null!, redirectUri = null!;
-        await WithDbContextAsync(async db =>
-        {
-            userId = (await db.Users.IgnoreQueryFilters().FirstAsync(u => u.Email == "superadmin@oluso.local")).Id;
-            var portal = await db.Clients.IgnoreQueryFilters().Include(c => c.RedirectUris).FirstAsync(c => c.ClientId == "admin-portal");
-            clientId = portal.ClientId;
-            redirectUri = portal.RedirectUris.First().RedirectUri;
-        });
-
-        var verifier = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var challenge = Convert.ToBase64String(SHA256.HashData(Encoding.ASCII.GetBytes(verifier))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var code = $"ps_{Guid.NewGuid():N}";
-        using (var scope = Factory.Services.CreateScope())
-        {
-            await scope.ServiceProvider.GetRequiredService<IAuthorizationCodeStore>().StoreAsync(new AuthorizationCode
-            {
-                Code = code, ClientId = clientId, SubjectId = userId, RedirectUri = redirectUri,
-                Scopes = new List<string> { "openid", "profile" },
-                CodeChallenge = challenge, CodeChallengeMethod = "S256", TenantId = "_platform",
-                CreationTime = DateTime.UtcNow, Expiration = DateTime.UtcNow.AddMinutes(5),
-            });
-        }
-
-        var tokens = await TokensAsync(await Client.PostAsync("/connect/token", new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["grant_type"] = "authorization_code", ["code"] = code, ["redirect_uri"] = redirectUri,
-            ["client_id"] = clientId, ["code_verifier"] = verifier,
-        })));
-
-        var http = Factory.CreateClient();
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("access_token").GetString());
-        http.DefaultRequestHeaders.Add("X-Tenant-Id", Tenant);
-        return http;
-    }
+    private Task<HttpClient> SuperAdminClientAsync() => SuperAdminClient.CreateAsync(Factory, Tenant);
 
     private Task<HttpResponseMessage> ClientCredentialsAsync(string clientId, string? scope)
     {

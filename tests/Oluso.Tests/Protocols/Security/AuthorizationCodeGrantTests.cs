@@ -29,6 +29,7 @@ public class AuthorizationCodeGrantTests
     private readonly Mock<IProfileService> _profileService;
     private readonly Mock<IPersistedGrantStore> _grantStore;
     private readonly Mock<IClientStore> _clientStore;
+    private readonly Mock<IAccessTokenRevocationStore> _revocations = new();
     private readonly AuthorizationCodeGrantHandler _handler;
 
     private const string TestCode = "test-authorization-code";
@@ -40,6 +41,7 @@ public class AuthorizationCodeGrantTests
     public AuthorizationCodeGrantTests()
     {
         _codeStore = new Mock<IAuthorizationCodeStore>();
+        _codeStore.Setup(x => x.TryConsumeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _pkceValidator = new Mock<IPkceValidator>();
         _profileService = new Mock<IProfileService>();
         _grantStore = new Mock<IPersistedGrantStore>();
@@ -53,7 +55,7 @@ public class AuthorizationCodeGrantTests
 
         // Mock client store
         _clientStore.Setup(x => x.FindClientByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Client { ClientId = TestClientId });
+            .ReturnsAsync(new Client { ClientId = TestClientId, AccessTokenLifetime = 3600 });
 
         _handler = new AuthorizationCodeGrantHandler(
             _codeStore.Object,
@@ -62,6 +64,7 @@ public class AuthorizationCodeGrantTests
             _grantStore.Object,
             _clientStore.Object,
             ClientUserAccessKit.For(_profileService.Object),
+            _revocations.Object,
             NullLogger<AuthorizationCodeGrantHandler>.Instance);
     }
 
@@ -119,8 +122,26 @@ public class AuthorizationCodeGrantTests
         result.Error.Should().Be(OidcConstants.Errors.InvalidGrant);
         result.ErrorDescription.Should().Contain("already been used");
 
-        // Should remove the code to prevent further replay attempts
-        _codeStore.Verify(x => x.RemoveAsync(TestCode, It.IsAny<CancellationToken>()), Times.Once);
+        // A replayed code is never redeemed again
+        _codeStore.Verify(x => x.TryConsumeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_LosingTheRaceToAParallelRedemption_IsAReplay()
+    {
+        // Two redemptions read the code before either marked it: only one may win the conditional update.
+        var authCode = CreateValidAuthCode();
+        authCode.SessionId = TestSessionId;
+        _codeStore.Setup(x => x.GetAsync(TestCode, It.IsAny<CancellationToken>())).ReturnsAsync(authCode);
+        _codeStore.Setup(x => x.TryConsumeAsync(TestCode, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var result = await _handler.HandleAsync(CreateValidTokenRequest());
+
+        result.IsValid.Should().BeFalse();
+        result.Error.Should().Be(OidcConstants.Errors.InvalidGrant);
+        _grantStore.Verify(x => x.RemoveAllAsync(
+            It.Is<PersistedGrantFilter>(f => f.SubjectId == TestSubjectId && f.ClientId == TestClientId && f.SessionId == TestSessionId),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -137,8 +158,9 @@ public class AuthorizationCodeGrantTests
 
         result.IsValid.Should().BeTrue();
 
-        // Code should be removed (one-time use)
-        _codeStore.Verify(x => x.RemoveAsync(TestCode, It.IsAny<CancellationToken>()), Times.Once);
+        // Code is marked redeemed (one-time use) and kept, so a later replay is recognised
+        _codeStore.Verify(x => x.TryConsumeAsync(TestCode, It.IsAny<CancellationToken>()), Times.Once);
+        _codeStore.Verify(x => x.RemoveAsync(TestCode, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -195,8 +217,11 @@ public class AuthorizationCodeGrantTests
                 f.SessionId == TestSessionId),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        // Should also remove the compromised code
-        _codeStore.Verify(x => x.RemoveAsync(TestCode, It.IsAny<CancellationToken>()), Times.Once);
+        // and the session's JWT access tokens, which can't be deleted, are refused until they would have expired
+        _revocations.Verify(x => x.RevokeSessionAsync(
+            authCode.TenantId, TestClientId, TestSessionId,
+            It.Is<DateTime>(d => d > DateTime.UtcNow.AddMinutes(59) && d <= DateTime.UtcNow.AddHours(1)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

@@ -18,7 +18,8 @@ namespace Oluso.Protocols.Oidc;
 /// revoking one to revoke both the access and the refresh token): a refresh token or reference token takes every
 /// grant of the same user, client and session with it; a JWT access token, which the server doesn't store, is
 /// verified (signature, and issued to the revoking client) and the grants of its user, client and session
-/// (<c>sid</c>) are removed. A token without a session revokes only itself.
+/// (<c>sid</c>) are removed, and the session's access tokens issued so far are refused from then on. A token
+/// without a session revokes only itself.
 /// </para>
 /// </summary>
 public class OidcRevocationController : OidcControllerBase
@@ -28,6 +29,7 @@ public class OidcRevocationController : OidcControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly ISigningCredentialStore? _signingCredentials;
     private readonly IOlusoEventService? _eventService;
+    private readonly IAccessTokenRevocationStore? _revocations;
     private readonly ILogger<OidcRevocationController> _logger;
 
     public OidcRevocationController(
@@ -36,8 +38,10 @@ public class OidcRevocationController : OidcControllerBase
         ITenantContext tenantContext,
         ILogger<OidcRevocationController> logger,
         IOlusoEventService? eventService = null,
-        ISigningCredentialStore? signingCredentials = null)
+        ISigningCredentialStore? signingCredentials = null,
+        IAccessTokenRevocationStore? revocations = null)
     {
+        _revocations = revocations;
         _clientAuthenticator = clientAuthenticator;
         _grantStore = grantStore;
         _tenantContext = tenantContext;
@@ -83,6 +87,12 @@ public class OidcRevocationController : OidcControllerBase
             {
                 await _grantStore.RemoveAsync(token, cancellationToken);
                 var siblings = await RevokeAuthorizationAsync(grant.SubjectId, clientId, grant.SessionId, cancellationToken);
+                // RFC 7009 section 2.1: the access tokens of the same authorization go with it.
+                if (_revocations != null && !string.IsNullOrEmpty(grant.SessionId))
+                {
+                    await _revocations.RevokeSessionAsync(grant.TenantId, clientId, grant.SessionId,
+                        DateTime.UtcNow.AddSeconds(clientAuth.Client!.AccessTokenLifetime), cancellationToken);
+                }
                 _logger.LogInformation("Token revoked for client {ClientId} with {Count} other grant(s) of its authorization",
                     clientId, siblings);
                 await RaiseAsync(grant.TenantId, clientId, grant.SubjectId, grant.Type, cancellationToken);
@@ -109,11 +119,26 @@ public class OidcRevocationController : OidcControllerBase
             }
             else if (!string.IsNullOrEmpty(jwt.Subject) && !string.IsNullOrEmpty(sessionId))
             {
+                var tenantId = jwt.Claims.FirstOrDefault(c => c.Type == "tenant_id")?.Value ?? _tenantContext.TenantId;
                 var revoked = await RevokeAuthorizationAsync(jwt.Subject, clientId, sessionId, cancellationToken);
+                // The token itself and every other access token of its session issued so far.
+                if (_revocations != null)
+                {
+                    var lastExpiry = DateTime.UtcNow.AddSeconds(clientAuth.Client!.AccessTokenLifetime);
+                    await _revocations.RevokeSessionAsync(tenantId, clientId, sessionId,
+                        jwt.ValidTo > lastExpiry ? jwt.ValidTo : lastExpiry, cancellationToken);
+                }
                 _logger.LogInformation("Access token revoked for client {ClientId}: {Count} grant(s) of its authorization removed",
                     clientId, revoked);
-                await RaiseAsync(jwt.Claims.FirstOrDefault(c => c.Type == "tenant_id")?.Value ?? _tenantContext.TenantId,
-                    clientId, jwt.Subject, "access_token", cancellationToken);
+                await RaiseAsync(tenantId, clientId, jwt.Subject, "access_token", cancellationToken);
+            }
+            else if (_revocations != null && !string.IsNullOrEmpty(jwt.Id))
+            {
+                // A token of no session (client credentials, for one) revokes only itself.
+                var tenantId = jwt.Claims.FirstOrDefault(c => c.Type == "tenant_id")?.Value ?? _tenantContext.TenantId;
+                await _revocations.RevokeTokenAsync(tenantId, clientId, jwt.Id, jwt.ValidTo, cancellationToken);
+                _logger.LogInformation("Access token {TokenId} revoked for client {ClientId}", jwt.Id, clientId);
+                await RaiseAsync(tenantId, clientId, jwt.Subject, "access_token", cancellationToken);
             }
         }
 

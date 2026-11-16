@@ -19,6 +19,7 @@ public class OidcPushedAuthorizationController : OidcControllerBase
 {
     private readonly IClientAuthenticator _clientAuthenticator;
     private readonly IAuthorizeRequestValidator _authorizeValidator;
+    private readonly IRequestObjectValidator _requestObjectValidator;
     private readonly IPushedAuthorizationStore _parStore;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OidcPushedAuthorizationController> _logger;
@@ -28,12 +29,14 @@ public class OidcPushedAuthorizationController : OidcControllerBase
     public OidcPushedAuthorizationController(
         IClientAuthenticator clientAuthenticator,
         IAuthorizeRequestValidator authorizeValidator,
+        IRequestObjectValidator requestObjectValidator,
         IPushedAuthorizationStore parStore,
         IConfiguration configuration,
         ILogger<OidcPushedAuthorizationController> logger)
     {
         _clientAuthenticator = clientAuthenticator;
         _authorizeValidator = authorizeValidator;
+        _requestObjectValidator = requestObjectValidator;
         _parStore = parStore;
         _configuration = configuration;
         _logger = logger;
@@ -77,6 +80,7 @@ public class OidcPushedAuthorizationController : OidcControllerBase
             IdTokenHint = form["id_token_hint"].FirstOrDefault(),
             LoginHint = form["login_hint"].FirstOrDefault(),
             AcrValues = form["acr_values"].FirstOrDefault(),
+            Claims = form[ClaimsRequest.ParameterName].FirstOrDefault(),
             UiLocales = form["ui_locales"].FirstOrDefault(),
             Request = form["request"].FirstOrDefault(),
             RequestUri = form["request_uri"].FirstOrDefault(),
@@ -142,6 +146,24 @@ public class OidcPushedAuthorizationController : OidcControllerBase
             });
         }
 
+        // A pushed request object (RFC 9126 section 3) is verified now and its parameters applied, so what is
+        // stored, and later used at the authorize endpoint, is what the client signed.
+        if (!string.IsNullOrEmpty(request.Request))
+        {
+            var requestObject = await _requestObjectValidator.ValidateAsync(
+                client.ClientId, request.Request, requestUri: null, cancellationToken);
+            if (!requestObject.IsValid)
+            {
+                return BadRequest(new TokenErrorResponse
+                {
+                    Error = requestObject.Error!,
+                    ErrorDescription = requestObject.ErrorDescription
+                });
+            }
+
+            ApplyRequestObject(request, requestObject.Parameters);
+        }
+
         // Validate the request (except for user authentication which happens at authorize endpoint)
         var validationResult = await _authorizeValidator.ValidateAsync(request, cancellationToken);
         if (!validationResult.IsValid)
@@ -181,6 +203,36 @@ public class OidcPushedAuthorizationController : OidcControllerBase
             RequestUri = requestUri,
             ExpiresIn = lifetime
         });
+    }
+
+    /// <summary>
+    /// Applies a verified request object's parameters over those sent alongside it: the request object's
+    /// values take precedence (OpenID Connect Core section 6.3.3).
+    /// </summary>
+    private static void ApplyRequestObject(AuthorizeRequest request, IReadOnlyDictionary<string, string> parameters)
+    {
+        string? Value(string name, string? current) => parameters.TryGetValue(name, out var value) ? value : current;
+
+        request.RedirectUri = Value("redirect_uri", request.RedirectUri);
+        request.ResponseType = Value("response_type", request.ResponseType) ?? string.Empty;
+        request.Scope = Value("scope", request.Scope);
+        request.State = Value("state", request.State);
+        request.Nonce = Value("nonce", request.Nonce);
+        request.CodeChallenge = Value("code_challenge", request.CodeChallenge);
+        request.CodeChallengeMethod = Value("code_challenge_method", request.CodeChallengeMethod);
+        request.ResponseMode = Value("response_mode", request.ResponseMode);
+        request.Prompt = Value("prompt", request.Prompt);
+        request.MaxAge = Value("max_age", request.MaxAge);
+        request.IdTokenHint = Value("id_token_hint", request.IdTokenHint);
+        request.LoginHint = Value("login_hint", request.LoginHint);
+        request.AcrValues = Value("acr_values", request.AcrValues);
+        request.Claims = Value(ClaimsRequest.ParameterName, request.Claims);
+        request.UiLocales = Value("ui_locales", request.UiLocales);
+        request.DPoPKeyThumbprint = Value(OidcProtocolService.DPoPJktParameter, request.DPoPKeyThumbprint);
+        if (parameters.TryGetValue(OidcResourceParameters.Name, out var resource))
+        {
+            request.Resource = OidcResourceParameters.Split(resource);
+        }
     }
 
     private static string GenerateRequestUri()

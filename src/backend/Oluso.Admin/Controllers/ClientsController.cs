@@ -28,6 +28,7 @@ public class ClientsController : AdminBaseController
     private readonly IOlusoEventService _eventService;
     private readonly IServiceApiScopeProvisioner _serviceApiScopeProvisioner;
     private readonly IAuthorizationService _authorization;
+    private readonly IClientSecretProtector _secrets;
     private readonly ILogger<ClientsController> _logger;
 
     public ClientsController(
@@ -38,10 +39,12 @@ public class ClientsController : AdminBaseController
         IOlusoEventService eventService,
         IServiceApiScopeProvisioner serviceApiScopeProvisioner,
         IAuthorizationService authorization,
+        IClientSecretProtector secrets,
         ILogger<ClientsController> logger,
         ICorsOriginsCacheInvalidator? corsCache = null)
         : base(tenantContext)
     {
+        _secrets = secrets;
         _corsCache = corsCache;
         _clientStore = clientStore;
         _tenantSettingsProvider = tenantSettingsProvider;
@@ -78,6 +81,7 @@ public class ClientsController : AdminBaseController
             ClientName = c.ClientName,
             Description = c.Description,
             Enabled = c.Enabled,
+            NonEditable = IsManagedTenantClient(c),
             AllowedGrantTypes = c.AllowedGrantTypes.Select(g => g.GrantType).ToList(),
             RequireClientSecret = c.RequireClientSecret,
             RequirePkce = c.RequirePkce,
@@ -213,6 +217,10 @@ public class ClientsController : AdminBaseController
         {
             return BadRequest(new { error = resourceError });
         }
+        if (InvalidJwksUri(request.JwksUri) is { } jwksUriError)
+        {
+            return BadRequest(new { error = jwksUriError });
+        }
 
         if (InvalidAllowedResource(request.IntrospectionResources, "Introspection resource") is { } introspectionResourceError)
         {
@@ -230,14 +238,12 @@ public class ClientsController : AdminBaseController
         // Generate client secret if needed
         if (request.RequireClientSecret != false && !string.IsNullOrEmpty(request.ClientSecret))
         {
-            client.ClientSecrets = new List<ClientSecret>
+            if (HmacSecretTooShort(client, request.ClientSecret) is { } tooShort)
             {
-                new ClientSecret
-                {
-                    Value = HashSecret(request.ClientSecret),
-                    LastThreeChars = GetLastThreeChars(request.ClientSecret)
-                }
-            };
+                return BadRequest(new { error = tooShort });
+            }
+
+            client.ClientSecrets = new List<ClientSecret> { NewSecret(_secrets, client, request.ClientSecret) };
         }
 
         var created = await _clientStore.AddClientAsync(client, cancellationToken);
@@ -276,6 +282,11 @@ public class ClientsController : AdminBaseController
         if (client == null)
         {
             return NotFound();
+        }
+
+        if (IsManagedTenantClient(client))
+        {
+            return ManagedClientRefusal();
         }
 
         return await UpdateClientInternal(client, request, cancellationToken);
@@ -343,6 +354,10 @@ public class ClientsController : AdminBaseController
         {
             return BadRequest(new { error = resourceError });
         }
+        if (InvalidJwksUri(request.JwksUri) is { } jwksUriError)
+        {
+            return BadRequest(new { error = jwksUriError });
+        }
 
         if (InvalidAllowedResource(request.IntrospectionResources, "Introspection resource") is { } introspectionResourceError)
         {
@@ -391,6 +406,11 @@ public class ClientsController : AdminBaseController
             return NotFound();
         }
 
+        if (IsManagedTenantClient(client))
+        {
+            return ManagedClientRefusal();
+        }
+
         await _clientStore.DeleteByIdAsync(id, cancellationToken);
         if (_corsCache != null) await _corsCache.InvalidateCacheAsync(cancellationToken);
 
@@ -427,18 +447,19 @@ public class ClientsController : AdminBaseController
             return NotFound();
         }
 
+        if (IsManagedTenantClient(client))
+        {
+            return ManagedClientRefusal();
+        }
+
         if (!client.RequireClientSecret)
         {
             return BadRequest(new { error = "Client does not require a secret" });
         }
 
         // Generate new secret and add it (keeping existing secrets)
-        var newSecret = GenerateClientSecret();
-        client.ClientSecrets.Add(new ClientSecret
-        {
-            Value = HashSecret(newSecret),
-            LastThreeChars = GetLastThreeChars(newSecret)
-        });
+        var newSecret = ClientSecretProtector.GenerateSecret(ClientSecretProtector.UsesHmac(client));
+        client.ClientSecrets.Add(NewSecret(_secrets, client, newSecret));
 
         await _clientStore.UpdateClientAsync(client, cancellationToken);
 
@@ -450,6 +471,178 @@ public class ClientsController : AdminBaseController
             ClientSecret = newSecret, // Only time we return the plain secret
             SecretId = client.ClientSecrets.Last().Id // Return the new secret's ID
         });
+    }
+
+    /// <summary>
+    /// Adds a public key the client signs its JWTs with (private_key_jwt, RFC 7523; request objects, RFC 9101), or a
+    /// certificate for self-signed mutual TLS (RFC 8705). Only public material is accepted, and existing keys stay, so
+    /// a new key can be added before the old one is removed.
+    /// </summary>
+    [HttpPost("{id:int}/keys")]
+    [RequirePermission(AdminPermissions.ClientsManageSecrets)]
+    public async Task<ActionResult<ClientSecretDto>> AddKey(
+        int id,
+        [FromBody] AddClientKeyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var client = await _clientStore.GetByIdAsync(id, cancellationToken);
+        if (client == null)
+        {
+            return NotFound();
+        }
+
+        if (IsManagedTenantClient(client))
+        {
+            return ManagedClientRefusal();
+        }
+
+        var (secret, error) = NewPublicKey(client, request);
+        if (error != null)
+        {
+            return BadRequest(new { error });
+        }
+
+        client.ClientSecrets.Add(secret!);
+        await _clientStore.UpdateClientAsync(client, cancellationToken);
+
+        _logger.LogInformation("Added a {Type} to client {ClientId}", secret!.Type, client.ClientId);
+
+        return Ok(ToSecretDto(secret));
+    }
+
+    /// <summary>
+    /// The client secret holding the public key or certificate in <paramref name="request"/>, or why it cannot be
+    /// added: not public key material, already on the client, already expired, or one key too many.
+    /// </summary>
+    internal static (ClientSecret? Secret, string? Error) NewPublicKey(Client client, AddClientKeyRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Value))
+        {
+            return (null, "Paste the public key or certificate");
+        }
+
+        var publicKeys = client.ClientSecrets.Count(s => s.Type is ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType);
+        if (publicKeys >= MaxPublicKeys)
+        {
+            return (null, $"A client can hold at most {MaxPublicKeys} public keys; remove one first");
+        }
+
+        ClientSecret secret;
+        switch (request.Type.Trim().ToLowerInvariant())
+        {
+            case "jwk":
+            {
+                var (json, keyId, error) = ClientPublicKeys.ReadJwk(request.Value);
+                if (error != null)
+                {
+                    return (null, error);
+                }
+                if (client.ClientSecrets.Any(s => s.Type == ClientPublicKeys.JsonWebKeyType
+                        && (s.Value == json || (keyId != null && PublicKeyId(s) == keyId))))
+                {
+                    return (null, "This client already has that key");
+                }
+                secret = new ClientSecret
+                {
+                    Type = ClientPublicKeys.JsonWebKeyType,
+                    Value = json!,
+                    Description = Describe(request.Description, keyId != null ? $"JWK {keyId}" : "JWK"),
+                    Expiration = request.Expiration
+                };
+                break;
+            }
+            case "certificate":
+            {
+                var (der, thumbprint, notAfter, error) = ClientPublicKeys.ReadCertificate(request.Value);
+                if (error != null)
+                {
+                    return (null, error);
+                }
+                if (client.ClientSecrets.Any(s => s.Type == ClientPublicKeys.CertificateType && s.Value == der))
+                {
+                    return (null, "This client already has that certificate");
+                }
+                secret = new ClientSecret
+                {
+                    Type = ClientPublicKeys.CertificateType,
+                    Value = der!,
+                    Description = Describe(request.Description, $"Certificate {thumbprint![..16]}"),
+                    Expiration = request.Expiration is { } requested && requested < notAfter ? requested : notAfter
+                };
+                break;
+            }
+            default:
+                return (null, "type must be jwk or certificate");
+        }
+
+        if (secret.Expiration is { } expiration && expiration <= DateTime.UtcNow)
+        {
+            return (null, "The expiration must be in the future");
+        }
+
+        return (secret, null);
+    }
+
+    internal static ClientSecretDto ToSecretDto(ClientSecret secret) => new()
+    {
+        Id = secret.Id,
+        Description = secret.Description,
+        Expiration = secret.Expiration,
+        Type = secret.Type,
+        Created = secret.Created,
+        LastThreeChars = secret.LastThreeChars,
+        KeyId = PublicKeyId(secret)
+    };
+
+    /// <summary>
+    /// A client a module created and keeps up to date (<see cref="Client.NonEditable"/>, such as an integration's
+    /// bridge or a module's own app) is shown to tenant administrators but not changed by them: its settings, keys and
+    /// secrets are the module's.
+    /// </summary>
+    internal static bool IsManagedTenantClient(Client client) =>
+        // Platform clients are always stored non-editable for tenants; super admins edit them all the same.
+        client.NonEditable && client.TenantId != Oluso.Core.PlatformConstants.TenantId;
+
+    private BadRequestObjectResult ManagedClientRefusal() =>
+        BadRequest(new { error = "This application is managed by a module and cannot be changed here" });
+
+    /// <summary>The most public keys and certificates a client holds (enough for rotation).</summary>
+    private const int MaxPublicKeys = 10;
+
+    private static string Describe(string? given, string fallback) =>
+        string.IsNullOrWhiteSpace(given) ? fallback : given.Trim();
+
+    /// <summary>A public key's identifier: a JWK's kid, a certificate's SHA-256 thumbprint; null otherwise.</summary>
+    private static string? PublicKeyId(ClientSecret secret)
+    {
+        if (secret.Type == ClientPublicKeys.JsonWebKeyType)
+        {
+            try
+            {
+                using var jwk = System.Text.Json.JsonDocument.Parse(secret.Value);
+                return jwk.RootElement.TryGetProperty("kid", out var kid) && kid.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? kid.GetString()
+                    : null;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return null;
+            }
+        }
+
+        if (secret.Type == ClientPublicKeys.CertificateType)
+        {
+            try
+            {
+                return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Convert.FromBase64String(secret.Value)));
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -467,6 +660,11 @@ public class ClientsController : AdminBaseController
         if (client == null)
         {
             return NotFound();
+        }
+
+        if (IsManagedTenantClient(client))
+        {
+            return ManagedClientRefusal();
         }
 
         var secret = client.ClientSecrets.FirstOrDefault(s => s.Id == secretId);
@@ -502,6 +700,7 @@ public class ClientsController : AdminBaseController
             Description = request.Description,
             ClientUri = request.ClientUri,
             LogoUri = request.LogoUri,
+            JwksUri = string.IsNullOrWhiteSpace(request.JwksUri) ? null : request.JwksUri.Trim(),
             Enabled = request.Enabled ?? true,
 
             // Authentication settings
@@ -586,6 +785,7 @@ public class ClientsController : AdminBaseController
         if (request.Description != null) client.Description = request.Description;
         if (request.ClientUri != null) client.ClientUri = request.ClientUri;
         if (request.LogoUri != null) client.LogoUri = request.LogoUri;
+        if (request.JwksUri != null) client.JwksUri = string.IsNullOrWhiteSpace(request.JwksUri) ? null : request.JwksUri.Trim();
         if (request.Enabled.HasValue) client.Enabled = request.Enabled.Value;
 
         // Update authentication settings
@@ -673,6 +873,16 @@ public class ClientsController : AdminBaseController
     /// Why a client's allowed-resources list is unusable, or null. Each entry must be a resource
     /// indicator: an absolute http(s) URI with no fragment (RFC 8707 §2).
     /// </summary>
+    /// <summary>
+    /// Why a client's jwks_uri cannot be used, or null when it can (or is being removed): an absolute https URL on a
+    /// public host, the same rule every fetch of it is held to (<see cref="Core.Security.PublicHttpTargets"/>).
+    /// </summary>
+    internal static string? InvalidJwksUri(string? jwksUri) =>
+        string.IsNullOrWhiteSpace(jwksUri)
+        || (Uri.TryCreate(jwksUri.Trim(), UriKind.Absolute, out var uri) && Core.Security.PublicHttpTargets.ValidateTarget(uri) == null)
+            ? null
+            : "The key set URL (jwks_uri) must be an absolute https URL on a public host";
+
     internal static string? InvalidAllowedResource(IEnumerable<string>? resources, string label = "Allowed resource")
     {
         foreach (var value in resources ?? Array.Empty<string>())
@@ -811,22 +1021,16 @@ public class ClientsController : AdminBaseController
         ClientName = client.ClientName,
         Description = client.Description,
         ClientUri = client.ClientUri,
+        JwksUri = client.JwksUri,
         LogoUri = client.LogoUri,
         Enabled = client.Enabled,
+        NonEditable = IsManagedTenantClient(client),
         Created = client.Created,
         Updated = client.Updated,
         LastAccessed = client.LastAccessed,
 
         // Client secrets (metadata only, no hashed values)
-        Secrets = client.ClientSecrets.Select(s => new ClientSecretDto
-        {
-            Id = s.Id,
-            Description = s.Description,
-            Expiration = s.Expiration,
-            Type = s.Type,
-            Created = s.Created,
-            LastThreeChars = s.LastThreeChars
-        }).ToList(),
+        Secrets = client.ClientSecrets.Select(ToSecretDto).ToList(),
 
         // Authentication settings
         RequireClientSecret = client.RequireClientSecret,
@@ -916,21 +1120,24 @@ public class ClientsController : AdminBaseController
         AllowedUsers = client.AllowedUsers.Select(u => new AllowedUserDto { SubjectId = u.SubjectId, DisplayName = u.DisplayName }).ToList()
     };
 
-    internal static string HashSecret(string secret)
+    /// <summary>
+    /// A new secret row for the client: hashed, or encrypted when the client signs JWTs with its secret (HMAC),
+    /// which needs the secret itself to verify them.
+    /// </summary>
+    internal static ClientSecret NewSecret(IClientSecretProtector secrets, Client client, string secret) => new()
     {
-        using var sha256 = System.Security.Cryptography.SHA256.Create();
-        var bytes = System.Text.Encoding.UTF8.GetBytes(secret);
-        var hash = sha256.ComputeHash(bytes);
-        return Convert.ToBase64String(hash);
-    }
+        Value = secrets.ToStoredValue(secret, ClientSecretProtector.UsesHmac(client)),
+        LastThreeChars = GetLastThreeChars(secret)
+    };
 
-    internal static string GenerateClientSecret()
-    {
-        var bytes = new byte[32];
-        using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
-        rng.GetBytes(bytes);
-        return Convert.ToBase64String(bytes);
-    }
+    /// <summary>
+    /// Why a secret chosen for an HMAC client cannot be its key, or null when it can: an HMAC key must be at least
+    /// as long as the hash output (RFC 7518 section 3.2), 32 bytes for HS256.
+    /// </summary>
+    internal static string? HmacSecretTooShort(Client client, string secret) =>
+        ClientSecretProtector.UsesHmac(client) && System.Text.Encoding.UTF8.GetByteCount(secret) < 32
+            ? "A client that signs JWTs with its secret (client_secret_jwt or an HS request object algorithm) needs a secret of at least 32 bytes"
+            : null;
 
     internal static string? GetLastThreeChars(string secret)
     {

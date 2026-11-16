@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Oluso.Core.Domain.Entities;
 using Oluso.Integration.Tests.Fixtures;
 using Xunit;
 
@@ -112,6 +114,48 @@ public class OidcDiscoveryTests : IntegrationTestBase
         firstKey.TryGetProperty("kty", out _).Should().BeTrue();
         firstKey.TryGetProperty("use", out _).Should().BeTrue();
         firstKey.TryGetProperty("kid", out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Jwks_ForTenantWithoutSigningKey_PublishesTheKeyItWillSignWith()
+    {
+        // A tenant that has issued no token yet has no key of its own. Its key set must already hold the key its
+        // first token is signed with, or a relying party that fetched the key set first cannot verify that token.
+        var tenantId = $"jwks-{Guid.NewGuid():N}"[..20];
+        await WithDbContextAsync(async db =>
+        {
+            db.Tenants!.Add(new Tenant
+            {
+                Id = tenantId,
+                Name = tenantId,
+                DisplayName = "Fresh tenant",
+                Identifier = tenantId,
+                OrganizationId = "jwks-fresh-org",
+                Enabled = true
+            });
+            await db.SaveChangesAsync();
+        });
+
+        var client = Factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Tenant-ID", tenantId);
+        var response = await client.GetAsync("/.well-known/jwks");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var jwks = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var kids = jwks.RootElement.GetProperty("keys").EnumerateArray()
+            .Select(k => k.GetProperty("kid").GetString()).ToList();
+
+        string? tenantKeyId = null;
+        await WithDbContextAsync(async db =>
+        {
+            tenantKeyId = await db.SigningKeys.IgnoreQueryFilters()
+                .Where(k => k.TenantId == tenantId && k.Status == SigningKeyStatus.Active)
+                .Select(k => k.KeyId)
+                .SingleOrDefaultAsync();
+        });
+
+        tenantKeyId.Should().NotBeNull();
+        kids.Should().Contain(tenantKeyId);
     }
 
     [Fact]
