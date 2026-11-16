@@ -96,6 +96,17 @@ public class DirectAuthorizationCodeTests
     }
 
     [Fact]
+    public async Task A_passkey_that_verified_the_user_signs_in_with_mfa()
+    {
+        _fido2.Setup(f => f.VerifyAssertionAsync("a1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Fido2AssertionResult { Succeeded = true, UserId = "u1", CredentialId = "cred-1", UserVerified = true });
+
+        await Passkeys().VerifyAssertion(Assertion(), default);
+
+        AuthorizationCodes.ReadAmr(_kit.Codes.Single()).Should().Equal("fido2", "hwk", "mfa");
+    }
+
+    [Fact]
     public async Task A_scope_the_client_is_not_allowed_is_left_out_of_the_code()
     {
         var result = await Passkeys().VerifyAssertion(Assertion(scope: "openid permissions no.such.scope"), default);
@@ -315,7 +326,8 @@ public class DirectAuthorizationCodeTests
     [InlineData(new[] { "external" }, true, false)]
     [InlineData(new[] { "pwd" }, false, false)]
     [InlineData(new[] { "pwd", "mfa" }, true, true)]
-    [InlineData(new[] { "hwk" }, true, true)]
+    [InlineData(new[] { "fido2", "hwk", "mfa" }, true, true)]
+    [InlineData(new[] { "fido2", "hwk" }, true, false)]
     public async Task A_tenant_that_requires_mfa_gets_a_code_only_for_a_sign_in_with_a_second_factor(
         string[] methods, bool tenantRequiresMfa, bool issued)
     {

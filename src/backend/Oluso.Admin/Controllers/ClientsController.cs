@@ -606,6 +606,16 @@ public class ClientsController : AdminBaseController
     private BadRequestObjectResult ManagedClientRefusal() =>
         BadRequest(new { error = "This application is managed by a module and cannot be changed here" });
 
+    /// <summary>
+    /// Whether <paramref name="secret"/> is the last shared secret of a client that signs in with one (any method but
+    /// private_key_jwt and the mutual TLS ones).
+    /// </summary>
+    internal static bool IsLastSharedSecret(Client client, ClientSecret secret) =>
+        client.RequireClientSecret
+        && secret.Type is not (ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType)
+        && client.TokenEndpointAuthMethod is not ("private_key_jwt" or "tls_client_auth" or "self_signed_tls_client_auth")
+        && client.ClientSecrets.Count(s => s.Type is not (ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType)) <= 1;
+
     /// <summary>The most public keys and certificates a client holds (enough for rotation).</summary>
     private const int MaxPublicKeys = 10;
 
@@ -673,8 +683,9 @@ public class ClientsController : AdminBaseController
             return NotFound(new { error = "Secret not found" });
         }
 
-        // Ensure at least one secret remains if client requires secret
-        if (client.RequireClientSecret && client.ClientSecrets.Count <= 1)
+        // A client that signs in with a shared secret keeps at least one; a public key can always be removed (its
+        // replacement is added first, or the client reads its keys from its jwks_uri).
+        if (IsLastSharedSecret(client, secret))
         {
             return BadRequest(new { error = "Cannot delete the last secret for a client that requires a secret" });
         }

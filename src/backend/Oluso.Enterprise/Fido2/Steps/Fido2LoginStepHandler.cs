@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
+using Oluso.Core.Authentication;
 
 namespace Oluso.Enterprise.Fido2.Steps;
 
@@ -189,6 +190,8 @@ public class Fido2LoginStepHandler : ICustomStepHandler, ICustomStepHandlerMetad
             context.UserId = user.Id;
             context.SetData("authenticated_at", DateTime.UtcNow);
             context.SetData("auth_method", "fido2");
+            var amr = PasskeyAuthenticationMethods.Amr(result.UserVerified);
+            context.SetData("amr", amr);
             context.SetData("credential_id", result.CredentialId ?? "");
 
             await userService.RecordLoginAsync(user.Id, cancellationToken);
@@ -202,7 +205,7 @@ public class Fido2LoginStepHandler : ICustomStepHandler, ICustomStepHandlerMetad
                 ["name"] = user.DisplayName ?? user.Username,
                 ["email"] = user.Email ?? "",
                 ["email_verified"] = user.EmailVerified,
-                ["amr"] = new[] { "hwk" } // Hardware key authentication method
+                ["amr"] = amr
             };
 
             if (!string.IsNullOrEmpty(user.FirstName))

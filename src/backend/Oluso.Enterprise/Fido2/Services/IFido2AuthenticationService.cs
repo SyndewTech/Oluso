@@ -196,6 +196,10 @@ public class Fido2AssertionResult
     public string? UserId { get; set; }
     public string? CredentialId { get; set; }
     public uint SignatureCounter { get; set; }
+
+    /// <summary>The authenticator verified the user with a PIN or biometric (WebAuthn UV flag), not only their presence.</summary>
+    public bool UserVerified { get; set; }
+
     public string? Error { get; set; }
     public string? ErrorCode { get; set; }
 }

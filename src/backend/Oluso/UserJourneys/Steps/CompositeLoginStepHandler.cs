@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
+using Oluso.Core.Authentication;
 
 namespace Oluso.UserJourneys.Steps;
 
@@ -298,6 +299,7 @@ public class CompositeLoginStepHandler : IPrimaryAuthenticationStep, IStepConfig
             context.SetData("authenticated_at", DateTime.UtcNow);
             context.SetData("remember_me", context.GetInput("rememberMe") is "true" or "on");
             context.SetData("auth_method", "fido2");
+            context.SetData("amr", PasskeyAuthenticationMethods.Amr(result.UserVerified));
             if (!string.IsNullOrEmpty(user.TenantId))
                 context.SetData("tenant_id", user.TenantId);
 
@@ -501,6 +503,9 @@ public class CompositeLoginStepHandler : IPrimaryAuthenticationStep, IStepConfig
         context.SetData("remember_me", context.GetInput("rememberMe") is "true" or "on");
         context.SetData("auth_method", provider.ToLower());
         context.SetData("idp", provider);
+        // The provider did multi-factor authentication (amr, RFC 8176): the sign-in has its second factor.
+        if (result.ProviderReportedMfa)
+            context.SetData("amr", "mfa");
         if (!string.IsNullOrEmpty(user.TenantId))
             context.SetData("tenant_id", user.TenantId);
 

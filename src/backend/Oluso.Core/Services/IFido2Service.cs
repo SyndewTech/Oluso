@@ -171,11 +171,15 @@ public class Fido2AssertionResult
     public string? UserId { get; init; }
     public string? CredentialId { get; init; }
     public int? SignCount { get; init; }
+
+    /// <summary>The authenticator verified the user with a PIN or biometric (WebAuthn UV flag), not only their presence.</summary>
+    public bool UserVerified { get; init; }
+
     public string? Error { get; init; }
     public string? ErrorDescription { get; init; }
 
-    public static Fido2AssertionResult Success(string userId, string credentialId, int signCount) =>
-        new() { Succeeded = true, UserId = userId, CredentialId = credentialId, SignCount = signCount };
+    public static Fido2AssertionResult Success(string userId, string credentialId, int signCount, bool userVerified) =>
+        new() { Succeeded = true, UserId = userId, CredentialId = credentialId, SignCount = signCount, UserVerified = userVerified };
 
     public static Fido2AssertionResult Failed(string error, string? description = null) =>
         new() { Succeeded = false, Error = error, ErrorDescription = description };

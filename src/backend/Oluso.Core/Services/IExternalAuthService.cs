@@ -228,6 +228,12 @@ public class ExternalLoginResult
     public IDictionary<string, string>? Claims { get; init; }
 
     /// <summary>
+    /// The provider's sign-in reported multi-factor authentication (amr, RFC 8176). <see cref="Claims"/> keeps one value
+    /// per claim type, so a multi-valued amr is read here instead.
+    /// </summary>
+    public bool ProviderReportedMfa { get; init; }
+
+    /// <summary>
     /// External access token (if available)
     /// </summary>
     public string? AccessToken { get; init; }

@@ -169,9 +169,7 @@ public sealed class MfaSignInGate
     /// had its second factor.
     /// </summary>
     public static bool ExternalProviderReportsMfa(ClaimsPrincipal externalPrincipal) =>
-        externalPrincipal.Claims.Any(c =>
-            (c.Type == "amr" || c.Type == "http://schemas.microsoft.com/claims/authnmethodsreferences")
-            && c.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("mfa", StringComparer.OrdinalIgnoreCase));
+        SecondFactorRequirement.ProviderReportsMfa(externalPrincipal.Claims);
 
     private static string? UserIdOf(ClaimsPrincipal principal) =>
         principal.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? principal.FindFirst("sub")?.Value;

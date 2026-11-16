@@ -4,6 +4,7 @@ using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
+using Oluso.Core.Authentication;
 
 namespace Oluso.UserJourneys.Steps;
 
@@ -363,6 +364,7 @@ public class LocalLoginStepHandler : IPrimaryAuthenticationStep
             context.SetData("authenticated_at", DateTime.UtcNow);
             context.SetData("remember_me", context.GetInput("rememberMe") is "true" or "on");
             context.SetData("auth_method", "fido2");
+            context.SetData("amr", PasskeyAuthenticationMethods.Amr(result.UserVerified));
 
             await userService.RecordLoginAsync(user.Id, cancellationToken);
 

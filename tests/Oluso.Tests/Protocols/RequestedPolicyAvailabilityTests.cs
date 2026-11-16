@@ -29,7 +29,8 @@ public class RequestedPolicyAvailabilityTests
     {
         var policies = new Mock<IJourneyPolicyStore>();
         policies.Setup(p => p.GetBySlugAsync("business-signin", It.IsAny<CancellationToken>())).ReturnsAsync(requested);
-        policies.Setup(p => p.GetByTypeAsync(JourneyType.SignIn, It.IsAny<CancellationToken>())).ReturnsAsync(defaultSignIn);
+        policies.Setup(p => p.FindMatchingAsync(It.Is<JourneyPolicyMatchContext>(m => m.Type == JourneyType.SignIn), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(defaultSignIn);
 
         var orchestrator = new Mock<IJourneyOrchestrator>();
         orchestrator.Setup(o => o.StartJourneyAsync(It.IsAny<JourneyPolicy>(), It.IsAny<JourneyStartContext>(), It.IsAny<CancellationToken>()))

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using Oluso.Authentication;
 using Oluso.Core.Authentication;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
@@ -27,9 +28,8 @@ namespace Oluso.Enterprise.Fido2.Controllers;
 [EnableRateLimiting(SignInRateLimitPolicies.SignIn)]
 public class Fido2LoginController : Controller
 {
-    /// <summary>The method and amr every passkey sign-in records.</summary>
+    /// <summary>The method every passkey sign-in records.</summary>
     private const string AuthenticationMethod = "fido2";
-    private static readonly string[] PasskeyMethods = { AuthenticationMethod, "hwk" };
 
     private readonly IFido2Service _fido2Service;
     private readonly IOlusoUserService _userService;
@@ -111,7 +111,7 @@ public class Fido2LoginController : Controller
         returnUrl = await SafeReturnUrlAsync(returnUrl, cancellationToken);
         var outcome = await CompleteSignInAsync(assertionResponse, returnUrl, cancellationToken);
         return outcome.Error == null
-            ? Redirect(returnUrl)
+            ? Redirect(outcome.Redirect ?? returnUrl)
             : Content(GenerateErrorPage(outcome.Error, returnUrl), "text/html");
     }
 
@@ -130,11 +130,12 @@ public class Fido2LoginController : Controller
             return BadRequest(new { error = "Session expired", redirect = $"/fido2/login?returnUrl={Uri.EscapeDataString(returnUrl)}" });
         }
         return outcome.Error == null
-            ? Ok(new { success = true, redirect = returnUrl })
+            ? Ok(new { success = true, redirect = outcome.Redirect ?? returnUrl })
             : BadRequest(new { error = outcome.Error });
     }
 
-    private sealed record SignInOutcome(string? Error, bool SessionExpired = false);
+    /// <summary>How the sign-in ended: an error to show, or where to go (the MFA page when the sign-in was held for a second factor).</summary>
+    private sealed record SignInOutcome(string? Error, bool SessionExpired = false, string? Redirect = null);
 
     /// <summary>Both forms of the page end here: verify, sign in, record the login and audit it.</summary>
     private async Task<SignInOutcome> CompleteSignInAsync(string assertionResponse, string returnUrl, CancellationToken cancellationToken)
@@ -169,9 +170,20 @@ public class Fido2LoginController : Controller
                 return new SignInOutcome(user == null ? "User not found." : "Your account has been deactivated.");
             }
 
-            _logger.LogInformation("User {UserId} logged in via passkey", user.Id);
+            var methods = new[] { AuthenticationMethod }.Concat(PasskeyAuthenticationMethods.Amr(result.UserVerified)).ToArray();
+            var (principal, properties) = await BuildSessionAsync(user.Id, methods);
 
-            await SignInUserAsync(user.Id);
+            // A passkey that did not verify its user is one factor: on a tenant that requires MFA the session is issued
+            // after the second factor, on the MFA page, which records and audits the sign-in.
+            var gate = HttpContext.RequestServices.GetService<MfaSignInGate>();
+            if (gate != null && await gate.HoldIfSecondFactorMissingAsync(HttpContext, principal, properties, returnUrl,
+                    AuthenticationMethod, cancellationToken: cancellationToken) is RedirectResult secondFactor)
+            {
+                return new SignInOutcome(null, Redirect: secondFactor.Url);
+            }
+
+            await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, properties);
+            _logger.LogInformation("User {UserId} logged in via passkey", user.Id);
             await _userService.RecordLoginAsync(user.Id, cancellationToken);
 
             if (_signInAuditor != null)
@@ -204,20 +216,21 @@ public class Fido2LoginController : Controller
         }, cancellationToken) ?? Task.CompletedTask;
 
     /// <summary>
-    /// Issues the session cookie the way a journey sign-in does (SignInManager and the claims principal factory),
-    /// stamped with how and when it signed in, so <c>max_age</c>, session MFA reuse and the tokens see a passkey.
+    /// The session the way a journey sign-in builds it (SignInManager and the claims principal factory), stamped with
+    /// how and when it signed in, so <c>max_age</c>, session MFA reuse and the tokens see a passkey.
     /// </summary>
-    private async Task SignInUserAsync(string userId)
+    private async Task<(ClaimsPrincipal Principal, AuthenticationProperties Properties)> BuildSessionAsync(string userId, string[] methods)
     {
         var signInManager = HttpContext.RequestServices.GetService<SignInManager<OlusoUser>>();
         var userManager = HttpContext.RequestServices.GetService<UserManager<OlusoUser>>();
         var identityUser = userManager == null ? null : await userManager.FindByIdAsync(userId);
-        var signInClaims = SessionAuthenticationClaims.Create(PasskeyMethods, DateTimeOffset.UtcNow);
+        var signInClaims = SessionAuthenticationClaims.Create(methods, DateTimeOffset.UtcNow);
 
         if (signInManager != null && identityUser != null)
         {
-            await signInManager.SignInWithClaimsAsync(identityUser, isPersistent: true, signInClaims);
-            return;
+            var identityPrincipal = await signInManager.CreateUserPrincipalAsync(identityUser);
+            ((ClaimsIdentity)identityPrincipal.Identity!).AddClaims(signInClaims);
+            return (identityPrincipal, new AuthenticationProperties { IsPersistent = true });
         }
 
         // Hosts without ASP.NET Identity: build the principal from the user service.
@@ -230,8 +243,7 @@ public class Fido2LoginController : Controller
         claims.RemoveAll(c => c.Type is "amr" or "auth_time");
         claims.AddRange(signInClaims);
 
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, "Oluso"));
-        await HttpContext.SignInAsync(IdentityConstants.ApplicationScheme, principal, new AuthenticationProperties
+        return (new ClaimsPrincipal(new ClaimsIdentity(claims, "Oluso")), new AuthenticationProperties
         {
             IsPersistent = true,
             ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30)

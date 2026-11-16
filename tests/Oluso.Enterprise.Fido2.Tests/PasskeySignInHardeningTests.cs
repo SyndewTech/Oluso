@@ -10,6 +10,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using Oluso.Authentication;
+using Oluso.Core.Protocols;
+using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
@@ -48,15 +51,22 @@ public class Fido2LoginControllerTests
             .ReturnsAsync((string uri, CancellationToken _) => uri == "https://app.acme.test/callback");
     }
 
-    private Fido2LoginController Controller(string? pendingAssertion = null)
+    private readonly Mock<IProtocolStateStore> _held = new();
+
+    private Fido2LoginController Controller(string? pendingAssertion = null, bool tenantRequiresMfa = false)
     {
+        var tenant = new Mock<ITenantContext>();
+        tenant.SetupGet(t => t.Tenant).Returns(new Tenant { Id = "acme", RequireMfa = tenantRequiresMfa });
+        _held.Setup(s => s.StoreAsync(It.IsAny<ProtocolState>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("held-1");
+        var gate = new MfaSignInGate(_held.Object, _users.Object, NullLogger<MfaSignInGate>.Instance, tenant.Object);
         var auth = new Mock<IAuthenticationService>();
         auth.Setup(a => a.SignInAsync(It.IsAny<HttpContext>(), IdentityConstants.ApplicationScheme, It.IsAny<ClaimsPrincipal>(), It.IsAny<AuthenticationProperties>()))
             .Callback<HttpContext, string?, ClaimsPrincipal, AuthenticationProperties?>((_, _, principal, _) => _signedIn.Add(principal))
             .Returns(Task.CompletedTask);
         var http = new DefaultHttpContext
         {
-            RequestServices = new ServiceCollection().AddSingleton(auth.Object).BuildServiceProvider()
+            RequestServices = new ServiceCollection().AddSingleton(auth.Object).AddSingleton(gate).BuildServiceProvider()
         };
         http.Request.Scheme = "https";
         http.Request.Host = new HostString("id.acme.test");
@@ -69,7 +79,7 @@ public class Fido2LoginControllerTests
             .Returns((string? u) => !string.IsNullOrEmpty(u) && u.StartsWith('/') && !u.StartsWith("//") && !u.StartsWith("/\\"));
 
         return new Fido2LoginController(_fido2.Object, _users.Object, NullLogger<Fido2LoginController>.Instance,
-            tenantContext: null, signInAuditor: _auditor.Object, clients: _clients.Object)
+            tenantContext: tenant.Object, signInAuditor: _auditor.Object, clients: _clients.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = http },
             Url = url.Object
@@ -147,6 +157,44 @@ public class Fido2LoginControllerTests
         principal.FindFirst("auth_time").Should().NotBeNull();
         _auditor.Verify(a => a.RecordSuccessAsync(It.Is<SignInAudit>(s => s.SubjectId == "u1" && s.AuthenticationMethod == "fido2"), It.IsAny<CancellationToken>()));
         _users.Verify(u => u.RecordLoginAsync("u1", It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task A_form_sign_in_with_a_passkey_that_verified_the_user_records_mfa()
+    {
+        _fido2.Setup(f => f.VerifyAssertionAsync("a1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CoreAssertionResult { Succeeded = true, UserId = "u1", CredentialId = "cred", UserVerified = true });
+
+        await Controller(pendingAssertion: "a1").VerifyLogin("{}", "/");
+
+        _signedIn.Single().FindAll("amr").Select(c => c.Value).Should().Equal("fido2", "hwk", "mfa");
+    }
+
+    [Fact]
+    public async Task On_a_tenant_that_requires_mfa_a_passkey_that_only_tested_presence_goes_to_the_mfa_page()
+    {
+        _fido2.Setup(f => f.VerifyAssertionAsync("a1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CoreAssertionResult { Succeeded = true, UserId = "u1", CredentialId = "cred", UserVerified = false });
+
+        var result = await Controller(pendingAssertion: "a1", tenantRequiresMfa: true).VerifyLogin("{}", "/");
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be(MfaSignInGate.PagePath);
+        _signedIn.Should().BeEmpty("the session is issued after the second factor");
+        _held.Verify(s => s.StoreAsync(It.Is<ProtocolState>(p => p.ProtocolName == MfaSignInGate.ProtocolName),
+            It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()));
+        _users.Verify(u => u.RecordLoginAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task On_a_tenant_that_requires_mfa_a_passkey_that_verified_the_user_signs_in()
+    {
+        _fido2.Setup(f => f.VerifyAssertionAsync("a1", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CoreAssertionResult { Succeeded = true, UserId = "u1", CredentialId = "cred", UserVerified = true });
+
+        var result = await Controller(pendingAssertion: "a1", tenantRequiresMfa: true).VerifyLogin("{}", "/");
+
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be("/");
+        _signedIn.Should().ContainSingle();
     }
 
     [Fact]
