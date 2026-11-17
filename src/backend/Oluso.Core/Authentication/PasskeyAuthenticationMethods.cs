@@ -11,8 +11,7 @@ public static class PasskeyAuthenticationMethods
     public const string PossessionOfKey = "hwk";
     public const string MultiFactor = "mfa";
 
-    private static readonly string[] Verified = { PossessionOfKey, MultiFactor };
-    private static readonly string[] PresenceOnly = { PossessionOfKey };
-
-    public static string[] Amr(bool userVerified) => userVerified ? Verified : PresenceOnly;
+    /// <summary>A new array on every call, so a caller that changes it changes nothing for later sign-ins.</summary>
+    public static string[] Amr(bool userVerified) =>
+        userVerified ? [PossessionOfKey, MultiFactor] : [PossessionOfKey];
 }

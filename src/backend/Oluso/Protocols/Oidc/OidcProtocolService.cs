@@ -244,6 +244,7 @@ public class OidcProtocolService : IOidcProtocolService
                 SuggestedPolicyType = Core.UserJourneys.JourneyType.SignIn,
                 ForceFreshLogin = true,
                 LoginHint = oidcRequest.LoginHint,
+                AcrValues = JourneyAcrValues(oidcRequest.AcrValues, essentialAcr),
                 RequestedScopes = validationResult.ValidScopes.ToList()
             });
         }
@@ -268,6 +269,7 @@ public class OidcProtocolService : IOidcProtocolService
                     SuggestedPolicyType = Core.UserJourneys.JourneyType.SignIn,
                     ForceFreshLogin = true,
                     LoginHint = oidcRequest.LoginHint,
+                    AcrValues = JourneyAcrValues(oidcRequest.AcrValues, essentialAcr),
                     RequestedScopes = validationResult.ValidScopes.ToList()
                 });
             }

@@ -217,7 +217,8 @@ public class DefaultJourneyOrchestrator : IJourneyOrchestrator
             ClientId = context.ClientId,
             Type = context.Type,
             Scopes = context.Scopes,
-            AcrValues = context.AcrValues
+            AcrValues = context.AcrValues,
+            AdditionalParameters = context.AdditionalParameters
         };
 
         var policy = context.PolicyId != null

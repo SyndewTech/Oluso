@@ -24,7 +24,7 @@ describe('workspace command scope', () => {
     item('profile', '/profile'),
     item('contacts', '/sales/contacts', 'sales'),
     item('vehicles', '/sales/objects/vehicle', 'sales'),
-    item('payroll', '/payroll', 'hr'),
+    item('timesheets', '/timesheets', 'hr'),
     item('team', '/team', 'team'),
     item('orphan', '/calendar', 'tools'),
   ];
@@ -39,7 +39,7 @@ describe('workspace command scope', () => {
   it('maps URLs to the internal app that owns them', () => {
     const areas = workspaceCommandAreas(apps, navItems);
     expect(areas.map((a) => a.app)).toEqual(['home', 'sales', 'hr']);
-    expect(resolveCommandApp('/payroll/runs/3', areas)).toBe('hr');
+    expect(resolveCommandApp('/timesheets/weeks/3', areas)).toBe('hr');
     expect(resolveCommandApp('/sales/objects/vehicle/42', areas)).toBe('sales');
     expect(resolveCommandApp('/sales/settings/objects', areas)).toBe('sales');
     expect(resolveCommandApp('/profile', areas)).toBe('home');

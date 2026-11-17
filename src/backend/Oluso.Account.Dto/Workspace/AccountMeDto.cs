@@ -8,6 +8,6 @@ public class AccountMeDto
     public string? ProfilePictureUrl { get; set; }
     public string? TenantId { get; set; }
     public List<string> Features { get; set; } = new();
-    /// <summary>Per-module facts about this user (e.g. emr.isPatient), from IProfileEnricher.</summary>
+    /// <summary>Per-module facts about this user (e.g. projects.isMember), from IProfileEnricher.</summary>
     public IDictionary<string, object> Extensions { get; set; } = new Dictionary<string, object>();
 }

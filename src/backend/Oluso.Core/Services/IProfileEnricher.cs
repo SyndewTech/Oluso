@@ -5,7 +5,7 @@ namespace Oluso.Core.Services;
 /// Facts land in the profile payloads the portals read, not in tokens; a module that
 /// also needs a fact at API authorization time adds it through IClaimsProvider.
 /// Plugins (e.g., a module) can implement this to add module-specific facts
-/// (is a manager, is a patient, has a linked relative) to the /api/workspace/me
+/// (is a manager, is a member, has a linked account) to the /api/workspace/me
 /// and /api/account/me responses without modifying the core controllers.
 /// </summary>
 public interface IProfileEnricher

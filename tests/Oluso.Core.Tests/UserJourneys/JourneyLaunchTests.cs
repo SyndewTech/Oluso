@@ -160,11 +160,11 @@ public class JourneyLaunchTests
     public async Task A_modules_journey_is_launched_only_by_a_module_that_may_use_it_and_the_link_names_that_module()
     {
         _policies.Setup(p => p.GetAsync("intake", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new JourneyPolicy { Id = "intake", Slug = "intake", Name = "Intake", TenantId = "t1", Enabled = true, OwnerModule = "emr" });
+            .ReturnsAsync(new JourneyPolicy { Id = "intake", Slug = "intake", Name = "Intake", TenantId = "t1", Enabled = true, OwnerModule = "projects" });
         _policies.Setup(p => p.GetAsync("contact", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JourneyPolicy
             {
-                Id = "contact", Slug = "contact", Name = "Contact details", TenantId = "t1", Enabled = true, OwnerModule = "emr", Sharing = JourneySharing.Shared,
+                Id = "contact", Slug = "contact", Name = "Contact details", TenantId = "t1", Enabled = true, OwnerModule = "projects", Sharing = JourneySharing.Shared,
             });
         var service = Service();
         var none = new Dictionary<string, string>();

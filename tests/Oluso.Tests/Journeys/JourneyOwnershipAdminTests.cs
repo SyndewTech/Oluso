@@ -30,7 +30,7 @@ public class JourneyOwnershipAdminTests
         {
             var descriptor = new Mock<IModuleDescriptor>();
             descriptor.Setup(d => d.FeatureKey).Returns(key);
-            descriptor.Setup(d => d.DisplayName).Returns(key == Module ? "Clinic" : "Silent");
+            descriptor.Setup(d => d.DisplayName).Returns(key == Module ? "Projects" : "Silent");
             ModuleRegistry.Instance.Register(descriptor.Object);
         }
     }
@@ -76,7 +76,7 @@ public class JourneyOwnershipAdminTests
         (await itAdmin.UpdatePolicy(journey.Id, new UpdatePolicyRequest { Name = "Renamed" })).Result.Should().BeOfType<ForbidResult>();
         (await itAdmin.DeletePolicy(journey.Id)).Should().BeOfType<ForbidResult>();
         journey.OwnerModule.Should().Be(Module);
-        journey.Name.Should().Be("Patient intake");
+        journey.Name.Should().Be("Member intake");
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public class JourneyOwnershipAdminTests
     {
         Id = Guid.NewGuid().ToString(),
         Slug = "intake",
-        Name = "Patient intake",
+        Name = "Member intake",
         TenantId = Tenant,
         Type = JourneyType.DataCollection,
         Enabled = true,

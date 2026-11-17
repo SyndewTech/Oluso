@@ -122,6 +122,15 @@ public class PasskeyUserVerificationTests
         SecondFactorRequirement.IsMet(PasskeyAuthenticationMethods.Amr(userVerified)).Should().Be(userVerified);
     }
 
+    [Fact]
+    public void Changing_the_methods_one_sign_in_got_does_not_change_the_next_ones()
+    {
+        var first = PasskeyAuthenticationMethods.Amr(userVerified: false);
+        first[0] = "mfa";
+
+        PasskeyAuthenticationMethods.Amr(userVerified: false).Should().Equal("hwk");
+    }
+
     private static string Base64Url(byte[] bytes) =>
         Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }

@@ -22,10 +22,10 @@ describe('loadTerminology', () => {
 
     const loading = loadTerminology(TestBed.inject(Injector));
     http.expectOne((r) => r.url === '/api/terminology' && r.params.get('locale') === 'en-NG')
-      .flush({ 'emr.ambulance.plural': 'Ambulances' });
+      .flush({ 'projects.vehicle.plural': 'Vehicles' });
     await loading;
 
     expect(transloco.getActiveLang()).toBe('en-NG');
-    expect(transloco.translate('emr.ambulance.plural')).toBe('Ambulances');
+    expect(transloco.translate('projects.vehicle.plural')).toBe('Vehicles');
   });
 });

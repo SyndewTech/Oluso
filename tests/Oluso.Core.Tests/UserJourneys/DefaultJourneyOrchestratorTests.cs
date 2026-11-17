@@ -206,6 +206,26 @@ public class DefaultJourneyOrchestratorTests
     }
 
     [Fact]
+    public async Task StartJourneyAsync_MatchesPolicyConditionsOnTheRequestsOtherParameters()
+    {
+        JourneyPolicyMatchContext? matched = null;
+        _policyStoreMock
+            .Setup(x => x.FindMatchingAsync(It.IsAny<JourneyPolicyMatchContext>(), It.IsAny<CancellationToken>()))
+            .Callback((JourneyPolicyMatchContext m, CancellationToken _) => matched = m)
+            .ReturnsAsync((JourneyPolicy?)null);
+
+        await CreateOrchestrator().StartJourneyAsync(new JourneyContext
+        {
+            TenantId = "default",
+            ClientId = "test-client",
+            Type = JourneyType.SignIn,
+            AdditionalParameters = new Dictionary<string, string> { ["login_hint"] = "ada@partner.test" }
+        });
+
+        matched!.AdditionalParameters.Should().Contain("login_hint", "ada@partner.test");
+    }
+
+    [Fact]
     public async Task ContinueJourneyAsync_WithExpiredJourney_ReturnsExpired()
     {
         // Arrange

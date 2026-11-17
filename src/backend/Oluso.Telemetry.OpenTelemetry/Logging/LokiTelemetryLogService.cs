@@ -355,8 +355,9 @@ public class LokiTelemetryLogService : ITelemetryLogService
             Level = LookupOrDefault(fields, "level", "severity_text", "severity") ?? "Information",
             Message = line,
             Category = LookupOrDefault(fields, "category", "logger_name", "logger", "scope_name") ?? "",
-            Exception = LookupOrDefault(fields, "exception", "exception_message"),
-            ExceptionType = LookupOrDefault(fields, "exception_type"),
+            // The innermost exception names the cause (the database's error inside a DbUpdateException).
+            Exception = LookupOrDefault(fields, "exception_root_message", "exception.root_message", "exception", "exception_message"),
+            ExceptionType = LookupOrDefault(fields, "exception_root_type", "exception.root_type", "exception_type"),
             StackTrace = LookupOrDefault(fields, "exception_stacktrace", "stack_trace"),
             TraceId = LookupOrDefault(fields, "trace_id", "traceid"),
             SpanId = LookupOrDefault(fields, "span_id", "spanid"),

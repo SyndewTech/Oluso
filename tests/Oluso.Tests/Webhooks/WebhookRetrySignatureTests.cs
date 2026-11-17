@@ -40,7 +40,7 @@ public class WebhookRetrySignatureTests
         store.Setup(s => s.GetDeliveryAsync("d1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WebhookDelivery { Id = "d1", EndpointId = "e1", EventType = "user.updated", PayloadId = "p1", TenantId = "t1", Payload = Body, Status = WebhookDeliveryStatus.Failed });
         store.Setup(s => s.GetEndpointAsync("e1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new WebhookEndpoint { Id = "e1", TenantId = "t1", Name = "crm", Url = "https://crm.example.org/hook", Secret = Secret, Enabled = true });
+            .ReturnsAsync(new WebhookEndpoint { Id = "e1", TenantId = "t1", Name = "sales", Url = "https://sales.example.org/hook", Secret = Secret, Enabled = true });
         var http = new CapturingHandler();
         var dispatcher = new WebhookDispatcher(
             store.Object, Mock.Of<IWebhookEventRegistry>(), new HttpClient(http),

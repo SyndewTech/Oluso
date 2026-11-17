@@ -29,7 +29,7 @@ public class AdminFileReadTenantTests
     [Theory]
     [InlineData("uploads/tenant-a/f.png")]
     [InlineData("branding/legal-entities/tenant-a/f.png")]
-    [InlineData("ecommerce/products/tenant-a/p-1/f.png")]
+    [InlineData("catalog/products/tenant-a/p-1/f.png")]
     public async Task A_tenant_reads_its_own_uploads(string path)
     {
         (await Controller("tenant-a").GetFile(path, CancellationToken.None)).Should().BeOfType<FileContentResult>();

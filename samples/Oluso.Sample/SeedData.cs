@@ -691,7 +691,7 @@ public static class SeedData
         }
 
         // SuperAdmin gets wildcard — same as TenantAdmin but with superAdminOnly nav visibility.
-        // No role-based bypass: RequiresExplicitGrant permissions (salary, payroll, fiscal close, etc.)
+        // No role-based bypass: RequiresExplicitGrant permissions (compensation, period close, etc.)
         // must still be explicitly assigned even for SuperAdmin.
         // Module administration permissions (hr.administration, etc.) also require explicit grant.
         var allPermissions = new[]
@@ -725,7 +725,7 @@ public static class SeedData
         }
 
         // Tenant Admin gets wildcard — full access to all standard admin operations.
-        // Sensitive permissions (RequiresExplicitGrant) like salary/payroll and module administration
+        // Sensitive permissions (RequiresExplicitGrant) like compensation and module administration
         // permissions are excluded from wildcard matching.
         // Frontend nav visibility is controlled by superAdminOnly flags (e.g., "Tenants" page hidden).
         var tenantAdminPermissions = new[]
@@ -751,7 +751,7 @@ public static class SeedData
             AddPermission(userRole, permission);
         }
 
-        // Module-specific role permissions (HRAdmin, PayrollAdmin, etc.) are now
+        // Module-specific role permissions (HRAdmin, ReviewsAdmin, etc.) are now
         // seeded by SeedModuleRolesAsync() via PermissionRegistry module role definitions.
 
         await dbContext.SaveChangesAsync();

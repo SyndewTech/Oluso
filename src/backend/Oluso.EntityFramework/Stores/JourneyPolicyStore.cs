@@ -99,34 +99,11 @@ public class JourneyPolicyStore : IJourneyPolicyStore
     public async Task<JourneyPolicy?> FindMatchingAsync(JourneyPolicyMatchContext context, CancellationToken cancellationToken = default)
     {
         var typeString = context.Type.ToString();
-
         var candidates = await _context.JourneyPolicies
-            .Where(p => p.Enabled && (p.TenantId == context.TenantId || p.TenantId == null))
-            .OrderByDescending(p => p.Priority)
-            .ThenBy(p => p.TenantId == null ? 1 : 0) // Prefer tenant-specific over global
+            .Where(p => p.Enabled && p.Type == typeString && (p.TenantId == context.TenantId || p.TenantId == null))
             .ToListAsync(cancellationToken);
 
-        // A policy whose conditions the request meets is more specific than one without conditions, so it is chosen
-        // first (by priority among them); a policy without conditions is the default for its type. A policy whose
-        // conditions fail is never chosen.
-        JourneyPolicy? unconditional = null;
-        foreach (var entity in candidates)
-        {
-            var policy = MapToPolicy(entity);
-            if (policy.Type.ToString() != typeString)
-                continue;
-
-            if (policy.Conditions is { Count: > 0 })
-            {
-                if (EvaluatePolicyConditions(policy.Conditions, context))
-                    return policy;
-                continue;
-            }
-
-            unconditional ??= policy;
-        }
-
-        return unconditional;
+        return JourneyPolicyMatching.Choose(candidates.Select(MapToPolicy), context);
     }
 
     public async Task SaveAsync(JourneyPolicy policy, CancellationToken cancellationToken = default)
@@ -294,36 +271,5 @@ public class JourneyPolicyStore : IJourneyPolicyStore
     {
         if (obj == null) return "null";
         return JsonSerializer.Serialize(obj, JsonOptions);
-    }
-
-    private static bool EvaluatePolicyConditions(IList<JourneyPolicyCondition> conditions, JourneyPolicyMatchContext context)
-    {
-        foreach (var condition in conditions)
-        {
-            var value = condition.Type.ToLowerInvariant() switch
-            {
-                "clientid" or "client_id" => context.ClientId,
-                "tenantid" or "tenant_id" => context.TenantId,
-                "acrvalue" or "acrvalues" or "acr_values" => context.AcrValues,
-                "scope" when context.Scopes != null => string.Join(" ", context.Scopes),
-                _ => null
-            };
-
-            var matches = condition.Operator.ToLowerInvariant() switch
-            {
-                "eq" or "equals" => string.Equals(value, condition.Value, StringComparison.OrdinalIgnoreCase),
-                "ne" or "not_equals" => !string.Equals(value, condition.Value, StringComparison.OrdinalIgnoreCase),
-                "contains" => value?.Contains(condition.Value ?? "", StringComparison.OrdinalIgnoreCase) ?? false,
-                "starts_with" => value?.StartsWith(condition.Value ?? "", StringComparison.OrdinalIgnoreCase) ?? false,
-                "ends_with" => value?.EndsWith(condition.Value ?? "", StringComparison.OrdinalIgnoreCase) ?? false,
-                "exists" => !string.IsNullOrEmpty(value),
-                "not_exists" => string.IsNullOrEmpty(value),
-                _ => false
-            };
-
-            if (!matches) return false;
-        }
-
-        return true;
     }
 }

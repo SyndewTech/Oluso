@@ -233,6 +233,10 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+// An unhandled exception answers 500 with a problem response (title and trace id, never the exception) and is
+// logged in full. Handled inside the pipeline, the response keeps its CORS headers, so the admin UI reads it.
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
 
 // Apply database migrations for all registered migratable DbContexts
@@ -261,9 +265,13 @@ if (app.Environment.IsDevelopment())
     });
     app.UseDeveloperExceptionPage();
 }
-else if (!app.Environment.IsEnvironment("Testing"))
+else
 {
-    app.UseHttpsRedirection();
+    app.UseExceptionHandler();
+    if (!app.Environment.IsEnvironment("Testing"))
+    {
+        app.UseHttpsRedirection();
+    }
 }
 // Forwarded headers — required when behind Caddy/nginx reverse proxy.
 // Without this, Request.Host returns the internal hostname (e.g., oluso:5050)

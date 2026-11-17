@@ -10,6 +10,8 @@ namespace Oluso.Telemetry.OpenTelemetry.Logging;
 /// Stamps each log record with tenant + user identifiers from the current
 /// request scope. Lets log backends (Loki, OpenObserve, ClickHouse) filter
 /// by tenant without callers having to scope every ILogger invocation.
+/// A record whose exception wraps another (a DbUpdateException around the
+/// database's error) also carries the innermost one's type and message.
 /// </summary>
 internal sealed class TenantContextLogProcessor : BaseProcessor<LogRecord>
 {
@@ -24,8 +26,21 @@ internal sealed class TenantContextLogProcessor : BaseProcessor<LogRecord>
         _services = services;
     }
 
+    public const string RootExceptionTypeAttribute = "exception.root_type";
+    public const string RootExceptionMessageAttribute = "exception.root_message";
+
     public override void OnEnd(LogRecord data)
     {
+        if (data.Exception?.InnerException is not null)
+        {
+            var root = data.Exception.GetBaseException();
+            data.Attributes = new List<KeyValuePair<string, object?>>(data.Attributes ?? [])
+            {
+                new(RootExceptionTypeAttribute, root.GetType().FullName),
+                new(RootExceptionMessageAttribute, root.Message),
+            };
+        }
+
         var http = _httpContextAccessor.HttpContext;
         if (http is null)
         {

@@ -96,7 +96,7 @@ public class OlusoRole : IdentityRole
 
     /// <summary>
     /// The role that can manage this role (for delegated administration).
-    /// E.g., "HRAdmin" can manage "PayrollAdmin", "HRManager" etc.
+    /// E.g., "HRAdmin" can manage "ReviewsAdmin", "HRManager" etc.
     /// </summary>
     public string? ManagedByRole { get; set; }
 

@@ -120,7 +120,7 @@ public class AdminSearchServiceTests
     [Fact]
     public async Task Every_declared_permission_must_hold()
     {
-        var customers = new FakeProvider("accounting.customers", "accounting", "accounting.administration",
+        var customers = new FakeProvider("ledger.customers", "ledger", "ledger.administration",
             (_, _) => Task.FromResult(Hits(("c1", 1))), "acct.ar.customers.view");
         var (service, _, _) = Rig(new[] { customers }, permissionAllowed: p => p == "acct.ar.customers.view");
 
@@ -134,14 +134,14 @@ public class AdminSearchServiceTests
     public async Task Available_providers_reflect_both_gates_and_carry_filters()
     {
         var filter = new AdminSearchFilterDefinition { Key = "status", Label = "Status", Type = AdminSearchFilterTypes.Select };
-        var invoices = new FakeProvider("accounting.invoices", "accounting", "acct.ar.invoices.view", (_, _) => Task.FromResult(Hits())) { Filters = new[] { filter } };
-        var bills = new FakeProvider("accounting.bills", "accounting", "acct.ap.bills.view", (_, _) => Task.FromResult(Hits()));
-        var crm = new FakeProvider("crm.contacts", "crm", "crm.administration", (_, _) => Task.FromResult(Hits()));
-        var (service, _, _) = Rig(new[] { invoices, bills, crm }, featureAllowed: key => key == "accounting", permissionAllowed: p => p != "acct.ap.bills.view");
+        var invoices = new FakeProvider("ledger.invoices", "ledger", "acct.ar.invoices.view", (_, _) => Task.FromResult(Hits())) { Filters = new[] { filter } };
+        var bills = new FakeProvider("ledger.bills", "ledger", "acct.ap.bills.view", (_, _) => Task.FromResult(Hits()));
+        var sales = new FakeProvider("sales.contacts", "sales", "sales.administration", (_, _) => Task.FromResult(Hits()));
+        var (service, _, _) = Rig(new[] { invoices, bills, sales }, featureAllowed: key => key == "ledger", permissionAllowed: p => p != "acct.ap.bills.view");
 
         var available = await service.GetAvailableProvidersAsync(User, UserId, Tenant);
 
-        available.Select(p => p.ProviderId).Should().Equal("accounting.invoices");
+        available.Select(p => p.ProviderId).Should().Equal("ledger.invoices");
         available[0].Filters.Should().ContainSingle(f => f.Key == "status");
     }
 
@@ -193,19 +193,19 @@ public class AdminSearchServiceTests
     public async Task Narrowing_to_a_provider_passes_its_filters_and_skips_the_rest()
     {
         AdminSearchContext? seen = null;
-        var invoices = new FakeProvider("accounting.invoices", "accounting", "acct.ar.invoices.view", (ctx, _) => { seen = ctx; return Task.FromResult(Hits(("inv-1", 1))); });
+        var invoices = new FakeProvider("ledger.invoices", "ledger", "acct.ar.invoices.view", (ctx, _) => { seen = ctx; return Task.FromResult(Hits(("inv-1", 1))); });
         var users = new FakeProvider("platform.users", AdminSearchModules.Platform, "users.read", (_, _) => Task.FromResult(Hits(("u1", 1))));
         var (service, _, _) = Rig(new[] { invoices, users });
 
         var response = await service.SearchAsync(new AdminSearchRequest
         {
             Query = "acme",
-            ProviderId = "accounting.invoices",
+            ProviderId = "ledger.invoices",
             Filters = new Dictionary<string, string> { ["status"] = "Overdue", ["issued"] = "2026-01-01..2026-03-31" },
             Limit = 500
         }, User, UserId, Tenant);
 
-        response.Groups.Select(g => g.ProviderId).Should().Equal("accounting.invoices");
+        response.Groups.Select(g => g.ProviderId).Should().Equal("ledger.invoices");
         users.Calls.Should().Be(0);
         seen.Should().NotBeNull();
         seen!.TenantId.Should().Be(Tenant);

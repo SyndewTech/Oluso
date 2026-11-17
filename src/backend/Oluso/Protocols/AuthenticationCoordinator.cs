@@ -712,7 +712,10 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         return null;
     }
 
-    /// <summary>What a policy's conditions are evaluated against for this sign-in request.</summary>
+    /// <summary>
+    /// What a policy's conditions are evaluated against for this sign-in request: its client, tenant, scopes,
+    /// acr_values, and its other parameters by name.
+    /// </summary>
     private JourneyPolicyMatchContext MatchContext(ProtocolContext context, AuthenticationRequirement requirement, JourneyType type) => new()
     {
         TenantId = context.Properties.TryGetValue("TenantId", out var tenantId) ? tenantId?.ToString() : null,
@@ -720,6 +723,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         Type = type,
         Scopes = requirement.RequestedScopes?.ToList(),
         AcrValues = requirement.AcrValues,
+        AdditionalParameters = (context.Request as Oidc.OidcAuthorizeRequest)?.Raw,
     };
 
     private async Task<string> StoreProtocolStateAsync(

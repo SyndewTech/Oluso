@@ -23,7 +23,7 @@ namespace Oluso.Tests.Storage;
 public class EntityReferenceProtectorTests
 {
     private const string Tenant = "t1";
-    private const string Purpose = "emr";
+    private const string Purpose = "projects";
 
     private sealed class Harness : IDisposable
     {
@@ -154,12 +154,12 @@ public class EntityReferenceProtectorTests
     public async Task The_blind_index_stays_put_as_keys_are_added_and_candidates_cover_every_key()
     {
         using var h = Create();
-        var before = await h.Protector().BlindIndexAsync(Tenant, Purpose, "patient-9");
+        var before = await h.Protector().BlindIndexAsync(Tenant, Purpose, "member-9");
         await h.AddSymmetricKeyAsync();
 
         var protector = h.Protector();
-        (await protector.BlindIndexAsync(Tenant, Purpose, "patient-9")).Should().Be(before);
-        var candidates = await protector.BlindIndexCandidatesAsync(Tenant, Purpose, "patient-9");
+        (await protector.BlindIndexAsync(Tenant, Purpose, "member-9")).Should().Be(before);
+        var candidates = await protector.BlindIndexCandidatesAsync(Tenant, Purpose, "member-9");
         candidates.Should().HaveCount(2).And.Contain(before);
     }
 

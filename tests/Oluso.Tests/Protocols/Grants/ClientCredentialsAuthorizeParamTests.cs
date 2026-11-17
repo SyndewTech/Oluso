@@ -45,24 +45,24 @@ public class ClientCredentialsAuthorizeParamTests
     [Fact]
     public async Task Emits_claim_from_allowlisted_token_parameter()
     {
-        var handler = CreateHandler(new ClientAuthorizeParameter { Parameter = "data-sm-patientId", ClaimType = "patient_id" });
+        var handler = CreateHandler(new ClientAuthorizeParameter { Parameter = "data-sm-memberId", ClaimType = "member_id" });
 
-        var result = await handler.HandleAsync(RequestWith(("data-sm-patientId", "guid-123")));
+        var result = await handler.HandleAsync(RequestWith(("data-sm-memberId", "guid-123")));
 
         result.IsValid.Should().BeTrue();
-        result.Claims.Should().ContainKey("patient_id").WhoseValue.Should().Be("guid-123");
+        result.Claims.Should().ContainKey("member_id").WhoseValue.Should().Be("guid-123");
     }
 
     [Fact]
     public async Task Ignores_parameter_that_is_not_allowlisted()
     {
-        var handler = CreateHandler(new ClientAuthorizeParameter { Parameter = "data-sm-patientId", ClaimType = "patient_id" });
+        var handler = CreateHandler(new ClientAuthorizeParameter { Parameter = "data-sm-memberId", ClaimType = "member_id" });
 
         var result = await handler.HandleAsync(RequestWith(("role", "SuperAdmin")));
 
         result.IsValid.Should().BeTrue();
         result.Claims.Should().NotContainKey("role");
-        result.Claims.Should().NotContainKey("patient_id");
+        result.Claims.Should().NotContainKey("member_id");
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class ClientCredentialsAuthorizeParamTests
     [Fact]
     public async Task Missing_required_parameter_fails_the_grant()
     {
-        var handler = CreateHandler(new ClientAuthorizeParameter { Parameter = "data-sm-patientId", ClaimType = "patient_id", Required = true });
+        var handler = CreateHandler(new ClientAuthorizeParameter { Parameter = "data-sm-memberId", ClaimType = "member_id", Required = true });
 
         var result = await handler.HandleAsync(RequestWith(("something_else", "x")));
 

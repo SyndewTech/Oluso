@@ -26,7 +26,7 @@ public class BetaFeedbackReviewTests
         context.Setup(c => c.TenantId).Returns("_platform");
         var tenants = new Mock<ITenantStore>();
         tenants.Setup(t => t.GetByIdAsync("tenant-b", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Tenant { Id = "tenant-b", Name = "Hygeia Clinic", Identifier = "hygeia" });
+            .ReturnsAsync(new Tenant { Id = "tenant-b", Name = "Hygeia Studio", Identifier = "hygeia" });
         return new FeedbackController(_store.Object, _files.Object, Mock.Of<IOlusoEventService>(), tenants.Object, context.Object);
     }
 
@@ -39,7 +39,7 @@ public class BetaFeedbackReviewTests
         var page = (await Controller().List()).Result.Should().BeOfType<OkObjectResult>()
             .Which.Value.Should().BeOfType<Oluso.Core.Api.PagedResult<FeedbackResponse>>().Subject;
 
-        page.Items.Should().ContainSingle().Which.TenantName.Should().Be("Hygeia Clinic");
+        page.Items.Should().ContainSingle().Which.TenantName.Should().Be("Hygeia Studio");
     }
 
     [Theory]

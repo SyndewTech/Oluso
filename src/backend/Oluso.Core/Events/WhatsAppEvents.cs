@@ -3,7 +3,7 @@ namespace Oluso.Core.Events;
 /// <summary>
 /// Raised for every inbound WhatsApp message accepted on the webhook, after
 /// the contact record and consent keywords have been processed. Tenant
-/// automations use it for auto-replies, ticket creation or CRM logging.
+/// automations use it for auto-replies, ticket creation or logging the conversation.
 /// </summary>
 [WebhookEvent("WhatsApp Message Received",
     Description = "An inbound WhatsApp message arrived on the tenant's business number.",

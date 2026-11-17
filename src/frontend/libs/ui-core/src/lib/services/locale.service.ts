@@ -104,7 +104,7 @@ export class LocaleService {
   readonly timezone = computed(() => this._displayTimeZone() ?? this._settings().timezone);
 
   /**
-   * Shows times in <paramref name="zone"/> while an app's pages are open, e.g. a clinic whose day and times follow its own
+   * Shows times in <paramref name="zone"/> while an app's pages are open, e.g. an office whose day and times follow its own
    * zone; null returns to the tenant's zone. The app clears it when the user leaves its pages.
    */
   setDisplayTimeZone(zone: string | null): void {

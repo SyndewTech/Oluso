@@ -23,7 +23,7 @@ public class LinkRecipientVerificationTests
 
     private void SentTo(string? email, string? phone)
     {
-        var context = new Dictionary<string, string> { ["emr.patientId"] = "p1" };
+        var context = new Dictionary<string, string> { ["projects.memberId"] = "p1" };
         if (email != null) context[JourneyLaunchData.RecipientEmailKey] = email;
         if (phone != null) context[JourneyLaunchData.RecipientPhoneKey] = phone;
         _journeyData[JourneyLaunchData.ContextDataKey] = JsonSerializer.Serialize(context);
@@ -78,11 +78,11 @@ public class LinkRecipientVerificationTests
     [Fact]
     public async Task The_code_goes_to_the_address_the_link_was_sent_to_on_arrival()
     {
-        SentTo("Pat@Clinic.test", null);
+        SentTo("Pat@Office.test", null);
 
         var shown = await Email(new());
 
-        _emailedTo.Should().Equal("pat@clinic.test");
+        _emailedTo.Should().Equal("pat@office.test");
         shown.StepResult!.ViewName.Should().Be("Journey/_EmailVerificationConfirm");
         shown.StepResult.ViewModel.Should().BeOfType<EmailVerificationConfirmViewModel>().Which.CanChangeEmail.Should().BeFalse();
     }
@@ -90,27 +90,27 @@ public class LinkRecipientVerificationTests
     [Fact]
     public async Task Another_address_typed_or_a_change_asked_for_is_ignored()
     {
-        SentTo("pat@clinic.test", null);
+        SentTo("pat@office.test", null);
         await Email(new());
 
         await Email(new() { ["email"] = "someone@else.test" });
         await Email(new() { ["change_email"] = "true" });
         await Email(new() { ["resend"] = "true" });
 
-        _emailedTo.Should().Equal("pat@clinic.test", "pat@clinic.test");
+        _emailedTo.Should().Equal("pat@office.test", "pat@office.test");
     }
 
     [Fact]
     public async Task The_right_code_verifies_the_recipients_address()
     {
-        SentTo("pat@clinic.test", null);
+        SentTo("pat@office.test", null);
         await Email(new());
         var code = (string)_journeyData["email_verify_code"];
 
         var done = await Email(new() { ["code"] = code });
 
         done.Outcome.Should().Be(StepOutcome.Continue);
-        done.OutputData!["email"].Should().Be("pat@clinic.test");
+        done.OutputData!["email"].Should().Be("pat@office.test");
         done.OutputData["email_verified"].Should().Be(true);
     }
 
@@ -129,7 +129,7 @@ public class LinkRecipientVerificationTests
         SentTo(null, "+2348031234567");
         (await Email(new())).Error.Should().Be("recipient_unverifiable");
 
-        SentTo("pat@clinic.test", null);
+        SentTo("pat@office.test", null);
         (await Sms(new())).Result.Error.Should().Be("recipient_unverifiable");
     }
 

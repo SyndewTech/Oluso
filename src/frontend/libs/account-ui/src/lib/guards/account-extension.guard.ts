@@ -5,7 +5,7 @@ import { AccountAuthService } from '../services/account-auth.service';
 /**
  * Route counterpart of a plugin nav item's `feature` + `requires` filter: the
  * tenant must have the feature and the signed-in account must carry the
- * extension flag a module adds to /api/account/me (e.g. `emr.isPatient`).
+ * extension flag a module adds to /api/account/me (e.g. `projects.isMember`).
  */
 export const accountExtensionGuard: CanActivateFn = (route) => {
   const auth = inject(AccountAuthService);

@@ -107,15 +107,15 @@ describe('PermissionsService', () => {
 
   it('matches wildcards at any depth but never an explicit-grant permission', () => {
     service.useIdentity('u1', 't1');
-    service.setMyPermissions({ ...response(['*', 'emr.roles.*']), explicitGrantPermissions: ['emr.roles.read', 'emr.administration'] });
+    service.setMyPermissions({ ...response(['*', 'projects.roles.*']), explicitGrantPermissions: ['projects.roles.read', 'projects.administration'] });
 
     expect(service.hasPermission('users.read')).toBe(true);
-    expect(service.hasPermission('emr.administration')).toBe(false);
-    expect(service.hasPermission('emr.roles.read')).toBe(false);
+    expect(service.hasPermission('projects.administration')).toBe(false);
+    expect(service.hasPermission('projects.roles.read')).toBe(false);
 
-    service.setMyPermissions(response(['emr.roles.*']));
-    expect(service.hasPermission('emr.roles.read')).toBe(true);
-    expect(service.hasPermission('emr.patients.view')).toBe(false);
+    service.setMyPermissions(response(['projects.roles.*']));
+    expect(service.hasPermission('projects.roles.read')).toBe(true);
+    expect(service.hasPermission('projects.tasks.view')).toBe(false);
   });
 
   it('settles as not authoritative after clear()', () => {

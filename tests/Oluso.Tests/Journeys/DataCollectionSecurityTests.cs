@@ -53,19 +53,19 @@ public class DataCollectionSecurityTests
         {
             TenantId = Tenant,
             PolicyId = "intake",
-            PolicyName = "Patient intake",
+            PolicyName = "Member intake",
             SubmissionId = "sub-1",
-            FieldNames = ["full_name", "diagnosis"],
-            Fields = new Dictionary<string, object> { ["full_name"] = "Ada Obi", ["diagnosis"] = "Type 2 diabetes" },
+            FieldNames = ["full_name", "home_address"],
+            Fields = new Dictionary<string, object> { ["full_name"] = "Ada Obi", ["home_address"] = "12 Marina Road" },
             FieldCount = 2,
         });
 
         written!.Action.Should().Be("journey.submission_created");
         written.ResourceType.Should().Be("JourneySubmission");
         written.ResourceId.Should().Be("sub-1");
-        written.ResourceName.Should().Be("Patient intake");
+        written.ResourceName.Should().Be("Member intake");
         written.Details.Should().Contain("full_name").And.Contain("intake");
-        written.Details.Should().NotContain("Ada Obi").And.NotContain("Type 2 diabetes");
+        written.Details.Should().NotContain("Ada Obi").And.NotContain("12 Marina Road");
     }
 
     [Fact]
@@ -104,27 +104,27 @@ public class DataCollectionSecurityTests
         var earlier = new JourneySubmission
         {
             PolicyId = "intake", TenantId = Tenant, JourneyId = "j1",
-            Data = new Dictionary<string, object> { ["diagnosis"] = "Type 2 diabetes" },
+            Data = new Dictionary<string, object> { ["home_address"] = "12 Marina Road" },
         };
         await submissions.SaveAsync(earlier);
-        var controller = Controller(submissions, ownerModule: "emr");
+        var controller = Controller(submissions, ownerModule: "projects");
 
         var list = Page(await controller.GetSubmissions("intake"));
         list.TotalCount.Should().Be(1);
         list.Items.Single().Data.Should().BeEmpty();
         list.Items.Single().CreatedAt.Should().Be(earlier.CreatedAt);
 
-        Page(await controller.GetSubmissions("intake", search: "diabetes")).TotalCount.Should().Be(0, "search never looks inside the answers");
+        Page(await controller.GetSubmissions("intake", search: "Marina")).TotalCount.Should().Be(0, "search never looks inside the answers");
 
         var one = (SubmissionDto)((OkObjectResult)(await controller.GetSubmission(earlier.Id)).Result!).Value!;
         one.Data.Should().BeEmpty();
 
         var csv = (FileContentResult)await controller.ExportSubmissions("intake", null, null);
-        System.Text.Encoding.UTF8.GetString(csv.FileContents).Should().NotContain("diagnosis").And.NotContain("diabetes");
+        System.Text.Encoding.UTF8.GetString(csv.FileContents).Should().NotContain("home_address").And.NotContain("Marina");
 
         var listed = ((IEnumerable<DataCollectionPolicyDto>)((OkObjectResult)(await controller.GetDataCollectionPolicies()).Result!).Value!).Single();
         listed.AnswersHidden.Should().BeTrue();
-        listed.OwnerModule.Should().Be("emr");
+        listed.OwnerModule.Should().Be("projects");
         listed.SubmissionCount.Should().Be(1);
     }
 
@@ -156,7 +156,7 @@ public class DataCollectionSecurityTests
         var submissions = new InMemoryJourneySubmissionStore();
         await submissions.SaveAsync(new JourneySubmission { PolicyId = "intake", TenantId = Tenant, JourneyId = "module-run" });
         await submissions.SaveAsync(new JourneySubmission { PolicyId = "waitlist", TenantId = Tenant, JourneyId = "platform-run" });
-        var policies = Policies(ownerModule: "emr");
+        var policies = Policies(ownerModule: "projects");
 
         var provider = new JourneyUploadFileAccessProvider(files.Object, profiles.Object, policies.Object, submissions);
 
@@ -171,13 +171,13 @@ public class DataCollectionSecurityTests
         return new SubmissionsController(Policies(ownerModule).Object, tenant.Object, NullLogger<SubmissionsController>.Instance, submissions);
     }
 
-    /// <summary>A platform waitlist, and a patient intake owned by <paramref name="ownerModule"/>.</summary>
+    /// <summary>A platform waitlist, and a member intake owned by <paramref name="ownerModule"/>.</summary>
     private static Mock<IJourneyPolicyStore> Policies(string? ownerModule)
     {
         var waitlist = new JourneyPolicy { Id = "waitlist", Slug = "waitlist", Name = "Waitlist", TenantId = Tenant, Type = JourneyType.Waitlist };
         var intake = new JourneyPolicy
         {
-            Id = "intake", Slug = "intake", Name = "Patient intake", TenantId = Tenant, Type = JourneyType.DataCollection,
+            Id = "intake", Slug = "intake", Name = "Member intake", TenantId = Tenant, Type = JourneyType.DataCollection,
             PersistSubmissions = true, OwnerModule = ownerModule,
         };
         var policies = new Mock<IJourneyPolicyStore>();

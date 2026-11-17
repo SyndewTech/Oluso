@@ -1,4 +1,4 @@
-//! Hello Plugin - A sample Oluso WASM plugin supporting Journey and CRM hooks
+//! Hello Plugin - A sample Oluso WASM plugin supporting Journey and module entity hooks
 //!
 //! This plugin demonstrates the interface that WASM plugins must implement
 //! to work with the Oluso plugin executor for different domains.
@@ -98,13 +98,13 @@ impl JourneyPluginOutput {
 }
 
 // ============================================================================
-// CRM Domain Types
+// Module Entity Domain Types
 // ============================================================================
 
-/// Input from the Oluso plugin executor (CRM domain hooks)
+/// Input from the Oluso plugin executor (module entity hooks)
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct CRMHookInput {
+struct EntityHookInput {
     tenant_id: String,
     user: Option<UserContext>,
     timestamp: String,
@@ -131,10 +131,10 @@ struct SideEffect {
     parameters: HashMap<String, serde_json::Value>,
 }
 
-/// Output for CRM domain hooks
+/// Output for module entity hooks
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CRMHookOutput {
+struct EntityHookOutput {
     action: String, // continue, reject, skip
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
@@ -146,7 +146,7 @@ struct CRMHookOutput {
     side_effects: Option<Vec<SideEffect>>,
 }
 
-impl CRMHookOutput {
+impl EntityHookOutput {
     fn continue_with(record: Option<HashMap<String, serde_json::Value>>) -> Self {
         Self {
             action: "continue".to_string(),
@@ -344,24 +344,24 @@ pub fn collect_data(_input_json: String) -> FnResult<String> {
 }
 
 // ============================================================================
-// CRM Domain Functions (new)
+// Module Entity Domain Functions
 // ============================================================================
 
-/// CRM hook handler - main entry point for CRM domain hooks
-/// Configure hook binding with domain=CRM, functionName=handle_crm
+/// Entity hook handler - main entry point for a module's entity hooks
+/// Configure hook binding with domain=<the module's domain, e.g. sales>, functionName=handle_entity
 #[plugin_fn]
-pub fn handle_crm(input_json: String) -> FnResult<String> {
-    let input: CRMHookInput = serde_json::from_str(&input_json)
-        .map_err(|e| Error::msg(format!("Failed to parse CRM input: {}", e)))?;
+pub fn handle_entity(input_json: String) -> FnResult<String> {
+    let input: EntityHookInput = serde_json::from_str(&input_json)
+        .map_err(|e| Error::msg(format!("Failed to parse entity hook input: {}", e)))?;
 
     let output = match input.event.as_str() {
-        "before_insert" => crm_before_insert(&input),
-        "after_insert" => crm_after_insert(&input),
-        "before_update" => crm_before_update(&input),
-        "after_update" => crm_after_update(&input),
-        "before_delete" => crm_before_delete(&input),
-        "after_delete" => crm_after_delete(&input),
-        _ => CRMHookOutput::continue_with(None), // Unknown event, just continue
+        "before_insert" => entity_before_insert(&input),
+        "after_insert" => entity_after_insert(&input),
+        "before_update" => entity_before_update(&input),
+        "after_update" => entity_after_update(&input),
+        "before_delete" => entity_before_delete(&input),
+        "after_delete" => entity_after_delete(&input),
+        _ => EntityHookOutput::continue_with(None), // Unknown event, just continue
     };
 
     let output_json = serde_json::to_string(&output)
@@ -371,7 +371,7 @@ pub fn handle_crm(input_json: String) -> FnResult<String> {
 }
 
 /// Called before a record is inserted
-fn crm_before_insert(input: &CRMHookInput) -> CRMHookOutput {
+fn entity_before_insert(input: &EntityHookInput) -> EntityHookOutput {
     let mut modified_record = input.record.clone();
     let mut errors = Vec::new();
 
@@ -415,7 +415,7 @@ fn crm_before_insert(input: &CRMHookInput) -> CRMHookOutput {
     }
 
     if !errors.is_empty() {
-        return CRMHookOutput::reject_with_errors(errors);
+        return EntityHookOutput::reject_with_errors(errors);
     }
 
     // Add audit field
@@ -424,11 +424,11 @@ fn crm_before_insert(input: &CRMHookInput) -> CRMHookOutput {
         serde_json::json!(true),
     );
 
-    CRMHookOutput::continue_with(Some(modified_record))
+    EntityHookOutput::continue_with(Some(modified_record))
 }
 
 /// Called after a record is inserted
-fn crm_after_insert(input: &CRMHookInput) -> CRMHookOutput {
+fn entity_after_insert(input: &EntityHookInput) -> EntityHookOutput {
     let mut side_effects = Vec::new();
 
     // Example: Send notification for high-value deals
@@ -472,14 +472,14 @@ fn crm_after_insert(input: &CRMHookInput) -> CRMHookOutput {
     }
 
     if side_effects.is_empty() {
-        CRMHookOutput::continue_with(None)
+        EntityHookOutput::continue_with(None)
     } else {
-        CRMHookOutput::continue_with(None).with_side_effects(side_effects)
+        EntityHookOutput::continue_with(None).with_side_effects(side_effects)
     }
 }
 
 /// Called before a record is updated
-fn crm_before_update(input: &CRMHookInput) -> CRMHookOutput {
+fn entity_before_update(input: &EntityHookInput) -> EntityHookOutput {
     let mut modified_record = input.record.clone();
 
     // Example: Prevent changing certain fields after creation
@@ -488,7 +488,7 @@ fn crm_before_update(input: &CRMHookInput) -> CRMHookOutput {
             // Don't allow changing the deal type after it's set
             if let (Some(old_type), Some(new_type)) = (old_record.get("type"), input.record.get("type")) {
                 if old_type != new_type && old_type.as_str() != Some("") {
-                    return CRMHookOutput::reject("Deal type cannot be changed after creation");
+                    return EntityHookOutput::reject("Deal type cannot be changed after creation");
                 }
             }
         }
@@ -502,11 +502,11 @@ fn crm_before_update(input: &CRMHookInput) -> CRMHookOutput {
         );
     }
 
-    CRMHookOutput::continue_with(Some(modified_record))
+    EntityHookOutput::continue_with(Some(modified_record))
 }
 
 /// Called after a record is updated
-fn crm_after_update(input: &CRMHookInput) -> CRMHookOutput {
+fn entity_after_update(input: &EntityHookInput) -> EntityHookOutput {
     let mut side_effects = Vec::new();
 
     // Example: Notify on deal stage change
@@ -534,20 +534,20 @@ fn crm_after_update(input: &CRMHookInput) -> CRMHookOutput {
     }
 
     if side_effects.is_empty() {
-        CRMHookOutput::continue_with(None)
+        EntityHookOutput::continue_with(None)
     } else {
-        CRMHookOutput::continue_with(None).with_side_effects(side_effects)
+        EntityHookOutput::continue_with(None).with_side_effects(side_effects)
     }
 }
 
 /// Called before a record is deleted
-fn crm_before_delete(input: &CRMHookInput) -> CRMHookOutput {
+fn entity_before_delete(input: &EntityHookInput) -> EntityHookOutput {
     // Example: Prevent deletion of high-value accounts
     if input.entity_type == "Account" || input.entity_type == "accounts" {
         if let Some(revenue) = input.record.get("annualRevenue") {
             if let Some(revenue_num) = revenue.as_f64() {
                 if revenue_num >= 1000000.0 {
-                    return CRMHookOutput::reject(
+                    return EntityHookOutput::reject(
                         "Cannot delete accounts with annual revenue over $1M. Please contact admin."
                     );
                 }
@@ -559,18 +559,18 @@ fn crm_before_delete(input: &CRMHookInput) -> CRMHookOutput {
     if input.entity_type == "Deal" || input.entity_type == "deals" {
         if let Some(stage) = input.record.get("stage").and_then(|v| v.as_str()) {
             if stage == "Closed Won" || stage == "Closed Lost" {
-                return CRMHookOutput::reject(
+                return EntityHookOutput::reject(
                     "Cannot delete closed deals. They must be archived instead."
                 );
             }
         }
     }
 
-    CRMHookOutput::continue_with(None)
+    EntityHookOutput::continue_with(None)
 }
 
 /// Called after a record is deleted
-fn crm_after_delete(input: &CRMHookInput) -> CRMHookOutput {
+fn entity_after_delete(input: &EntityHookInput) -> EntityHookOutput {
     let mut side_effects = Vec::new();
 
     // Example: Log deletion to compliance system
@@ -590,7 +590,7 @@ fn crm_after_delete(input: &CRMHookInput) -> CRMHookOutput {
         parameters: params,
     });
 
-    CRMHookOutput::continue_with(None).with_side_effects(side_effects)
+    EntityHookOutput::continue_with(None).with_side_effects(side_effects)
 }
 
 // ============================================================================
@@ -600,7 +600,7 @@ fn crm_after_delete(input: &CRMHookInput) -> CRMHookOutput {
 /// Validate Account records
 #[plugin_fn]
 pub fn validate_account(input_json: String) -> FnResult<String> {
-    let input: CRMHookInput = serde_json::from_str(&input_json)
+    let input: EntityHookInput = serde_json::from_str(&input_json)
         .map_err(|e| Error::msg(format!("Failed to parse input: {}", e)))?;
 
     let mut errors = Vec::new();
@@ -635,9 +635,9 @@ pub fn validate_account(input_json: String) -> FnResult<String> {
     }
 
     let output = if errors.is_empty() {
-        CRMHookOutput::continue_with(None)
+        EntityHookOutput::continue_with(None)
     } else {
-        CRMHookOutput::reject_with_errors(errors)
+        EntityHookOutput::reject_with_errors(errors)
     };
 
     let output_json = serde_json::to_string(&output)
@@ -649,7 +649,7 @@ pub fn validate_account(input_json: String) -> FnResult<String> {
 /// Validate Deal records
 #[plugin_fn]
 pub fn validate_deal(input_json: String) -> FnResult<String> {
-    let input: CRMHookInput = serde_json::from_str(&input_json)
+    let input: EntityHookInput = serde_json::from_str(&input_json)
         .map_err(|e| Error::msg(format!("Failed to parse input: {}", e)))?;
 
     let mut errors = Vec::new();
@@ -686,9 +686,9 @@ pub fn validate_deal(input_json: String) -> FnResult<String> {
     }
 
     let output = if errors.is_empty() {
-        CRMHookOutput::continue_with(None)
+        EntityHookOutput::continue_with(None)
     } else {
-        CRMHookOutput::reject_with_errors(errors)
+        EntityHookOutput::reject_with_errors(errors)
     };
 
     let output_json = serde_json::to_string(&output)

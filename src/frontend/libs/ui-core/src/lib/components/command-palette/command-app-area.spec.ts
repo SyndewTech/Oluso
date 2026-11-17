@@ -36,15 +36,15 @@ describe('resolveCommandApp', () => {
 
 describe('navItemCommand', () => {
   it('makes a "Go to" command keyed by the nav item', () => {
-    expect(navItemCommand({ id: 'crm-contacts', label: 'Contacts', path: '/sales/contacts', icon: 'users', permission: 'crm.contacts.read' }, 'sales')).toEqual({
+    expect(navItemCommand({ id: 'sales-contacts', label: 'Contacts', path: '/sales/contacts', icon: 'users', permission: 'sales.contacts.read' }, 'sales')).toEqual({
       kind: 'navigation',
-      id: 'nav-crm-contacts',
+      id: 'nav-sales-contacts',
       label: 'Go to Contacts',
       group: 'Navigation',
       icon: 'users',
       route: '/sales/contacts',
       queryParams: undefined,
-      permission: 'crm.contacts.read',
+      permission: 'sales.contacts.read',
       app: 'sales',
     });
   });

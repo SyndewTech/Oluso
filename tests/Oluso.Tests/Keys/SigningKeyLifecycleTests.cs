@@ -71,13 +71,13 @@ public class SigningKeyLifecycleTests
         var store = new SigningKeyStore(context);
         var now = DateTime.UtcNow;
         var protection = Key("t1", "protects-data", SigningKeyStatus.Active, now.AddDays(30));
-        protection.ClientId = DataProtectionKeys.ClientIdFor("emr");
+        protection.ClientId = DataProtectionKeys.ClientIdFor("projects");
         context.SigningKeys.AddRange(Key("t1", "active", SigningKeyStatus.Active, now.AddDays(30)), protection);
         await context.SaveChangesAsync();
 
         (await store.GetValidationKeysForTenantAndPlatformAsync("t1")).Select(k => k.KeyId).Should().Equal("active");
         (await store.GetJwksKeysAsync("t1")).Select(k => k.KeyId).Should().Equal("active");
-        (await store.GetByClientAsync("t1", DataProtectionKeys.ClientIdFor("emr"))).Should().ContainSingle("the protector still finds its keys");
+        (await store.GetByClientAsync("t1", DataProtectionKeys.ClientIdFor("projects"))).Should().ContainSingle("the protector still finds its keys");
     }
 
     [Fact]

@@ -76,12 +76,12 @@ public class WhatsAppTemplateServiceTests
     [Fact]
     public async Task Verify_account_calls_meta_and_records_the_phone_number_mapping()
     {
-        _http.Enqueue(HttpStatusCode.OK, """{"display_phone_number":"+1 555-000-1111","verified_name":"Oluso Clinic","quality_rating":"GREEN","id":"PN123"}""");
+        _http.Enqueue(HttpStatusCode.OK, """{"display_phone_number":"+1 555-000-1111","verified_name":"Oluso Studio","quality_rating":"GREEN","id":"PN123"}""");
 
         var check = await Service(WhatsAppRig.Settings()).VerifyAccountAsync(Tenant);
 
         check.Success.Should().BeTrue(check.Error);
-        check.Account!.VerifiedName.Should().Be("Oluso Clinic");
+        check.Account!.VerifiedName.Should().Be("Oluso Studio");
         _http.Requests.Single().Url.Should().StartWith("https://graph.facebook.com/v21.0/PN123?fields=");
         var row = _accounts.Rows.Should().ContainSingle().Subject;
         row.TenantId.Should().Be(Tenant);

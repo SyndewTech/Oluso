@@ -33,14 +33,14 @@ public class HeadlessJourneyApiTests
     private readonly InMemoryJourneyStateStore _states = new();
     private readonly CodeIssuerKit _issuer = new();
     private List<AuthorizationCode> _codes => _issuer.Codes;
-    private readonly FakeModuleAnswers _emrAnswers = new();
+    private readonly FakeModuleAnswers _moduleAnswers = new();
 
     public HeadlessJourneyApiTests()
     {
         _policies.SaveAsync(Policy("inline-signin", requiresAuthentication: true, ("login", "fake_login"), ("mfa", "fake_mfa"))).Wait();
         _policies.SaveAsync(Policy("survey", requiresAuthentication: false, ("q1", "fake_form"), ("q2", "fake_form"))).Wait();
         var moduleForm = Policy("intake", requiresAuthentication: false, ("upload", "fake_upload"));
-        moduleForm.OwnerModule = "emr";
+        moduleForm.OwnerModule = "projects";
         _policies.SaveAsync(moduleForm).Wait();
     }
 
@@ -63,7 +63,7 @@ public class HeadlessJourneyApiTests
     {
         var services = new ServiceCollection().AddLogging()
             .AddSingleton<IAuthenticationService>(new FakeAccessTokens())
-            .AddSingleton<IJourneyResultSink>(_emrAnswers)
+            .AddSingleton<IJourneyResultSink>(_moduleAnswers)
             .BuildServiceProvider();
         var registry = new Mock<IStepHandlerRegistry>();
         registry.Setup(r => r.GetHandler("fake_login")).Returns(new FakeLogin());
@@ -286,28 +286,28 @@ public class HeadlessJourneyApiTests
     [Fact]
     public async Task A_module_starts_its_journey_for_a_user_and_only_that_users_token_continues_it()
     {
-        Controller(bearer: "nurse-1");
+        Controller(bearer: "staff-1");
         var started = await _sessions.StartForUserAsync(new UserJourneySessionStart(
-            "acme", (await _policies.GetBySlugAsync("intake"))!.Id, "emr", "nurse-1",
-            new Dictionary<string, string> { ["emr.patientId"] = "p1" }, AppOrigin));
+            "acme", (await _policies.GetBySlugAsync("intake"))!.Id, "projects", "staff-1",
+            new Dictionary<string, string> { ["projects.memberId"] = "p1" }, AppOrigin));
         started.Step!.Type.Should().Be("fake_upload");
 
         (await Controller().SubmitStep(started.SessionId, new JourneyStepRequest(), default)).Should().BeOfType<NotFoundObjectResult>();
         (await Controller(bearer: "someone-else").SubmitStep(started.SessionId, new JourneyStepRequest(), default)).Should().BeOfType<NotFoundObjectResult>();
-        (await Controller(origin: "https://evil.test", bearer: "nurse-1").GetSession(started.SessionId, default)).Should().BeOfType<ObjectResult>()
+        (await Controller(origin: "https://evil.test", bearer: "staff-1").GetSession(started.SessionId, default)).Should().BeOfType<ObjectResult>()
             .Which.StatusCode.Should().Be(403);
 
         var state = await _states.GetAsync(started.SessionId);
-        state!.UserId.Should().Be("nurse-1");
-        JourneyLaunchData.ReadContext(state.Data)!["emr.patientId"].Should().Be("p1");
+        state!.UserId.Should().Be("staff-1");
+        JourneyLaunchData.ReadContext(state.Data)!["projects.memberId"].Should().Be("p1");
     }
 
     [Fact]
     public async Task A_module_cannot_start_another_modules_journey()
     {
-        Controller(bearer: "nurse-1");
+        Controller(bearer: "staff-1");
         var start = () => _sessions.StartForUserAsync(new UserJourneySessionStart(
-            "acme", _policies.GetBySlugAsync("intake").Result!.Id, "crm", "nurse-1", new Dictionary<string, string>(), AppOrigin));
+            "acme", _policies.GetBySlugAsync("intake").Result!.Id, "sales", "staff-1", new Dictionary<string, string>(), AppOrigin));
         await start.Should().ThrowAsync<InvalidOperationException>();
     }
 
@@ -333,11 +333,11 @@ public class HeadlessJourneyApiTests
     [Fact]
     public async Task A_step_posted_as_a_form_reaches_the_step_with_its_files()
     {
-        Controller(bearer: "nurse-1");
+        Controller(bearer: "staff-1");
         var started = await _sessions.StartForUserAsync(new UserJourneySessionStart(
-            "acme", (await _policies.GetBySlugAsync("intake"))!.Id, "emr", "nurse-1", new Dictionary<string, string>(), AppOrigin));
+            "acme", (await _policies.GetBySlugAsync("intake"))!.Id, "projects", "staff-1", new Dictionary<string, string>(), AppOrigin));
 
-        var api = Controller(bearer: "nurse-1");
+        var api = Controller(bearer: "staff-1");
         var request = api.HttpContext.Request;
         request.ContentType = "multipart/form-data; boundary=x";
         request.Form = new FormCollection(
@@ -353,7 +353,7 @@ public class HeadlessJourneyApiTests
         var done = Session(await api.SubmitStepForm(started.SessionId, default));
         done.Completed.Should().BeTrue();
         FakeUpload.Received.Should().Be("scan:document/scan.pdf/3:submit");
-        _emrAnswers.Delivered.Should().ContainSingle().Which.UserId.Should().Be("nurse-1");
+        _moduleAnswers.Delivered.Should().ContainSingle().Which.UserId.Should().Be("staff-1");
     }
 
     private sealed class FakeLogin : IStepHandler
@@ -397,7 +397,7 @@ public class HeadlessJourneyApiTests
     {
         public List<JourneyAnswers> Delivered { get; } = new();
 
-        public string Module => "emr";
+        public string Module => "projects";
 
         public Task DeliverAsync(JourneyAnswers answers, CancellationToken cancellationToken = default)
         {

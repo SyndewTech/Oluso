@@ -33,7 +33,7 @@ public class ScimEventOriginTests
     private readonly Mock<IScimResourceMappingStore> _mappings = new();
     private readonly Mock<IScimAttributeMappingStore> _attributeMappings = new();
     private readonly Mock<IRoleStore> _roles = new();
-    private readonly ScimClient _client = new() { Id = "sc1", TenantId = Tenant, Name = "Payroll" };
+    private readonly ScimClient _client = new() { Id = "sc1", TenantId = Tenant, Name = "Directory sync" };
 
     public ScimEventOriginTests()
     {
@@ -65,7 +65,7 @@ public class ScimEventOriginTests
             NullLogger<ScimProvisioningService>.Instance);
     }
 
-    private static readonly EventOrigin ScimOrigin = EventOrigin.Scim("sc1", "Payroll");
+    private static readonly EventOrigin ScimOrigin = EventOrigin.Scim("sc1", "Directory sync");
 
     [Fact]
     public async Task Creating_a_user_raises_user_registered_with_the_scim_client_as_origin()
