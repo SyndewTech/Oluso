@@ -5,10 +5,22 @@
       <h1 class="text-2xl font-bold text-gray-900">Roles</h1>
       <p class="mt-1 text-sm text-gray-500">Manage user roles and permissions</p>
     </div>
-    <ui-button (clicked)="openCreateModal()">
-      <ui-icon name="plus" class="h-4 w-4 mr-2" />
-      Add Role
-    </ui-button>
+    <div class="flex items-center gap-2">
+      @if (exportSelection().size > 0) {
+        <ui-button variant="secondary" [disabled]="exporting()" (clicked)="exportSelected()">
+          <ui-icon name="arrow-down-tray" class="h-4 w-4 mr-2" />
+          {{ exporting() ? 'Exporting...' : 'Export ' + exportSelection().size }}
+        </ui-button>
+      }
+      <ui-button variant="secondary" (clicked)="openImport()">
+        <ui-icon name="arrow-up-tray" class="h-4 w-4 mr-2" />
+        Import
+      </ui-button>
+      <ui-button (clicked)="openCreateModal()">
+        <ui-icon name="plus" class="h-4 w-4 mr-2" />
+        Add Role
+      </ui-button>
+    </div>
   </div>
 
   <ui-card>
@@ -39,6 +51,17 @@
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
+              <th class="pl-6 pr-2 py-3 w-8">
+                <input
+                  type="checkbox"
+                  class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  [checked]="allVisibleSelected()"
+                  [disabled]="exportableVisible().length === 0"
+                  (change)="toggleAllExport()"
+                  title="Select this organization's roles to export"
+                  aria-label="Select all roles to export"
+                />
+              </th>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Name
               </th>
@@ -62,6 +85,17 @@
           <tbody class="bg-white divide-y divide-gray-200">
             @for (role of visibleRoles(); track role.id) {
               <tr class="hover:bg-gray-50">
+                <td class="pl-6 pr-2 py-4 w-8">
+                  @if (isExportable(role)) {
+                    <input
+                      type="checkbox"
+                      class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      [checked]="exportSelection().has(role.id)"
+                      (change)="toggleExport(role)"
+                      [attr.aria-label]="'Select ' + (role.displayName || role.name) + ' to export'"
+                    />
+                  }
+                </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                   <div>
                     <div class="font-medium text-gray-900">{{ role.displayName || role.name }}</div>
@@ -446,5 +480,105 @@
     <ui-button variant="secondary" (clicked)="closeUsersModal()">
       Close
     </ui-button>
+  </div>
+</ui-modal>
+
+<!-- Import roles -->
+<ui-modal [open]="showImportModal()" title="Import roles" size="lg" [closeOnBackdrop]="false" (closed)="closeImport()">
+  <input #importInput type="file" accept=".json,application/json" class="hidden" (change)="onImportFileSelected($event)" />
+  <div class="space-y-4">
+    <p class="text-sm text-gray-600">
+      Choose a roles file exported from another environment. Permissions, entitlements and other claims come with each
+      role; who holds the role does not. Entitlements this organization doesn't have yet are created.
+    </p>
+
+    <div class="flex items-center gap-3">
+      <ui-button variant="secondary" (clicked)="chooseImportFile()" [disabled]="importBusy()">
+        <ui-icon name="document-text" class="h-4 w-4 mr-2" />
+        {{ importFileName() ? 'Choose another file' : 'Choose file' }}
+      </ui-button>
+      @if (importFileName()) {
+        <span class="text-sm text-gray-700 font-mono truncate">{{ importFileName() }}</span>
+      }
+    </div>
+
+    <label class="flex items-start gap-2 text-sm text-gray-700">
+      <input
+        type="checkbox"
+        class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+        [checked]="importReplace()"
+        [disabled]="importBusy() || !!importPreview()?.applied"
+        (change)="setImportReplace(!importReplace())"
+      />
+      <span>
+        Replace roles that already exist
+        <span class="block text-xs text-gray-500">
+          Their permissions, entitlements and claims become the file's. Off: existing roles are left as they are.
+        </span>
+      </span>
+    </label>
+
+    @if (importError()) {
+      <div class="bg-red-50 border border-red-200 rounded-md p-3 text-sm text-red-600">{{ importError() }}</div>
+    }
+
+    @if (importBusy() && !importPreview()) {
+      <div class="flex justify-center py-6">
+        <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
+      </div>
+    }
+
+    @if (importPreview(); as preview) {
+      @if (preview.error) {
+        <div class="bg-amber-50 border border-amber-200 rounded-md p-3 text-sm text-amber-800">{{ preview.error }}</div>
+      }
+
+      @if (preview.entitlementsToCreate.length > 0) {
+        <div class="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm text-blue-800">
+          {{ preview.applied ? 'Entitlements created' : 'Entitlements to create' }}:
+          <span class="font-mono">{{ preview.entitlementsToCreate.join(', ') }}</span>
+        </div>
+      }
+
+      @if (preview.roles.length > 0) {
+        <div class="border border-gray-200 rounded-md divide-y divide-gray-200 max-h-80 overflow-y-auto">
+          @for (item of preview.roles; track $index) {
+            <div class="px-3 py-2 text-sm">
+              <div class="flex items-center justify-between gap-3">
+                <span class="font-medium text-gray-900">{{ item.name || '(no name)' }}</span>
+                <ui-badge [variant]="importActionVariant(item)">{{ importActionLabel(item, preview.applied) }}</ui-badge>
+              </div>
+              @if (item.error || item.reason) {
+                <p class="mt-0.5 text-xs" [class]="item.error ? 'text-red-600' : 'text-gray-500'">{{ item.error || item.reason }}</p>
+              }
+              @if (item.droppedPermissions.length > 0) {
+                <p class="mt-0.5 text-xs text-amber-700">
+                  Permissions left out (unknown here, or not yours to grant):
+                  <span class="font-mono">{{ item.droppedPermissions.join(', ') }}</span>
+                </p>
+              }
+              @if (item.droppedClaims.length > 0) {
+                <p class="mt-0.5 text-xs text-amber-700">
+                  Reserved claims left out: <span class="font-mono">{{ item.droppedClaims.join(', ') }}</span>
+                </p>
+              }
+              @if (item.droppedEntitlements.length > 0) {
+                <p class="mt-0.5 text-xs text-amber-700">
+                  Invalid entitlement names left out: <span class="font-mono">{{ item.droppedEntitlements.join(', ') }}</span>
+                </p>
+              }
+            </div>
+          }
+        </div>
+      }
+    }
+  </div>
+  <div modal-footer class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+    <ui-button variant="secondary" (clicked)="closeImport()">{{ importPreview()?.applied ? 'Close' : 'Cancel' }}</ui-button>
+    @if (!importPreview()?.applied) {
+      <ui-button [disabled]="importBusy() || !importPreview()?.canImport" (clicked)="applyImport()">
+        {{ importBusy() && importPreview() ? 'Importing...' : 'Import' }}
+      </ui-button>
+    }
   </div>
 </ui-modal>

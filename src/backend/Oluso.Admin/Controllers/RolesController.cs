@@ -16,7 +16,7 @@ namespace Oluso.Admin.Controllers;
 /// Admin API for managing roles within a tenant
 /// </summary>
 [Route("api/admin/roles")]
-public class RolesController : AdminBaseController
+public partial class RolesController : AdminBaseController
 {
     private readonly IRoleStore _roleStore;
     private readonly IOlusoUserService _userService;

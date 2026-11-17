@@ -188,6 +188,9 @@ public static class AdminPermissions
     public const string PlatformClientsRead = "platform.clients.read";
     public const string PlatformClientsWrite = "platform.clients.write";
     public const string PlatformClientsDelete = "platform.clients.delete";
+    public const string PlatformDomainsRead = "platform.domains.read";
+    public const string PlatformRolesRead = "platform.roles.read";
+    public const string PlatformRolesManage = "platform.roles.manage";
 
     /// <summary>
     /// Get all defined permissions with their metadata. Reads directly from
@@ -335,6 +338,9 @@ public static class AdminPermissions
             new(PlatformClientsRead, "View platform clients", Categories.Platform, "View platform-level OAuth clients", RequiresSuperAdmin: true),
             new(PlatformClientsWrite, "Create/Edit platform clients", Categories.Platform, "Create and edit platform-level OAuth clients", RequiresSuperAdmin: true),
             new(PlatformClientsDelete, "Delete platform clients", Categories.Platform, "Delete platform-level OAuth clients", RequiresSuperAdmin: true),
+            new(PlatformDomainsRead, "View all custom domains", Categories.Platform, "View every organization's custom domains, including removed and failed ones", RequiresSuperAdmin: true),
+            new(PlatformRolesRead, "View platform role holders", Categories.Platform, "View who holds each platform-wide role in every organization", RequiresSuperAdmin: true),
+            new(PlatformRolesManage, "Assign platform roles", Categories.Platform, "Assign and remove platform-wide roles in any organization", RequiresSuperAdmin: true),
         };
     }
 

@@ -25,7 +25,18 @@ import { ADMIN_NAV_MODES } from '../../branding/admin-nav-modes.token';
 const CORE_NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', path: '/dashboard', icon: 'home', order: 0 },
   { label: 'Organizations', path: '/organizations', icon: 'building', permission: 'organizations.read', superAdminOnly: true, order: 10 },
-  { label: 'Platform Clients', path: '/platform/clients', icon: 'globe', permission: 'platform.clients.read', superAdminOnly: true, order: 11 },
+  {
+    label: 'Platform',
+    path: '/platform/clients',
+    icon: 'globe',
+    superAdminOnly: true,
+    order: 11,
+    children: [
+      { label: 'Clients', path: '/platform/clients', icon: 'window', permission: 'platform.clients.read', superAdminOnly: true, order: 0 },
+      { label: 'Domains', path: '/platform/domains', icon: 'globe-alt', permission: 'platform.domains.read', superAdminOnly: true, order: 10 },
+      { label: 'Roles', path: '/platform/roles', icon: 'shield', permission: 'platform.roles.read', superAdminOnly: true, order: 20 },
+    ],
+  },
   { label: 'My Organization', path: '/tenants', icon: 'building', permission: 'tenants.read', orgAdminOnly: true, order: 10 },
   {
     label: 'Applications',

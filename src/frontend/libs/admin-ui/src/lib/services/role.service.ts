@@ -3,7 +3,7 @@ import { Observable } from 'rxjs';
 import { ApiService } from './api.service';
 import { PaginationParams } from '../models/pagination-params.model';
 import { PaginatedResponse } from '@syndew/oluso-ui-core';
-import { RoleDto, CreateRoleRequest, UserInRoleDto } from '../models/role.model';
+import { RoleDto, CreateRoleRequest, UserInRoleDto, RoleImportResult } from '../models/role.model';
 
 @Injectable({
   providedIn: 'root',
@@ -60,5 +60,19 @@ export class RoleService {
    */
   getUsersInRole(roleId: string): Observable<UserInRoleDto[]> {
     return this.api.get<UserInRoleDto[]>(`${this.endpoint}/${roleId}/users`);
+  }
+
+  /** The roles as an export document (plain JSON), to save as a file. */
+  exportRoles(roleIds: string[]): Observable<unknown> {
+    return this.api.post<unknown>(`${this.endpoint}/export`, { roleIds });
+  }
+
+  /** What importing the file would do here. Writes nothing. */
+  previewImport(content: string, replaceExisting: boolean): Observable<RoleImportResult> {
+    return this.api.post<RoleImportResult>(`${this.endpoint}/import/preview`, { content, replaceExisting });
+  }
+
+  importRoles(content: string, replaceExisting: boolean): Observable<RoleImportResult> {
+    return this.api.post<RoleImportResult>(`${this.endpoint}/import`, { content, replaceExisting });
   }
 }

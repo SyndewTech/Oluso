@@ -38,3 +38,23 @@ export interface UserInRoleDto {
   displayName?: string;
   isActive: boolean;
 }
+
+/** What an import does, or did, for each role in a roles export file. */
+export interface RoleImportResult {
+  canImport: boolean;
+  error?: string | null;
+  applied: boolean;
+  roles: RoleImportItem[];
+  /** Entitlements the file uses that this organization lacks; the import creates them. */
+  entitlementsToCreate: string[];
+}
+
+export interface RoleImportItem {
+  name: string;
+  action: 'create' | 'update' | 'skip' | 'invalid';
+  reason?: string | null;
+  droppedPermissions: string[];
+  droppedClaims: string[];
+  droppedEntitlements: string[];
+  error?: string | null;
+}

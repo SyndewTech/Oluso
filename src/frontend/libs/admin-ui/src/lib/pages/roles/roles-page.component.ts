@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, ViewChild, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -15,7 +15,8 @@ import {
 import { RoleService } from '../../services/role.service';
 import { PermissionService } from '../../services/permission.service';
 import { EntitlementService } from '../../services/entitlement.service';
-import { RoleDto, CreateRoleRequest, RoleClaimDto, UserInRoleDto } from '../../models/role.model';
+import { RoleDto, CreateRoleRequest, RoleClaimDto, UserInRoleDto, RoleImportResult, RoleImportItem } from '../../models/role.model';
+import { readFileText, saveBlob } from '../journeys/journey-file';
 import { PermissionCategory, PermissionsResponse } from '../../models/permission.model';
 import { EntitlementDto } from '../../models/entitlement.model';
 
@@ -77,6 +78,25 @@ export class RolesPageComponent {
   newClaimValue = '';
   permissionSearchTerm = '';
 
+  /** Roles picked for export: this organization's own roles only. */
+  readonly exportSelection = signal<Set<string>>(new Set());
+  readonly exportableVisible = computed(() => this.visibleRoles().filter((r) => this.isExportable(r)));
+  readonly allVisibleSelected = computed(() => {
+    const selectable = this.exportableVisible();
+    const selected = this.exportSelection();
+    return selectable.length > 0 && selectable.every((r) => selected.has(r.id));
+  });
+  readonly exporting = signal(false);
+
+  @ViewChild('importInput') importInput?: ElementRef<HTMLInputElement>;
+  readonly showImportModal = signal(false);
+  readonly importFileName = signal('');
+  readonly importReplace = signal(false);
+  readonly importPreview = signal<RoleImportResult | null>(null);
+  readonly importBusy = signal(false);
+  readonly importError = signal<string | null>(null);
+  private importContent = '';
+
   constructor() {
     this.loadRoles();
     this.loadPermissions();
@@ -116,6 +136,154 @@ export class RolesPageComponent {
         this.loadingPermissions.set(false);
       },
     });
+  }
+
+  isExportable(role: RoleDto): boolean {
+    return !role.isGlobal && !role.isSystemRole;
+  }
+
+  toggleExport(role: RoleDto): void {
+    this.exportSelection.update((current) => {
+      const next = new Set(current);
+      if (next.has(role.id)) next.delete(role.id);
+      else next.add(role.id);
+      return next;
+    });
+  }
+
+  toggleAllExport(): void {
+    const selectable = this.exportableVisible();
+    this.exportSelection.update((current) => {
+      const next = new Set(current);
+      const select = !selectable.every((r) => next.has(r.id));
+      for (const role of selectable) {
+        if (select) next.add(role.id);
+        else next.delete(role.id);
+      }
+      return next;
+    });
+  }
+
+  exportSelected(): void {
+    const ids = [...this.exportSelection()];
+    if (ids.length === 0) return;
+    this.exporting.set(true);
+    this.roleService.exportRoles(ids).subscribe({
+      next: (document) => {
+        const single = ids.length === 1 ? this.roles().find((r) => r.id === ids[0]) : undefined;
+        const fileName = single
+          ? `role-${this.fileSafe(single.name)}.json`
+          : `roles-${new Date().toISOString().slice(0, 10)}.json`;
+        saveBlob(new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' }), fileName);
+        this.toast.success(ids.length === 1 ? 'Role exported' : `${ids.length} roles exported`);
+        this.exporting.set(false);
+      },
+      error: (err: unknown) => {
+        this.toast.error(extractErrorMessage(err, 'Could not export the roles'));
+        this.exporting.set(false);
+      },
+    });
+  }
+
+  private fileSafe(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'role';
+  }
+
+  openImport(): void {
+    this.importContent = '';
+    this.importFileName.set('');
+    this.importReplace.set(false);
+    this.importPreview.set(null);
+    this.importError.set(null);
+    this.showImportModal.set(true);
+  }
+
+  closeImport(): void {
+    this.showImportModal.set(false);
+  }
+
+  chooseImportFile(): void {
+    this.importInput?.nativeElement.click();
+  }
+
+  async onImportFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+
+    this.importFileName.set(file.name);
+    this.importPreview.set(null);
+    this.importError.set(null);
+    try {
+      this.importContent = await readFileText(file);
+    } catch {
+      this.importError.set('Could not read the file.');
+      return;
+    }
+    this.refreshPreview();
+  }
+
+  setImportReplace(replace: boolean): void {
+    this.importReplace.set(replace);
+    if (this.importContent) this.refreshPreview();
+  }
+
+  private refreshPreview(): void {
+    this.importBusy.set(true);
+    this.roleService.previewImport(this.importContent, this.importReplace()).subscribe({
+      next: (preview) => {
+        this.importPreview.set(preview);
+        this.importBusy.set(false);
+      },
+      error: (err: unknown) => {
+        this.importError.set(extractErrorMessage(err, 'Could not read the file'));
+        this.importBusy.set(false);
+      },
+    });
+  }
+
+  applyImport(): void {
+    if (!this.importPreview()?.canImport) return;
+    this.importBusy.set(true);
+    this.importError.set(null);
+    this.roleService.importRoles(this.importContent, this.importReplace()).subscribe({
+      next: (result) => {
+        this.importPreview.set(result);
+        this.importBusy.set(false);
+        const failed = result.roles.filter((r) => r.error).length;
+        const done = result.roles.filter((r) => (r.action === 'create' || r.action === 'update') && !r.error).length;
+        if (failed > 0) this.toast.warning(`${done} imported, ${failed} failed`);
+        else this.toast.success(done === 1 ? '1 role imported' : `${done} roles imported`);
+        this.loadRoles();
+        this.loadEntitlements();
+      },
+      error: (err: unknown) => {
+        this.importError.set(extractErrorMessage(err, 'Could not import the roles'));
+        this.importBusy.set(false);
+      },
+    });
+  }
+
+  importActionLabel(item: RoleImportItem, applied: boolean): string {
+    if (item.error) return 'Failed';
+    switch (item.action) {
+      case 'create':
+        return applied ? 'Created' : 'Create';
+      case 'update':
+        return applied ? 'Updated' : 'Update';
+      case 'skip':
+        return 'Skip';
+      default:
+        return 'Can\'t import';
+    }
+  }
+
+  importActionVariant(item: RoleImportItem): 'success' | 'info' | 'default' | 'danger' {
+    if (item.error || item.action === 'invalid') return 'danger';
+    if (item.action === 'create') return 'success';
+    if (item.action === 'update') return 'info';
+    return 'default';
   }
 
   openCreateModal(): void {
