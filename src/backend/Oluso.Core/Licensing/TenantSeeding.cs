@@ -59,7 +59,7 @@ public class WorkflowDefinitionSeed
 
     /// <summary>
     /// Webhook event type that triggers the workflow (e.g.
-    /// <c>"emr.triage.recorded"</c>). Must be a registered webhook event; the
+    /// <c>"projects.task.completed"</c>). Must be a registered webhook event; the
     /// persister refuses seeds with unknown triggers.
     /// </summary>
     public required string TriggerEventType { get; init; }

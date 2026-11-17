@@ -65,10 +65,10 @@ public class ScopeFeatureGateTests
     [Fact]
     public async Task Any_one_of_several_features_will_do()
     {
-        AddScope("suite.vault.invoices", "accounting accounting-sme");
+        AddScope("suite.vault.invoices", "ledger ledger-lite");
         (await Gate().FindUnavailableAsync(new[] { "suite.vault.invoices" })).Should().NotBeEmpty();
 
-        _enabled.Add("accounting-sme");
+        _enabled.Add("ledger-lite");
         (await Gate().FindUnavailableAsync(new[] { "suite.vault.invoices" })).Should().BeEmpty();
     }
 
@@ -142,7 +142,7 @@ public class ScopeFeatureGateTests
     [Fact]
     public void Declarations_of_one_scope_by_two_features_merge()
     {
-        ApiScopeFeatures.Format(new[] { "accounting", "accounting-sme", "ACCOUNTING" }).Should().Be("accounting accounting-sme");
+        ApiScopeFeatures.Format(new[] { "ledger", "ledger-lite", "LEDGER" }).Should().Be("ledger ledger-lite");
         ApiScopeFeatures.Parse("a, b  c").Should().Equal("a", "b", "c");
         ApiScopeFeatures.Format(Array.Empty<string>()).Should().BeNull();
     }

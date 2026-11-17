@@ -34,7 +34,7 @@ public class UserInviteTests
 
     public UserInviteTests()
     {
-        var tenant = new Tenant { Id = Tenant, Name = "Hygeia Clinic", Identifier = "hygeia", OrganizationId = "org-1" };
+        var tenant = new Tenant { Id = Tenant, Name = "Hygeia Studio", Identifier = "hygeia", OrganizationId = "org-1" };
         _tenants.Setup(t => t.GetByIdAsync(Tenant, It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
         _issuer.Setup(i => i.GetIssuerForTenantAsync(tenant, It.IsAny<CancellationToken>())).ReturnsAsync("https://hygeia.example.org/");
         _settings.Setup(s => s.GetAccountEmailSettingsAsync(Tenant, It.IsAny<CancellationToken>()))
@@ -87,7 +87,7 @@ public class UserInviteTests
         created.InviteError.Should().BeNull();
         var mail = _sent.Should().ContainSingle().Subject;
         mail.To.Should().Be("ngozi@example.org");
-        mail.Subject.Should().Contain("Hygeia Clinic");
+        mail.Subject.Should().Contain("Hygeia Studio");
         mail.Html.Should().Contain("https://hygeia.example.org/account/reset-password?token=tok%2Ben&email=ngozi%40example.org")
             .And.Contain("2 days");
     }

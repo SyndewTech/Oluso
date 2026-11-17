@@ -21,7 +21,7 @@ function nav(id: string, change: Partial<NavigationCommand> = {}): NavigationCom
 /** Apps live under their own first segment, the way a shell's resolver maps them. */
 const byFirstSegment = (url: string) => {
   const first = url.split('/').filter(Boolean)[0]?.split(/[?#]/)[0];
-  return first && ['crm', 'emr', 'hr'].includes(first) ? first : null;
+  return first && ['sales', 'projects', 'hr'].includes(first) ? first : null;
 };
 
 describe('CommandRegistryService', () => {
@@ -45,20 +45,20 @@ describe('CommandRegistryService', () => {
   describe('app scope', () => {
     beforeEach(() => {
       registry.setAppResolver(byFirstSegment);
-      registry.register([nav('crm-contacts', { app: 'crm' }), nav('emr-patients', { app: 'emr' }), nav('theme', { app: null })]);
+      registry.register([nav('sales-contacts', { app: 'sales' }), nav('projects-tasks', { app: 'projects' }), nav('theme', { app: null })]);
     });
 
     it('lists only the current app\'s commands and the global ones', async () => {
-      await goTo('/crm/contacts');
-      expect(ids(registry.filter(''))).toEqual(['crm-contacts', 'theme']);
+      await goTo('/sales/contacts');
+      expect(ids(registry.filter(''))).toEqual(['sales-contacts', 'theme']);
 
-      await goTo('/emr/patients/42');
-      expect(ids(registry.filter(''))).toEqual(['emr-patients', 'theme']);
+      await goTo('/projects/tasks/42');
+      expect(ids(registry.filter(''))).toEqual(['projects-tasks', 'theme']);
     });
 
     it('keeps other apps\' commands out of searches too', async () => {
-      await goTo('/crm/contacts');
-      expect(ids(registry.filter('patients'))).toEqual([]);
+      await goTo('/sales/contacts');
+      expect(ids(registry.filter('tasks'))).toEqual([]);
     });
 
     it('lists only global commands outside every app', async () => {
@@ -67,13 +67,13 @@ describe('CommandRegistryService', () => {
     });
 
     it('scopes dynamic searches the same way', async () => {
-      registry.register({ kind: 'dynamic', id: 'emr-search', group: 'Patients', label: 'Search patients', app: 'emr', search: () => of([]) });
+      registry.register({ kind: 'dynamic', id: 'projects-search', group: 'Tasks', label: 'Search tasks', app: 'projects', search: () => of([]) });
       registry.register({ kind: 'dynamic', id: 'records', group: 'Records', label: 'Search records', app: null, search: () => of([]) });
 
-      await goTo('/crm/contacts');
+      await goTo('/sales/contacts');
       expect(ids(registry.getDynamicGroups())).toEqual(['records']);
-      await goTo('/emr');
-      expect(ids(registry.getDynamicGroups())).toEqual(['emr-search', 'records']);
+      await goTo('/projects');
+      expect(ids(registry.getDynamicGroups())).toEqual(['projects-search', 'records']);
     });
 
     it('gives the register call\'s app to commands without their own', async () => {
@@ -81,7 +81,7 @@ describe('CommandRegistryService', () => {
 
       await goTo('/hr');
       expect(ids(registry.filter('hr'))).toEqual(['hr-leave', 'hr-shared']);
-      await goTo('/crm');
+      await goTo('/sales');
       expect(ids(registry.filter('hr'))).toEqual(['hr-shared']);
     });
   });
@@ -91,36 +91,36 @@ describe('CommandRegistryService', () => {
       registry.register(nav('legacy'));
       registry.setAppResolver(byFirstSegment);
 
-      await goTo('/crm');
+      await goTo('/sales');
       expect(ids(registry.filter('legacy'))).toEqual(['legacy']);
-      await goTo('/emr');
+      await goTo('/projects');
       expect(ids(registry.filter('legacy'))).toEqual(['legacy']);
     });
 
     it('belong to the app the user is in when they are registered', async () => {
       registry.setAppResolver(byFirstSegment);
-      await goTo('/crm/contacts');
-      registry.register(nav('crm-page-action'));
+      await goTo('/sales/contacts');
+      registry.register(nav('sales-page-action'));
 
-      expect(registry.commands().find((c) => c.id === 'crm-page-action')?.app).toBe('crm');
-      await goTo('/emr');
-      expect(ids(registry.filter('crm-page-action'))).toEqual([]);
+      expect(registry.commands().find((c) => c.id === 'sales-page-action')?.app).toBe('sales');
+      await goTo('/projects');
+      expect(ids(registry.filter('sales-page-action'))).toEqual([]);
     });
 
     it('belong to the app being opened when a page registers while it loads', async () => {
       registry.setAppResolver(byFirstSegment);
-      await goTo('/crm');
+      await goTo('/sales');
       let registeredApp: string | null | undefined;
       const sub = router.events.subscribe((event) => {
         if (event instanceof ActivationStart && registeredApp === undefined) {
-          registry.register(nav('emr-page'));
-          registeredApp = registry.commands().find((c) => c.id === 'emr-page')?.app;
+          registry.register(nav('projects-page'));
+          registeredApp = registry.commands().find((c) => c.id === 'projects-page')?.app;
         }
       });
 
-      await goTo('/emr/patients');
+      await goTo('/projects/tasks');
       sub.unsubscribe();
-      expect(registeredApp).toBe('emr');
+      expect(registeredApp).toBe('projects');
     });
 
     it('are global when registered on a page no app claims', async () => {
@@ -128,7 +128,7 @@ describe('CommandRegistryService', () => {
       await goTo('/profile');
       registry.register(nav('profile-action'));
 
-      await goTo('/crm');
+      await goTo('/sales');
       expect(ids(registry.filter('profile-action'))).toEqual(['profile-action']);
     });
   });
@@ -138,15 +138,15 @@ describe('CommandRegistryService', () => {
     beforeEach(() => {
       opened.length = 0;
       registry.setAppResolver(byFirstSegment);
-      registry.register([nav('crm-contacts', { app: 'crm' }), nav('emr-patients', { app: 'emr' })]);
+      registry.register([nav('sales-contacts', { app: 'sales' }), nav('projects-tasks', { app: 'projects' })]);
       registry.setApps([
-        { id: 'crm', label: 'Pulse', description: 'Contacts and deals', open: () => opened.push('crm') },
-        { id: 'emr', label: 'Clinic', open: () => opened.push('emr') },
+        { id: 'sales', label: 'Pipeline', description: 'Contacts and deals', open: () => opened.push('sales') },
+        { id: 'projects', label: 'Projects', open: () => opened.push('projects') },
       ]);
     });
 
     it('offers a global "Switch app…" that asks the palette to list the apps', async () => {
-      await goTo('/crm');
+      await goTo('/sales');
       const switchApp = registry.filter('').find((c) => c.id === SWITCH_APP_COMMAND_ID) as ActionCommand;
       expect(switchApp.group).toBe(APP_SWITCH_GROUP);
       expect(switchApp.keepOpen).toBe(true);
@@ -156,29 +156,29 @@ describe('CommandRegistryService', () => {
     });
 
     it('lists the apps, not their commands, for a >app query, the current one last', async () => {
-      await goTo('/crm');
+      await goTo('/sales');
       const apps = registry.filter('>app');
-      expect(apps.map((c) => c.label)).toEqual(['Open Clinic', 'Pulse (current)']);
+      expect(apps.map((c) => c.label)).toEqual(['Open Projects', 'Pipeline (current)']);
       expect(apps.every((c) => c.group === APP_SWITCH_GROUP)).toBe(true);
 
       registry.execute(apps[0]);
-      expect(opened).toEqual(['emr']);
+      expect(opened).toEqual(['projects']);
     });
 
     it('narrows the app list by the text after the prefix', async () => {
-      await goTo('/emr');
-      expect(registry.filter('>app deals').map((c) => c.id)).toEqual(['app-crm']);
+      await goTo('/projects');
+      expect(registry.filter('>app deals').map((c) => c.id)).toEqual(['app-sales']);
     });
 
     it('offers matching apps in a normal search without their commands', async () => {
-      await goTo('/emr');
-      expect(ids(registry.filter('pulse'))).toEqual(['app-crm']);
-      expect(ids(registry.filter('contacts'))).toEqual(['app-crm']);
+      await goTo('/projects');
+      expect(ids(registry.filter('pipeline'))).toEqual(['app-sales']);
+      expect(ids(registry.filter('contacts'))).toEqual(['app-sales']);
     });
 
     it('hides "Switch app…" when there is nowhere else to go', async () => {
-      registry.setApps([{ id: 'crm', label: 'Pulse', open: () => undefined }]);
-      await goTo('/crm');
+      registry.setApps([{ id: 'sales', label: 'Pipeline', open: () => undefined }]);
+      await goTo('/sales');
       expect(ids(registry.filter(''))).not.toContain(SWITCH_APP_COMMAND_ID);
     });
   });
@@ -202,8 +202,8 @@ describe('CommandRegistryService', () => {
 
     it('navigates by URL when there are no query params', () => {
       const navigateByUrl = vi.spyOn(router, 'navigateByUrl').mockResolvedValue(true);
-      registry.execute(nav('x', { route: '/emr/patients' }));
-      expect(navigateByUrl).toHaveBeenCalledWith('/emr/patients');
+      registry.execute(nav('x', { route: '/projects/tasks' }));
+      expect(navigateByUrl).toHaveBeenCalledWith('/projects/tasks');
     });
   });
 });

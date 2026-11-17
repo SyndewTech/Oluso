@@ -168,12 +168,12 @@ public class DefaultProfileServiceScopeClaimsTests
             {
                 new ApiScope
                 {
-                    Name = "emr",
+                    Name = "projects",
                     UserClaims = new List<ApiScopeClaim> { new() { Type = "department" } },
                 },
             });
 
-        var claims = await IssueAsync(new[] { "openid", "emr" });
+        var claims = await IssueAsync(new[] { "openid", "projects" });
 
         claims.Should().Contain(c => c.Type == "department" && c.Value == "Cardiology");
     }
@@ -188,12 +188,12 @@ public class DefaultProfileServiceScopeClaimsTests
             {
                 new Resource
                 {
-                    Uri = "https://emr.api",
+                    Uri = "https://projects.api",
                     UserClaims = new List<ResourceClaim> { new() { Type = "department" } },
                 },
             });
 
-        var claims = await IssueAsync(new[] { "openid" }, resources: new[] { "https://emr.api" });
+        var claims = await IssueAsync(new[] { "openid" }, resources: new[] { "https://projects.api" });
 
         claims.Should().Contain(c => c.Type == "department" && c.Value == "Cardiology");
     }

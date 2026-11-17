@@ -12,7 +12,7 @@ namespace Oluso.Tests.Roles;
 public class RolePermissionValidatorTests
 {
     private static readonly IReadOnlyList<PermissionDefinition> Definitions = AdminPermissions.GetCorePermissions()
-        .Append(new PermissionDefinition("hr.payroll.run", "Run payroll", "HR", "Run payroll", FeatureKey: "hr"))
+        .Append(new PermissionDefinition("hr.reviews.run", "Run reviews", "HR", "Run reviews", FeatureKey: "hr"))
         .ToList();
 
     private static readonly RolePermissionGrantor SuperAdmin = new(IsSuperAdmin: true, IsOrgAdmin: false);
@@ -72,8 +72,8 @@ public class RolePermissionValidatorTests
     [Fact]
     public void Module_permissions_are_refused_for_everyone()
     {
-        Validate(RolePermissionGrantor.ServiceClient, "hr.payroll.run").Should().Contain("module permissions");
-        Validate(SuperAdmin, "hr.payroll.run").Should().Contain("module permissions");
+        Validate(RolePermissionGrantor.ServiceClient, "hr.reviews.run").Should().Contain("module permissions");
+        Validate(SuperAdmin, "hr.reviews.run").Should().Contain("module permissions");
     }
 
     [Fact]

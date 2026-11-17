@@ -19,7 +19,7 @@ public interface IBlueprintContributor
 {
     /// <summary>
     /// The module's feature key — the SAME key used for licensing and seats
-    /// (e.g. <c>"emr"</c>). The Blueprints surface filters by this so a
+    /// (e.g. <c>"projects"</c>). The Blueprints surface filters by this so a
     /// tenant only ever sees packs for modules it is actually licensed for.
     /// </summary>
     string ModuleKey { get; }
@@ -52,10 +52,10 @@ public interface IBlueprintContributor
 /// <summary>Metadata describing one applyable blueprint (starter pack).</summary>
 public sealed class BlueprintDescriptor
 {
-    /// <summary>Stable key, e.g. <c>"emr.urgent-care"</c>.</summary>
+    /// <summary>Stable key, e.g. <c>"projects.kickoff"</c>.</summary>
     public required string Key { get; init; }
 
-    /// <summary>The owning module's feature key, e.g. <c>"emr"</c>.</summary>
+    /// <summary>The owning module's feature key, e.g. <c>"projects"</c>.</summary>
     public required string ModuleKey { get; init; }
 
     /// <summary>Display title, e.g. "Urgent Care starter pack".</summary>

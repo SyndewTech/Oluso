@@ -526,7 +526,7 @@ public class RefreshTokenGrantTests
             Claims = RefreshTokenData.StoreClaims(new Dictionary<string, object>
             {
                 ["tenant_id"] = "default",
-                ["role"] = new List<string> { "TenantAdmin", "Clinician" },
+                ["role"] = new List<string> { "TenantAdmin", "Reviewer" },
             }),
             ClaimsFormat = RefreshTokenData.JsonClaimsFormat,
         });
@@ -537,7 +537,7 @@ public class RefreshTokenGrantTests
         result.IsValid.Should().BeTrue();
         result.Claims["tenant_id"].Should().Be("default");
         result.Claims["role"].Should().BeAssignableTo<IEnumerable<string>>()
-            .Which.Should().Equal("TenantAdmin", "Clinician");
+            .Which.Should().Equal("TenantAdmin", "Reviewer");
     }
 
     [Fact]
@@ -561,7 +561,7 @@ public class RefreshTokenGrantTests
             {
                 new System.Security.Claims.Claim("tenant_id", "default"),
                 new System.Security.Claims.Claim("role", "TenantAdmin"),
-                new System.Security.Claims.Claim("role", "Clinician"),
+                new System.Security.Claims.Claim("role", "Reviewer"),
             }))
             .Returns(Task.CompletedTask);
 
@@ -569,7 +569,7 @@ public class RefreshTokenGrantTests
 
         result.IsValid.Should().BeTrue();
         result.Claims["role"].Should().BeAssignableTo<IEnumerable<string>>()
-            .Which.Should().BeEquivalentTo("TenantAdmin", "Clinician");
+            .Which.Should().BeEquivalentTo("TenantAdmin", "Reviewer");
     }
 
     #endregion

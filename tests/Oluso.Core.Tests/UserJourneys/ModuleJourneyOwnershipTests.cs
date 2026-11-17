@@ -32,30 +32,30 @@ public class ModuleJourneyOwnershipTests
     [Fact]
     public async Task A_module_journeys_answers_go_to_the_module_and_the_platform_keeps_only_the_run()
     {
-        var emr = new RecordingSink("emr");
-        var crm = new RecordingSink("crm");
+        var projects = new RecordingSink("projects");
+        var sales = new RecordingSink("sales");
 
-        var result = await CompleteAsync(Policy(owner: "emr"), emr, crm);
+        var result = await CompleteAsync(Policy(owner: "projects"), projects, sales);
 
         result.Status.Should().Be(JourneyStatus.Completed);
-        emr.Received.Should().ContainSingle().Which.Answers.Should().Contain("diagnosis", "Type 2 diabetes");
-        crm.Received.Should().BeEmpty();
+        projects.Received.Should().ContainSingle().Which.Answers.Should().Contain("topic", "Onboarding");
+        sales.Received.Should().BeEmpty();
 
         var record = (await _submissions.GetByPolicyAsync("intake")).Should().ContainSingle().Subject;
         record.Data.Should().BeEmpty();
         record.JourneyId.Should().Be("journey1");
-        emr.Received[0].SubmissionId.Should().Be(record.Id);
+        projects.Received[0].SubmissionId.Should().Be(record.Id);
 
         var evt = _raised.OfType<JourneySubmissionCreatedEvent>().Should().ContainSingle().Subject;
         evt.Fields.Should().BeNull();
-        evt.FieldNames.Should().Contain("diagnosis");
-        evt.Module.Should().Be("emr");
+        evt.FieldNames.Should().Contain("topic");
+        evt.Module.Should().Be("projects");
     }
 
     [Fact]
     public async Task Without_a_module_to_take_the_answers_the_journey_fails_and_nothing_is_kept()
     {
-        var result = await CompleteAsync(Policy(owner: "emr"), new RecordingSink("crm"));
+        var result = await CompleteAsync(Policy(owner: "projects"), new RecordingSink("sales"));
 
         result.Status.Should().Be(JourneyStatus.Failed);
         result.Error.Should().Be("answers_not_delivered");
@@ -67,7 +67,7 @@ public class ModuleJourneyOwnershipTests
     [Fact]
     public async Task A_module_that_refuses_the_answers_fails_the_journey()
     {
-        var result = await CompleteAsync(Policy(owner: "emr"), new RecordingSink("emr", fail: true));
+        var result = await CompleteAsync(Policy(owner: "projects"), new RecordingSink("projects", fail: true));
 
         result.Error.Should().Be("answers_not_delivered");
         (await _submissions.CountByPolicyAsync("intake")).Should().Be(0);
@@ -76,31 +76,31 @@ public class ModuleJourneyOwnershipTests
     [Fact]
     public async Task A_shared_journey_answers_the_module_that_started_it_and_a_private_one_its_owner()
     {
-        var emr = new RecordingSink("emr");
+        var projects = new RecordingSink("projects");
         var hr = new RecordingSink("hr");
         var launchedByHr = new Dictionary<string, object> { [JourneyRunOwnership.LaunchingModuleDataKey] = "hr" };
 
-        await CompleteAsync(Policy(owner: "emr", sharing: JourneySharing.Shared), launchedByHr, emr, hr);
+        await CompleteAsync(Policy(owner: "projects", sharing: JourneySharing.Shared), launchedByHr, projects, hr);
         hr.Received.Should().ContainSingle();
-        emr.Received.Should().BeEmpty();
+        projects.Received.Should().BeEmpty();
 
-        await CompleteAsync(Policy(owner: "emr"), launchedByHr, emr, hr);
-        emr.Received.Should().ContainSingle("a private journey's runs always belong to its owner");
+        await CompleteAsync(Policy(owner: "projects"), launchedByHr, projects, hr);
+        projects.Received.Should().ContainSingle("a private journey's runs always belong to its owner");
         hr.Received.Should().ContainSingle();
     }
 
     [Fact]
     public async Task A_platform_journey_still_keeps_its_answers_in_data_collection()
     {
-        var emr = new RecordingSink("emr");
+        var projects = new RecordingSink("projects");
 
-        var result = await CompleteAsync(Policy(owner: null), emr);
+        var result = await CompleteAsync(Policy(owner: null), projects);
 
         result.Status.Should().Be(JourneyStatus.Completed);
-        emr.Received.Should().BeEmpty();
+        projects.Received.Should().BeEmpty();
         (await _submissions.GetByPolicyAsync("intake")).Should().ContainSingle()
-            .Which.Data.Should().Contain("diagnosis", "Type 2 diabetes");
-        _raised.OfType<JourneySubmissionCreatedEvent>().Single().Fields.Should().ContainKey("diagnosis");
+            .Which.Data.Should().Contain("topic", "Onboarding");
+        _raised.OfType<JourneySubmissionCreatedEvent>().Single().Fields.Should().ContainKey("topic");
     }
 
     [Fact]
@@ -109,27 +109,27 @@ public class ModuleJourneyOwnershipTests
         var states = new Mock<IJourneyStateStore>();
         var orchestrator = new DefaultJourneyOrchestrator(new ServiceCollection().BuildServiceProvider(), Mock.Of<IJourneyPolicyStore>(), states.Object,
             Mock.Of<IStepHandlerRegistry>(), Mock.Of<IConditionEvaluator>(), NullLogger<DefaultJourneyOrchestrator>.Instance);
-        var policy = Policy(owner: "emr");
+        var policy = Policy(owner: "projects");
         JourneyLaunchTicket Launch(string? module, string policyId = "intake") =>
-            new("default", policyId, new Dictionary<string, string> { ["patient"] = "p1" }, null, DateTimeOffset.UtcNow.AddHours(1), module);
+            new("default", policyId, new Dictionary<string, string> { ["member"] = "m1" }, null, DateTimeOffset.UtcNow.AddHours(1), module);
 
         await orchestrator.Invoking(o => o.StartJourneyAsync(policy, new JourneyStartContext()))
             .Should().ThrowAsync<InvalidOperationException>("the plain address, embed or any other entry point carries no launch");
         await orchestrator.Invoking(o => o.StartJourneyAsync(policy, new JourneyStartContext { Launch = Launch("hr") }))
             .Should().ThrowAsync<InvalidOperationException>("another module's private journey");
-        await orchestrator.Invoking(o => o.StartJourneyAsync(policy, new JourneyStartContext { Launch = Launch("emr", "other") }))
+        await orchestrator.Invoking(o => o.StartJourneyAsync(policy, new JourneyStartContext { Launch = Launch("projects", "other") }))
             .Should().ThrowAsync<InvalidOperationException>("a launch made for another journey");
 
-        var state = await orchestrator.StartJourneyAsync(policy, new JourneyStartContext { Launch = Launch("emr") });
-        state.Data![JourneyRunOwnership.LaunchingModuleDataKey].Should().Be("emr");
-        JourneyLaunchData.ReadContext(state.Data).Should().Contain("patient", "p1");
+        var state = await orchestrator.StartJourneyAsync(policy, new JourneyStartContext { Launch = Launch("projects") });
+        state.Data![JourneyRunOwnership.LaunchingModuleDataKey].Should().Be("projects");
+        JourneyLaunchData.ReadContext(state.Data).Should().Contain("member", "m1");
     }
 
     [Theory]
-    [InlineData(null, JourneySharing.Private, "crm", true)]
-    [InlineData("emr", JourneySharing.Private, "emr", true)]
-    [InlineData("emr", JourneySharing.Private, "crm", false)]
-    [InlineData("emr", JourneySharing.Shared, "crm", true)]
+    [InlineData(null, JourneySharing.Private, "sales", true)]
+    [InlineData("projects", JourneySharing.Private, "projects", true)]
+    [InlineData("projects", JourneySharing.Private, "sales", false)]
+    [InlineData("projects", JourneySharing.Shared, "sales", true)]
     public void Modules_use_platform_journeys_their_own_and_shared_ones(string? owner, JourneySharing sharing, string module, bool usable) =>
         Policy(owner, sharing).UsableByModule(module).Should().Be(usable);
 
@@ -137,7 +137,7 @@ public class ModuleJourneyOwnershipTests
     {
         Id = "intake",
         Slug = "intake",
-        Name = "Patient intake",
+        Name = "Member intake",
         Type = JourneyType.DataCollection,
         Enabled = true,
         RequiresAuthentication = false,
@@ -177,7 +177,7 @@ public class ModuleJourneyOwnershipTests
             .ReturnsAsync((StepExecutionContext c, CancellationToken _) =>
             {
                 c.SetData("full_name", "Ada Obi");
-                c.SetData("diagnosis", "Type 2 diabetes");
+                c.SetData("topic", "Onboarding");
                 return StepHandlerResult.Success();
             });
         var registry = new Mock<IStepHandlerRegistry>();

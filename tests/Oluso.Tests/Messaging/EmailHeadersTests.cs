@@ -23,7 +23,7 @@ public class EmailHeadersTests
 
     private static readonly Dictionary<string, string> Unsubscribe = new()
     {
-        ["List-Unsubscribe"] = "<https://id.example/crm/unsubscribe/tok>",
+        ["List-Unsubscribe"] = "<https://id.example/sales/unsubscribe/tok>",
         ["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click",
     };
 

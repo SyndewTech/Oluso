@@ -77,18 +77,18 @@ public class EventOriginTests
         Request("/api/admin/users/u1", new Claim("sub", "admin-1"));
         using var scope = EventOriginScope.Begin(EventOrigin.Journey("signup"));
         var evt = Updated();
-        evt.Origin = EventOrigin.Scim("sc1", "Payroll", "192.0.2.5");
+        evt.Origin = EventOrigin.Scim("sc1", "Directory sync", "192.0.2.5");
 
-        (await RaiseAsync(evt)).Should().Be(EventOrigin.Scim("sc1", "Payroll", "192.0.2.5"));
+        (await RaiseAsync(evt)).Should().Be(EventOrigin.Scim("sc1", "Directory sync", "192.0.2.5"));
     }
 
     [Fact]
     public async Task Scope_origin_wins_over_the_request_and_takes_its_ip()
     {
         Request("/api/scim/v2/Users");
-        using (EventOriginScope.Begin(EventOrigin.Scim("sc1", "Payroll")))
+        using (EventOriginScope.Begin(EventOrigin.Scim("sc1", "Directory sync")))
         {
-            (await RaiseAsync(Updated())).Should().Be(EventOrigin.Scim("sc1", "Payroll", "203.0.113.7"));
+            (await RaiseAsync(Updated())).Should().Be(EventOrigin.Scim("sc1", "Directory sync", "203.0.113.7"));
         }
 
         EventOriginScope.Current.Should().BeNull();

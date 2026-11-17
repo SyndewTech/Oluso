@@ -24,8 +24,8 @@ public class TenantFaviconTests
     [Fact]
     public async Task The_tenants_icon_is_used_when_it_has_one()
     {
-        (await TenantFavicon.HrefAsync(Branding("https://cdn.example.org/clinic.ico").Object, NullLogger.Instance))
-            .Should().Be("https://cdn.example.org/clinic.ico");
+        (await TenantFavicon.HrefAsync(Branding("https://cdn.example.org/office.ico").Object, NullLogger.Instance))
+            .Should().Be("https://cdn.example.org/office.ico");
     }
 
     [Theory]

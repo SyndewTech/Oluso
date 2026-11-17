@@ -1,6 +1,6 @@
 # Hello Plugin - Oluso WASM Plugin Example
 
-A sample WASM plugin for the Oluso identity server that demonstrates the plugin interface for both **Journey** and **CRM** domains.
+A sample WASM plugin for the Oluso identity server that demonstrates the plugin interface for both **Journey** and module entity domains.
 
 ## Prerequisites
 
@@ -31,11 +31,11 @@ cargo build --target wasm32-unknown-unknown --release
 | `execute` | Main entry point - dispatches to greet/validate/transform/branch |
 | `collect_data` | Returns a form schema to collect additional data |
 
-### CRM Domain Functions
+### Module Entity Domain Functions
 
 | Function | Description |
 |----------|-------------|
-| `handle_crm` | Main CRM hook handler - handles all CRM events |
+| `handle_entity` | Main entity hook handler - handles every entity event of the module |
 | `validate_account` | Validate Account records |
 | `validate_deal` | Validate Deal records |
 
@@ -49,13 +49,13 @@ Configure in Admin → Plugins → Hook Bindings:
 - **Event Type**: * (or specific event)
 - **Function Name**: `execute`
 
-### CRM Domain
+### Module Entity Domain
 
 Configure in Admin → Plugins → Hook Bindings:
-- **Domain**: CRM
+- **Domain**: the module's domain (e.g. `sales`)
 - **Entity Type**: * (all entities) or `Account`, `Deal`, `Contact`, etc.
 - **Event Type**: `before_insert`, `after_insert`, `before_update`, `after_update`, `before_delete`, `after_delete`
-- **Function Name**: `handle_crm`
+- **Function Name**: `handle_entity`
 
 ## Input/Output Formats
 
@@ -83,7 +83,7 @@ Configure in Admin → Plugins → Hook Bindings:
 
 **Available Actions:** `continue`, `complete`, `require_input`, `branch`, `fail`
 
-### CRM Domain
+### Module Entity Domain
 
 **Input:**
 ```json
@@ -94,7 +94,7 @@ Configure in Admin → Plugins → Hook Bindings:
     "email": "user@example.com",
     "name": "John Doe",
     "roles": ["sales-rep"],
-    "permissions": ["crm.accounts.read", "crm.accounts.write"]
+    "permissions": ["sales.accounts.read", "sales.accounts.write"]
   },
   "timestamp": "2024-01-25T10:00:00Z",
   "executionId": "exec-123",
@@ -133,7 +133,7 @@ Configure in Admin → Plugins → Hook Bindings:
 }
 ```
 
-## CRM Hook Examples
+## Entity Hook Examples
 
 The plugin includes examples for:
 
@@ -189,9 +189,9 @@ sh install.sh
 echo '{"function":"greet","input":{"name":"World"}}' | \
   extism call target/wasm32-unknown-unknown/release/hello_plugin.wasm execute --stdin
 
-# Test CRM hook
+# Test an entity hook
 echo '{"tenantId":"t1","timestamp":"2024-01-01","executionId":"e1","entityType":"Account","event":"before_insert","record":{"name":"Test"}}' | \
-  extism call target/wasm32-unknown-unknown/release/hello_plugin.wasm handle_crm --stdin
+  extism call target/wasm32-unknown-unknown/release/hello_plugin.wasm handle_entity --stdin
 ```
 
 ## Uploading to Oluso

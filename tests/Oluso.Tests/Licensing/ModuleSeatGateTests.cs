@@ -80,9 +80,9 @@ public class ModuleSeatGateTests
     [Fact]
     public async Task Admin_and_account_endpoints_check_only_the_tenant()
     {
-        (await RunAsync(new RequireFeatureAttribute("emr"), "patient")).Should().BeNull();
+        (await RunAsync(new RequireFeatureAttribute("projects"), "member")).Should().BeNull();
 
         _tenantHasModule = false;
-        (await RunAsync(new RequireFeatureAttribute("emr"), "patient")).Should().BeOfType<ObjectResult>().Which.StatusCode.Should().Be(403);
+        (await RunAsync(new RequireFeatureAttribute("projects"), "member")).Should().BeOfType<ObjectResult>().Which.StatusCode.Should().Be(403);
     }
 }

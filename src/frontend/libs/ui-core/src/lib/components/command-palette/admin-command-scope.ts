@@ -1,7 +1,7 @@
 import type { NavItem } from '../../models/nav-item.model';
 import type { CommandAppArea } from './command-app-area';
 
-/** The app id of an admin area: the first segment of its path, e.g. 'emr' for '/emr'. */
+/** The app id of an admin area: the first segment of its path, e.g. 'projects' for '/projects'. */
 export function adminCommandAppId(path: string): string | null {
   return path.split(/[?#]/)[0].split('/').find((s) => s.length > 0) ?? null;
 }
@@ -12,7 +12,7 @@ function paths(item: NavItem): string[] {
 
 /**
  * The admin portal's app areas: one per top-level section a plugin adds, named after its path's first segment, so a
- * module's admin commands declare the same id as its workspace app where the two share a path ('emr', 'accounting').
+ * module's admin commands declare the same id as its workspace app where the two share a path ('projects', 'inventory').
  * Items a plugin merges into a core menu stay part of the core admin, which belongs to no app.
  */
 export function adminCommandAreas(pluginNavItems: readonly NavItem[]): CommandAppArea[] {

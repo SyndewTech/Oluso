@@ -14,7 +14,7 @@ export interface AppTitleConfig {
 
 export const APP_TITLE_CONFIG = new InjectionToken<AppTitleConfig>('APP_TITLE_CONFIG');
 
-/** A route title that is a translation key ("crm.objects.title") rather than words. */
+/** A route title that is a translation key ("sales.objects.title") rather than words. */
 const KEY_SHAPE = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/i;
 
 /**

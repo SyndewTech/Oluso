@@ -9,7 +9,7 @@ export interface NavItem {
   feature?: string;
   /**
    * Account portal only: a "{module}.{flag}" path into the account profile's
-   * extensions (e.g. "emr.isPatient"). The item is shown only when that flag is
+   * extensions (e.g. "projects.isMember"). The item is shown only when that flag is
    * true for the signed-in user, so module self-service pages appear just for
    * the people they apply to. Combine with `feature` for the tenant-level gate.
    */

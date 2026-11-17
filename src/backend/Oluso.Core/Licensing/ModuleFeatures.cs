@@ -43,7 +43,7 @@ public static class ModuleFeatures
 
     /// <summary>
     /// The module a feature key belongs to: the module with that key, or the one whose key it extends
-    /// ("crm.marketing.emails" belongs to "crm"). Null when no registered module owns it.
+    /// ("sales.marketing.emails" belongs to "sales"). Null when no registered module owns it.
     /// </summary>
     public static IModuleDescriptor? GetModuleForFeature(string featureKey)
     {

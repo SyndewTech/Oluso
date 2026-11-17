@@ -27,7 +27,7 @@ public class ScimEmailTrustTests
     private readonly Mock<IScimResourceMappingStore> _mappings = new();
     private readonly Mock<IScimAttributeMappingStore> _attributeMappings = new();
     private readonly Mock<ITenantEmailDomainStore> _emailDomains = new();
-    private readonly ScimClient _client = new() { Id = "sc1", TenantId = Tenant, Name = "Payroll", CanCreateUsers = true };
+    private readonly ScimClient _client = new() { Id = "sc1", TenantId = Tenant, Name = "Directory sync", CanCreateUsers = true };
     private OlusoUser? _created;
 
     public ScimEmailTrustTests()

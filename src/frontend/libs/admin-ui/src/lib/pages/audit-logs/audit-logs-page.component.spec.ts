@@ -19,7 +19,7 @@ describe('AuditLogsPageComponent', () => {
     success: true,
     ipAddress: '203.0.113.7',
     originKind: 'service_client',
-    originId: 'payroll',
+    originId: 'directory-sync',
   };
 
   function setup() {
@@ -30,7 +30,7 @@ describe('AuditLogsPageComponent', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: AuditLogService, useValue: { getLogs, export: vi.fn() } },
-        { provide: ClientService, useValue: { getClients: () => of([{ id: 1, clientId: 'payroll', clientName: 'Payroll sync' }]) } },
+        { provide: ClientService, useValue: { getClients: () => of([{ id: 1, clientId: 'directory-sync', clientName: 'Directory sync' }]) } },
         {
           provide: UserService,
           useValue: {
@@ -51,7 +51,7 @@ describe('AuditLogsPageComponent', () => {
 
     const row = (fixture.nativeElement as HTMLElement).querySelector('tbody tr')!;
     expect(row.textContent).toContain('Service client');
-    expect(row.textContent).toContain('Payroll sync');
+    expect(row.textContent).toContain('Directory sync');
   });
 
   it('filters by origin kind and then by the chosen actor', () => {
@@ -62,10 +62,10 @@ describe('AuditLogsPageComponent', () => {
     select.innerHTML = '<option value="service_client"></option>';
     select.value = 'service_client';
     page.onOriginKindChange({ target: select } as unknown as Event);
-    page.onOriginIdChange('payroll');
+    page.onOriginIdChange('directory-sync');
 
     expect(getLogs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ originKind: 'service_client', originId: 'payroll', pageNumber: 1 })
+      expect.objectContaining({ originKind: 'service_client', originId: 'directory-sync', pageNumber: 1 })
     );
   });
 
@@ -74,6 +74,6 @@ describe('AuditLogsPageComponent', () => {
 
     fixture.componentInstance.filterByOrigin(log);
 
-    expect(getLogs).toHaveBeenLastCalledWith(expect.objectContaining({ originKind: 'service_client', originId: 'payroll' }));
+    expect(getLogs).toHaveBeenLastCalledWith(expect.objectContaining({ originKind: 'service_client', originId: 'directory-sync' }));
   });
 });

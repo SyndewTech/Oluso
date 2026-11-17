@@ -62,7 +62,7 @@ public class AccountMeController : AccountBaseController
             Features = features,
         };
 
-        // Module facts about this user (is a patient, has a linked relative, ...),
+        // Module facts about this user (is a member, has a linked account, ...),
         // from the same enrichers the workspace profile uses. An enricher only runs
         // when the tenant has its module, so the portal never advertises a module
         // the tenant does not own. One failing module must not take the profile down.

@@ -71,7 +71,7 @@ public class WebhookOriginTests
     [Fact]
     public async Task Payload_carries_the_origin_as_a_top_level_object()
     {
-        Endpoints(Endpoint("crm"));
+        Endpoints(Endpoint("sales"));
 
         await Sink().HandleAsync(Updated(EventOrigin.ServiceClient("pay1", "203.0.113.7", "Pay1")));
 
@@ -87,11 +87,11 @@ public class WebhookOriginTests
     [Fact]
     public async Task Endpoint_linked_to_the_originating_client_is_skipped()
     {
-        Endpoints(Endpoint("pay1", clientId: "pay1"), Endpoint("crm"));
+        Endpoints(Endpoint("pay1", clientId: "pay1"), Endpoint("sales"));
 
         await Sink().HandleAsync(Updated(EventOrigin.ServiceClient("pay1")));
 
-        DeliveredTo().Should().Equal("crm");
+        DeliveredTo().Should().Equal("sales");
         _store.Verify(s => s.RecordDeliveryAsync(It.IsAny<string>(), It.IsAny<WebhookDelivery>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -117,11 +117,11 @@ public class WebhookOriginTests
             .Returns(Task.CompletedTask);
 
         await new AuditEventSink(store.Object, NullLogger<AuditEventSink>.Instance)
-            .HandleAsync(Updated(EventOrigin.Scim("sc1", "Payroll", "192.0.2.5")));
+            .HandleAsync(Updated(EventOrigin.Scim("sc1", "Directory sync", "192.0.2.5")));
 
         written!.OriginKind.Should().Be(EventOriginKinds.Scim);
         written.OriginId.Should().Be("sc1");
-        written.OriginName.Should().Be("Payroll");
+        written.OriginName.Should().Be("Directory sync");
         written.IpAddress.Should().Be("192.0.2.5");
     }
 }

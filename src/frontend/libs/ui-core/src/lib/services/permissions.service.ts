@@ -217,7 +217,7 @@ export class PermissionsService {
       return true;
     }
 
-    // Wildcards at any depth, as the server checks them: 'emr.*' and 'emr.roles.*' both match 'emr.roles.read'
+    // Wildcards at any depth, as the server checks them: 'projects.*' and 'projects.roles.*' both match 'projects.roles.read'
     const segments = permission.split('.');
     for (let i = 1; i < segments.length; i++) {
       if (permissions.has(`${segments.slice(0, i).join('.')}.*`)) {

@@ -13,7 +13,7 @@ export interface AccountMe {
   profilePictureUrl?: string;
   tenantId?: string;
   features: string[];
-  /** Per-module facts about this user, keyed by module (e.g. { emr: { isPatient: true } }). */
+  /** Per-module facts about this user, keyed by module (e.g. { projects: { isMember: true } }). */
   extensions?: Record<string, Record<string, unknown>>;
 }
 
