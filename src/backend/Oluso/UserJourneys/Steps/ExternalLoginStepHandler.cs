@@ -457,6 +457,9 @@ public class ExternalLoginStepHandler : IPrimaryAuthenticationStep, IStepConfigu
         context.SetData("authenticated_at", DateTime.UtcNow);
         context.SetData("auth_method", provider.ToLower());
         context.SetData("idp", provider);
+        // The provider did multi-factor authentication (amr, RFC 8176): the sign-in has its second factor.
+        if (result.ProviderReportedMfa)
+            context.SetData("amr", "mfa");
 
         // Record login
         await userService.RecordLoginAsync(user.Id, cancellationToken);
@@ -471,7 +474,9 @@ public class ExternalLoginStepHandler : IPrimaryAuthenticationStep, IStepConfigu
             ["email"] = user.Email ?? "",
             ["email_verified"] = user.EmailVerified,
             ["idp"] = provider,
-            ["amr"] = new[] { "external", provider.ToLower() }
+            ["amr"] = result.ProviderReportedMfa
+                ? new[] { "external", provider.ToLower(), "mfa" }
+                : new[] { "external", provider.ToLower() }
         };
 
         if (!string.IsNullOrEmpty(user.FirstName))
@@ -547,6 +552,9 @@ public class ExternalLoginStepHandler : IPrimaryAuthenticationStep, IStepConfigu
         context.SetData("idp", provider);
         context.SetData("proxy_mode", true);
         context.SetData("external_subject", providerKey);
+        // The provider did multi-factor authentication (amr, RFC 8176): the sign-in has its second factor.
+        if (result.ProviderReportedMfa)
+            context.SetData("amr", "mfa");
 
         logger.LogInformation("Proxy mode authentication completed for provider {Provider}, external subject {Subject}",
             provider, providerKey);

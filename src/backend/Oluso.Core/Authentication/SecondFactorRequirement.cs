@@ -1,3 +1,5 @@
+using System.Security.Claims;
+
 namespace Oluso.Core.Authentication;
 
 /// <summary>
@@ -6,13 +8,26 @@ namespace Oluso.Core.Authentication;
 /// </summary>
 public static class SecondFactorRequirement
 {
-    /// <summary>Methods that are, or include, a second factor: MFA itself, one-time codes, recovery codes, passkeys.</summary>
+    /// <summary>
+    /// Methods that are, or include, a second factor: MFA itself (also recorded by a passkey that verified the user,
+    /// see <see cref="PasskeyAuthenticationMethods"/>), one-time codes and recovery codes. Possession of a key alone
+    /// (<c>hwk</c>) is one factor.
+    /// </summary>
     private static readonly HashSet<string> SecondFactorMethods = new(StringComparer.Ordinal)
     {
-        "mfa", "otp", "recovery_code", "hwk", "swk"
+        "mfa", "otp", "recovery_code"
     };
 
     private const string Password = "pwd";
+
+    /// <summary>
+    /// Whether an external provider's sign-in reports multi-factor authentication in its amr (RFC 8176), as one claim
+    /// per method or one space-separated claim: that sign-in had its second factor.
+    /// </summary>
+    public static bool ProviderReportsMfa(IEnumerable<Claim> providerClaims) =>
+        providerClaims.Any(c =>
+            (c.Type == "amr" || c.Type == "http://schemas.microsoft.com/claims/authnmethodsreferences")
+            && c.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("mfa", StringComparer.OrdinalIgnoreCase));
 
     /// <summary>Whether <paramref name="methods"/> include a second factor.</summary>
     public static bool IsMet(IEnumerable<string>? methods) =>

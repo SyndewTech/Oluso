@@ -1379,11 +1379,13 @@ For a whole tenant, turn on **Settings > General > Require Multi-Factor Authenti
 
 - **Covered sign-ins:** the standard sign-in pages, journeys, and codes issued to pages (embedded and headless journeys, the SDK) all apply it.
 - **External providers:** a sign-in at an external provider is exempt only when the provider reports multi-factor authentication in its `amr`.
-- **Passkeys:** passkey sign-ins already use two factors and are not asked again.
+- **Passkeys:** a passkey that verified the user with its PIN or biometric is already two factors and is not asked again. One that only checked the user was present (a security key that is tapped, without its PIN) is one factor and is asked for a second. To require verification on every passkey, use `.RequireUserVerification()` (see [FIDO2/WebAuthn](#fido2webauthn-passkeys)); a passkey that does not verify the user is then refused.
 - **Proxy-mode providers:** they have no Oluso account to hold a second factor and are not asked.
 - **Existing sessions:** a session that signed in without a second factor, for example one from before the setting was turned on, signs in again. With `prompt=none` the client receives `login_required`.
 
-Per journey, set `required: true` on the policy's `mfa` step to make every user of that policy complete MFA. A client that needs MFA names that policy with `?policy=` (see [OIDC Extensions](#oidc-extensions)). On a tenant that requires MFA every `mfa` step is required.
+Per journey, set `required: true` on the policy's `mfa` step to make every user of that policy complete MFA. A client that needs MFA names that policy with `?policy=` (see [OIDC Extensions](#oidc-extensions)). On a tenant that requires MFA every `mfa` step is required, with the same exemptions as the standard pages:
+- **Second factor already recorded:** the step passes when the journey's sign-in already has one, such as a passkey that verified the user (its `amr` contains `hwk` and `mfa`) or an external provider that reported MFA (its `amr` contains `mfa`).
+- **Proxy-mode identities:** the step passes for these, unless the step itself sets `required: true`, which such an identity cannot meet.
 
 Independently of the tenant setting, a user who turned MFA on is always asked for a code after their password, on the standard pages as in journeys.
 
@@ -2930,7 +2932,14 @@ An app can start a journey such as registering a business, editing a profile or 
 
 ### Policy Selection
 
-When a request names no policy, the policy type is `SignUp` for `prompt=create` and `SignIn` otherwise. The tenant's enabled policy of that type with the highest priority runs (falling back to its `SignIn` policy). With none, the tenant's `JourneyFallbackToStandard` setting decides between the standard pages and an error.
+When a request names no policy, the policy type is `SignUp` for `prompt=create` and `SignIn` otherwise. The tenant's enabled policies of that type are chosen from (falling back to its `SignIn` policies):
+
+- **Conditions first:** a policy with conditions the request meets is chosen first, because it is more specific. The conditions are on `acr_values`, the client or the scopes. Among several, the highest priority wins.
+- **Otherwise:** the highest-priority policy without conditions runs.
+- **Failed conditions:** a policy whose conditions the request does not meet never runs.
+- **No policy at all:** the tenant's `JourneyFallbackToStandard` setting decides between the standard pages and an error.
+
+For example, the built-in "Sign In with MFA" policy (condition: `acr_values` contains `mfa`) runs for `acr_values=https://oluso.io/acr/mfa`, although the default sign-in policy has a higher priority.
 
 ### ACR Values
 

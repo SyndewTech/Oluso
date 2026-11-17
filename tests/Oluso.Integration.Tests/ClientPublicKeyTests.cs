@@ -65,6 +65,44 @@ public class ClientPublicKeyTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task A_clients_only_public_key_can_be_removed_but_not_its_last_shared_secret()
+    {
+        using var rsa = RSA.Create(2048);
+        var admin = await SuperAdminClient.CreateAsync(Factory, "default");
+
+        // A private_key_jwt client with one key: removing it is allowed (rotation adds the new key first).
+        var keyClientId = $"one-key-{Guid.NewGuid():N}"[..20];
+        var secretClientId = $"one-secret-{Guid.NewGuid():N}"[..22];
+        await WithDbContextAsync(async db =>
+        {
+            db.Clients.Add(new Client
+            {
+                ClientId = keyClientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
+                TokenEndpointAuthMethod = "private_key_jwt",
+                ClientSecrets = new List<ClientSecret> { new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(rsa, "only"), TenantId = "default" } },
+            });
+            db.Clients.Add(new Client
+            {
+                ClientId = secretClientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
+                TokenEndpointAuthMethod = "client_secret_basic",
+                ClientSecrets = new List<ClientSecret> { new() { Value = "hashed", TenantId = "default" } },
+            });
+            await db.SaveChangesAsync();
+        });
+
+        var keyClient = await admin.GetFromJsonAsync<JsonElement>($"/api/admin/clients/{await ClientRowIdAsync(keyClientId)}");
+        var keyId = keyClient.GetProperty("secrets")[0].GetProperty("id").GetInt32();
+        var removed = await admin.DeleteAsync($"/api/admin/clients/{keyClient.GetProperty("id").GetInt32()}/secrets/{keyId}");
+        removed.IsSuccessStatusCode.Should().BeTrue(await removed.Content.ReadAsStringAsync());
+
+        // A client that signs in with a shared secret keeps its last one.
+        var secretClient = await admin.GetFromJsonAsync<JsonElement>($"/api/admin/clients/{await ClientRowIdAsync(secretClientId)}");
+        var secretId = secretClient.GetProperty("secrets")[0].GetProperty("id").GetInt32();
+        (await admin.DeleteAsync($"/api/admin/clients/{secretClient.GetProperty("id").GetInt32()}/secrets/{secretId}"))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task A_key_an_administrator_adds_authenticates_the_client_with_private_key_jwt()
     {
         using var rsa = RSA.Create(2048);

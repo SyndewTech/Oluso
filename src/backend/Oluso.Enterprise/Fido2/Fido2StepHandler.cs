@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Oluso.Enterprise.Fido2.Services;
+using Oluso.Core.Authentication;
 
 namespace Oluso.Enterprise.Fido2;
 
@@ -219,7 +220,7 @@ public class Fido2StepHandler : ICustomStepHandler, ICustomStepHandlerMetadata, 
 
             // Successful authentication using the context helper method
             context.SetAuthenticated(userInfo.Id, "fido2");
-            context.SetData("amr", new[] { "hwk" });
+            context.SetData("amr", PasskeyAuthenticationMethods.Amr(result.UserVerified));
 
             logger.LogInformation("User {UserId} authenticated via FIDO2/WebAuthn", userInfo.Id);
 

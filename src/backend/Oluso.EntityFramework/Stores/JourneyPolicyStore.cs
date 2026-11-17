@@ -106,26 +106,27 @@ public class JourneyPolicyStore : IJourneyPolicyStore
             .ThenBy(p => p.TenantId == null ? 1 : 0) // Prefer tenant-specific over global
             .ToListAsync(cancellationToken);
 
+        // A policy whose conditions the request meets is more specific than one without conditions, so it is chosen
+        // first (by priority among them); a policy without conditions is the default for its type. A policy whose
+        // conditions fail is never chosen.
+        JourneyPolicy? unconditional = null;
         foreach (var entity in candidates)
         {
             var policy = MapToPolicy(entity);
-
-            // Check if type matches
             if (policy.Type.ToString() != typeString)
                 continue;
 
-            // Check conditions if any
-            if (policy.Conditions != null && policy.Conditions.Count > 0)
+            if (policy.Conditions is { Count: > 0 })
             {
-                var conditionsMet = EvaluatePolicyConditions(policy.Conditions, context);
-                if (!conditionsMet)
-                    continue;
+                if (EvaluatePolicyConditions(policy.Conditions, context))
+                    return policy;
+                continue;
             }
 
-            return policy;
+            unconditional ??= policy;
         }
 
-        return null;
+        return unconditional;
     }
 
     public async Task SaveAsync(JourneyPolicy policy, CancellationToken cancellationToken = default)

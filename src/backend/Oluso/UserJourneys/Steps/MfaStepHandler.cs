@@ -1,3 +1,4 @@
+using Oluso.Core.Authentication;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
@@ -52,6 +53,28 @@ public class MfaStepHandler : IStepHandler
             return StepHandlerResult.Fail("mfa_no_user", "No authenticated user for MFA");
         }
 
+        var requiredByStep = context.GetConfig("required", false);
+
+        // A proxy-mode identity signed in at its provider and has no account here to hold a second factor: the tenant's
+        // requirement does not apply to it (as on the standard pages). A step that requires MFA itself cannot be met.
+        if (context.GetData<bool>("proxy_mode") || userId.StartsWith("proxy:", StringComparison.Ordinal))
+        {
+            if (requiredByStep)
+            {
+                return StepHandlerResult.Fail("mfa_unavailable", "This sign-in cannot use a second factor here.");
+            }
+            logger.LogInformation("MFA not applicable to the proxy-mode identity {UserId}", userId);
+            return StepHandlerResult.SkipOrBranch(context, "mfa_not_applicable");
+        }
+
+        // The sign-in already has a second factor: a passkey that verified the user, the external provider's own MFA, or one passed earlier
+        // in this journey (the same rule as the standard pages, SecondFactorRequirement).
+        if (SecondFactorRequirement.IsMet(JourneyAuthenticationMethods.Read(context.JourneyData)))
+        {
+            logger.LogInformation("MFA already met for user {UserId} by the sign-in's own methods", userId);
+            return StepHandlerResult.SkipOrBranch(context, "mfa_already_met");
+        }
+
         var user = await userService.FindByIdAsync(userId, cancellationToken);
         if (user == null)
         {
@@ -60,7 +83,7 @@ public class MfaStepHandler : IStepHandler
 
         // Check configuration
         // The tenant can require a second factor for every sign-in; the step then always asks.
-        var requireMfa = context.GetConfig("required", false) || tenantContext.Tenant?.RequireMfa == true;
+        var requireMfa = requiredByStep || tenantContext.Tenant?.RequireMfa == true;
         var allowedMethods = AllowedMethods(context);
         var allowSetup = context.GetConfig("allowSetup", true);
         var rememberDevice = context.GetConfig("rememberDevice", true);

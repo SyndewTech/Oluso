@@ -154,6 +154,16 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
                 origin,
                 rpId);
 
+            if (UserVerificationRequired && !result.UserVerified)
+            {
+                return new Fido2RegistrationResult
+                {
+                    Success = false,
+                    Error = UserNotVerified,
+                    ErrorCode = UserVerificationRequiredCode
+                };
+            }
+
             // Check if credential already exists
             var credentialIdBase64 = Base64UrlEncode(result.CredentialId);
             if (await _credentialStore.ExistsAsync(credentialIdBase64, cancellationToken))
@@ -296,6 +306,16 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
         };
     }
 
+    private const string UserVerificationRequiredCode = "user_verification_required";
+    private const string UserNotVerified = "The passkey did not verify you with its PIN or biometric";
+
+    /// <summary>
+    /// The relying party requires user verification, so a ceremony whose authenticator data lacks the UV flag is
+    /// refused (WebAuthn Level 2, sections 7.1 and 7.2).
+    /// </summary>
+    private bool UserVerificationRequired =>
+        string.Equals(_options.UserVerificationRequirement, "required", StringComparison.OrdinalIgnoreCase);
+
     public async Task<Fido2AssertionResult> VerifyAssertionAsync(
         AuthenticatorAssertionResponse response,
         string challenge,
@@ -358,6 +378,16 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
                 origin,
                 rpId);
 
+            if (UserVerificationRequired && !result.UserVerified)
+            {
+                return new Fido2AssertionResult
+                {
+                    Success = false,
+                    Error = UserNotVerified,
+                    ErrorCode = UserVerificationRequiredCode
+                };
+            }
+
             // Update credential counter and last used
             await _credentialStore.UpdateCounterAsync(credentialIdBase64, result.NewSignCount, cancellationToken);
 
@@ -368,7 +398,8 @@ public class Fido2AuthenticationService : IFido2AuthenticationService
                 Success = true,
                 UserId = storedCredential.UserId,
                 CredentialId = storedCredential.Id,
-                SignatureCounter = result.NewSignCount
+                SignatureCounter = result.NewSignCount,
+                UserVerified = result.UserVerified
             };
         }
         catch (WebAuthnException ex)

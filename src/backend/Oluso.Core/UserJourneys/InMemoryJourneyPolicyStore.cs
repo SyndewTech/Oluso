@@ -66,16 +66,10 @@ public class InMemoryJourneyPolicyStore : IJourneyPolicyStore
             .ThenByDescending(p => p.Priority)
             .ToList();
 
-        foreach (var policy in policies)
-        {
-            if (MatchesConditions(policy, context))
-            {
-                return Task.FromResult<JourneyPolicy?>(policy);
-            }
-        }
-
-        // Return first matching type as fallback
-        return Task.FromResult(policies.FirstOrDefault());
+        // A policy whose conditions the request meets is more specific than one without conditions, so it is chosen
+        // first; a policy without conditions is the default. A policy whose conditions fail is never chosen.
+        var conditional = policies.FirstOrDefault(p => p.Conditions is { Count: > 0 } && MatchesConditions(p, context));
+        return Task.FromResult(conditional ?? policies.FirstOrDefault(p => p.Conditions is not { Count: > 0 }));
     }
 
     private static bool MatchesConditions(JourneyPolicy policy, JourneyPolicyMatchContext context)

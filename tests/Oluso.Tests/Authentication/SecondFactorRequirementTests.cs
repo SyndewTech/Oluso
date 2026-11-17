@@ -11,10 +11,11 @@ public class SecondFactorRequirementTests
     [InlineData(true, false, new[] { "pwd" }, true)]
     [InlineData(true, false, new[] { "external" }, true)]
     [InlineData(true, false, new string[0], true)]
-    // A second factor, or a passkey, meets it.
+    // A second factor meets it, as does a passkey that verified the user; one that only tested presence does not.
     [InlineData(true, false, new[] { "pwd", "mfa" }, false)]
     [InlineData(true, false, new[] { "external", "mfa" }, false)]
-    [InlineData(true, false, new[] { "hwk" }, false)]
+    [InlineData(true, false, new[] { "fido2", "hwk", "mfa" }, false)]
+    [InlineData(true, false, new[] { "fido2", "hwk" }, true)]
     [InlineData(true, false, new[] { "otp" }, false)]
     // Without the tenant setting: only a password sign-in by a user who turned MFA on.
     [InlineData(false, true, new[] { "pwd" }, true)]

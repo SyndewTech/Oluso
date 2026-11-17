@@ -7,6 +7,7 @@ using Oluso.Core.Services;
 using Oluso.Core.UserJourneys;
 using Microsoft.AspNetCore.RateLimiting;
 using Oluso.Core.Security;
+using Oluso.Core.Authentication;
 
 namespace Oluso.Protocols.WebAuthn;
 
@@ -26,8 +27,6 @@ public class WebAuthnApiController : ControllerBase
 {
     /// <summary>The method the journey passkey steps record, so every passkey sign-in reads the same.</summary>
     public const string AuthenticationMethod = "fido2";
-
-    private static readonly string[] PasskeyAmr = { "hwk" };
 
     private readonly IFido2Service _fido2Service;
     private readonly IOlusoUserService _userService;
@@ -150,7 +149,7 @@ public class WebAuthnApiController : ControllerBase
         {
             UserId = user.Id,
             AuthenticationMethod = AuthenticationMethod,
-            Amr = PasskeyAmr
+            Amr = PasskeyAuthenticationMethods.Amr(result.UserVerified)
         }, cancellationToken);
         if (!issued.Succeeded) return Rejected(issued.Error!, issued.ErrorDescription, issued.OriginRejected);
 

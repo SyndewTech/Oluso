@@ -689,8 +689,9 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
             }
         }
 
-        // 3. Get by policy type
-        var policy = await _policyStore.GetByTypeAsync(requirement.SuggestedPolicyType, cancellationToken);
+        // 3. The policy of that type for this request: one whose conditions it meets (acr_values, client, scopes), else
+        // the type's policy without conditions.
+        var policy = await _policyStore.FindMatchingAsync(MatchContext(context, requirement, requirement.SuggestedPolicyType), cancellationToken);
         if (policy != null)
         {
             _logger.LogDebug("Using policy by type {PolicyType}: {PolicyId}", requirement.SuggestedPolicyType, policy.Id);
@@ -700,7 +701,7 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
         // 4. Fall back to SignIn policy
         if (requirement.SuggestedPolicyType != JourneyType.SignIn)
         {
-            policy = await _policyStore.GetByTypeAsync(JourneyType.SignIn, cancellationToken);
+            policy = await _policyStore.FindMatchingAsync(MatchContext(context, requirement, JourneyType.SignIn), cancellationToken);
             if (policy != null)
             {
                 _logger.LogDebug("Falling back to SignIn policy: {PolicyId}", policy.Id);
@@ -710,6 +711,16 @@ public class AuthenticationCoordinator : IAuthenticationCoordinator
 
         return null;
     }
+
+    /// <summary>What a policy's conditions are evaluated against for this sign-in request.</summary>
+    private JourneyPolicyMatchContext MatchContext(ProtocolContext context, AuthenticationRequirement requirement, JourneyType type) => new()
+    {
+        TenantId = context.Properties.TryGetValue("TenantId", out var tenantId) ? tenantId?.ToString() : null,
+        ClientId = context.Properties.TryGetValue("ClientId", out var clientId) ? clientId?.ToString() : null,
+        Type = type,
+        Scopes = requirement.RequestedScopes?.ToList(),
+        AcrValues = requirement.AcrValues,
+    };
 
     private async Task<string> StoreProtocolStateAsync(
         ProtocolContext context,

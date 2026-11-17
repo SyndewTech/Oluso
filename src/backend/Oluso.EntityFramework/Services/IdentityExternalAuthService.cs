@@ -316,6 +316,7 @@ public class IdentityExternalAuthService : IExternalAuthService
             LastName = lastName,
             ProfilePictureUrl = picture,
             Claims = claims,
+            ProviderReportedMfa = Oluso.Core.Authentication.SecondFactorRequirement.ProviderReportsMfa(loginInfo.Principal.Claims),
             AccessToken = accessToken,
             IdToken = idToken,
             RefreshToken = refreshToken,

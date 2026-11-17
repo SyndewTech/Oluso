@@ -235,7 +235,7 @@ public class Fido2ServiceAdapter : CoreFido2Service
             return CoreFido2AssertionResult.Failed(result.ErrorCode ?? "assertion_failed", result.Error);
         }
 
-        return CoreFido2AssertionResult.Success(result.UserId!, result.CredentialId!, (int)result.SignatureCounter);
+        return CoreFido2AssertionResult.Success(result.UserId!, result.CredentialId!, (int)result.SignatureCounter, result.UserVerified);
     }
 
     public async Task<IEnumerable<CoreFido2Credential>> GetCredentialsAsync(
