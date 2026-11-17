@@ -18,6 +18,7 @@ export * from './user.model';
 export * from './create-user-request.model';
 
 // Role
+export * from './platform.model';
 export * from './role.model';
 
 // Settings

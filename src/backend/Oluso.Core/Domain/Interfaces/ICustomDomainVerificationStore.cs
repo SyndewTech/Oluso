@@ -14,6 +14,10 @@ public interface ICustomDomainVerificationStore
     /// has one record across all tenants, so a domain added again reopens it.
     /// </summary>
     Task<CustomDomainVerification?> GetByDomainAsync(string domain, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Every record across all tenants, removed and failed included, with its tenant loaded. For the platform view.
+    /// </summary>
+    Task<IReadOnlyList<CustomDomainVerification>> GetAllAsync(CancellationToken cancellationToken = default);
     Task<IEnumerable<CustomDomainVerification>> GetPendingVerificationsAsync(CancellationToken cancellationToken = default);
     Task<IEnumerable<CustomDomainVerification>> GetActiveDomainsForRevalidationAsync(DateTime revalidateBefore, CancellationToken cancellationToken = default);
 

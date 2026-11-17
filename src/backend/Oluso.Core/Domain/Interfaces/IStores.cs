@@ -455,6 +455,12 @@ public interface IRoleStore
     /// <summary>Users holding the role in the request's tenant.</summary>
     Task<IEnumerable<RoleUserInfo>> GetUsersByRoleAsync(string roleId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Every assignment of the role in every tenant, one entry per user and tenant, whatever the request's tenant.
+    /// For the platform view of platform-wide roles.
+    /// </summary>
+    Task<IReadOnlyList<RoleAssignmentInfo>> GetAssignmentsAsync(string roleId, CancellationToken cancellationToken = default);
+
     /// <summary>Users holding the role in <paramref name="tenantId"/>.</summary>
     Task<IEnumerable<RoleUserInfo>> GetUsersByRoleInTenantAsync(string roleId, string tenantId, CancellationToken cancellationToken = default);
 
@@ -502,6 +508,24 @@ public class RoleUserInfo
     public string? DisplayName { get; set; }
     public bool IsActive { get; set; }
     public string? TenantId { get; set; }
+}
+
+/// <summary>One assignment of a role: who holds it, in which tenant, and since when.</summary>
+public class RoleAssignmentInfo
+{
+    public string UserId { get; set; } = null!;
+    public string UserName { get; set; } = null!;
+    public string Email { get; set; } = null!;
+    public string? DisplayName { get; set; }
+    public bool IsActive { get; set; }
+
+    /// <summary>The user's home tenant.</summary>
+    public string? HomeTenantId { get; set; }
+
+    /// <summary>The tenant the assignment applies in.</summary>
+    public string TenantId { get; set; } = null!;
+    public DateTime AssignedAt { get; set; }
+    public string? AssignedBy { get; set; }
 }
 
 /// <summary>

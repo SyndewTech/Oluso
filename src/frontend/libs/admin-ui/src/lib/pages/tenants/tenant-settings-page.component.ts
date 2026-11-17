@@ -135,6 +135,11 @@ export class TenantSettingsPageComponent implements OnInit {
     if (id) {
       this.loadData(id);
     }
+
+    const tab = this.route.snapshot.queryParamMap.get('tab');
+    if (tab && this.tabs().some((t) => t.id === tab)) {
+      this.activeTab.set(tab);
+    }
   }
 
   loadData(tenantId: string): void {

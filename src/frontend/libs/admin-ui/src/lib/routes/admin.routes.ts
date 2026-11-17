@@ -183,6 +183,26 @@ export const ADMIN_ROUTES: Routes = [
           ),
       },
       {
+        path: 'platform/domains',
+        title: 'Domains',
+        data: { helpContext: 'admin.platform.domains' },
+        loadComponent: () =>
+          import('../pages/platform-domains/platform-domains-page.component').then(
+            (m) => m.PlatformDomainsPageComponent
+          ),
+        canActivate: [superAdminGuard],
+      },
+      {
+        path: 'platform/roles',
+        title: 'Platform roles',
+        data: { helpContext: 'admin.platform.roles' },
+        loadComponent: () =>
+          import('../pages/platform-roles/platform-roles-page.component').then(
+            (m) => m.PlatformRolesPageComponent
+          ),
+        canActivate: [superAdminGuard],
+      },
+      {
         path: 'platform/clients',
         title: 'Platform clients',
         data: { helpContext: 'admin.platform.clients' },

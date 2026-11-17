@@ -208,7 +208,7 @@ public class EntitlementsController : AdminBaseController
     /// compared verbatim by the tenant's app, so reject anything that would be
     /// ambiguous on arrival.
     /// </summary>
-    private static string? ValidateName(string name)
+    internal static string? ValidateName(string name)
     {
         if (string.IsNullOrWhiteSpace(name))
         {

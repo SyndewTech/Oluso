@@ -178,6 +178,39 @@ public class RoleStore : IRoleStore
     public Task<IEnumerable<RoleUserInfo>> GetUsersByRoleAsync(string roleId, CancellationToken cancellationToken = default)
         => ListHoldersAsync(roleId, AmbientTenant(), cancellationToken);
 
+    public async Task<IReadOnlyList<RoleAssignmentInfo>> GetAssignmentsAsync(string roleId, CancellationToken cancellationToken = default)
+    {
+        var rows = await UserRoles
+            .Where(ur => ur.RoleId == roleId)
+            .Join(_userManager.Users.IgnoreQueryFilters(), ur => ur.UserId, u => u.Id, (ur, u) => new
+            {
+                u.Id, u.UserName, u.Email, u.DisplayName, u.FirstName, u.LastName, u.IsActive,
+                HomeTenantId = u.TenantId, ur.TenantId, ur.AssignedAt, ur.AssignedBy,
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(r =>
+            {
+                var fullName = $"{r.FirstName} {r.LastName}".Trim();
+                return new RoleAssignmentInfo
+                {
+                    UserId = r.Id,
+                    UserName = r.UserName ?? "",
+                    Email = r.Email ?? "",
+                    DisplayName = r.DisplayName ?? (fullName.Length > 0 ? fullName : null),
+                    IsActive = r.IsActive,
+                    HomeTenantId = r.HomeTenantId,
+                    TenantId = r.TenantId,
+                    AssignedAt = r.AssignedAt,
+                    AssignedBy = r.AssignedBy,
+                };
+            })
+            .OrderBy(r => r.DisplayName ?? r.Email, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(r => r.TenantId, StringComparer.Ordinal)
+            .ToList();
+    }
+
     public Task<IEnumerable<RoleUserInfo>> GetUsersByRoleInTenantAsync(string roleId, string tenantId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(tenantId);

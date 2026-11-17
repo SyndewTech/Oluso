@@ -28,6 +28,12 @@ public class CustomDomainVerificationStore : ICustomDomainVerificationStore
         => await _context.CustomDomainVerifications
             .FirstOrDefaultAsync(d => d.Domain == domain, ct);
 
+    public async Task<IReadOnlyList<CustomDomainVerification>> GetAllAsync(CancellationToken ct = default)
+        => await _context.CustomDomainVerifications
+            .Include(d => d.Tenant)
+            .OrderBy(d => d.Domain)
+            .ToListAsync(ct);
+
     public async Task<IEnumerable<CustomDomainVerification>> GetPendingVerificationsAsync(CancellationToken ct = default)
         => await _context.CustomDomainVerifications
             .Where(d => d.Status == CustomDomainStatus.Pending || d.Status == CustomDomainStatus.Verified)

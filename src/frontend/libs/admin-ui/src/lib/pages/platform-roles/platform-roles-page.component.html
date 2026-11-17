@@ -1,0 +1,225 @@
+<div class="space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Platform Roles</h1>
+    <p class="mt-1 text-sm text-gray-500">
+      Roles that belong to no single organization, and who holds them in every organization. An organization's Roles page
+      only shows its own holders.
+    </p>
+  </div>
+
+  @if (loading() && roles().length === 0) {
+    <div class="flex justify-center py-12">
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+    </div>
+  } @else {
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <ui-card [padding]="false" class="lg:col-span-1">
+        <ul class="divide-y divide-gray-200">
+          @for (role of roles(); track role.id) {
+            <li>
+              <button
+                type="button"
+                (click)="select(role)"
+                [class]="'w-full text-left px-4 py-3 hover:bg-gray-50 ' + (selectedId() === role.id ? 'bg-primary-50' : '')"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-sm font-medium text-gray-900">{{ role.displayName }}</span>
+                  <span class="text-xs text-gray-500 whitespace-nowrap">
+                    {{ role.holderCount }} {{ role.holderCount === 1 ? 'person' : 'people' }}
+                  </span>
+                </div>
+                @if (role.displayName !== role.name) {
+                  <div class="text-xs text-gray-500 font-mono">{{ role.name }}</div>
+                }
+                <div class="mt-1 flex flex-wrap gap-1">
+                  @if (role.appliesEverywhere) {
+                    <ui-badge variant="warning">Every organization</ui-badge>
+                  }
+                  @if (role.isDerived) {
+                    <ui-badge variant="info">Follows membership</ui-badge>
+                  }
+                </div>
+              </button>
+            </li>
+          } @empty {
+            <li class="px-4 py-8 text-center text-sm text-gray-500">No platform roles</li>
+          }
+        </ul>
+      </ui-card>
+
+      <div class="lg:col-span-2 space-y-4">
+        @if (selected(); as role) {
+          <ui-card>
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h2 class="text-lg font-semibold text-gray-900">{{ role.displayName }}</h2>
+                @if (role.description) {
+                  <p class="mt-1 text-sm text-gray-500">{{ role.description }}</p>
+                }
+                <p class="mt-2 text-xs text-gray-500">
+                  @if (role.isDerived) {
+                    Held by every Owner and Admin of an organization. Change it by changing their membership on the
+                    organization page.
+                  } @else if (role.appliesEverywhere) {
+                    Applies in every organization wherever it was assigned. Removing it takes it away everywhere, and the
+                    last SuperAdmin can't lose it.
+                  } @else {
+                    Applies only in the organization it is assigned in. One person can hold it in several.
+                  }
+                </p>
+              </div>
+              @if (!role.isDerived) {
+                <ui-button (clicked)="openAssign()">
+                  <ui-icon name="user-plus" class="h-4 w-4 mr-2" />
+                  Assign
+                </ui-button>
+              }
+            </div>
+          </ui-card>
+
+          <ui-card [padding]="false">
+            <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3">
+              <span class="text-sm text-gray-600">
+                {{ role.holderCount }} {{ role.holderCount === 1 ? 'person' : 'people' }},
+                {{ role.assignmentCount }} {{ role.assignmentCount === 1 ? 'assignment' : 'assignments' }}
+              </span>
+              <input
+                type="search"
+                [ngModel]="holderSearch()"
+                (ngModelChange)="holderSearch.set($event)"
+                placeholder="Search people or organizations"
+                class="w-64 rounded-md border-gray-300 shadow-sm focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+              />
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Person</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned in</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned</th>
+                    @if (!role.isDerived) {
+                      <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    }
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  @if (holdersLoading()) {
+                    <tr>
+                      <td colspan="4" class="px-4 py-10 text-center">
+                        <div class="flex justify-center">
+                          <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
+                        </div>
+                      </td>
+                    </tr>
+                  } @else {
+                    @for (h of filteredHolders(); track h.userId + ':' + h.tenantId) {
+                      <tr>
+                        <td class="px-4 py-3 text-sm">
+                          <a [routerLink]="['/users', h.userId]" class="font-medium text-primary-600 hover:text-primary-800">
+                            {{ personName(h) }}
+                          </a>
+                          @if (!h.isActive) {
+                            <ui-badge variant="danger" class="ml-2">Inactive</ui-badge>
+                          }
+                          @if (h.email && h.email !== personName(h)) {
+                            <div class="text-xs text-gray-500">{{ h.email }}</div>
+                          }
+                        </td>
+                        <td class="px-4 py-3 text-sm">
+                          <a [routerLink]="['/tenants', h.tenantId]" class="text-gray-900 hover:text-primary-700">
+                            {{ h.tenantName || h.tenantId }}
+                          </a>
+                          @if (h.homeTenantId && h.homeTenantId !== h.tenantId) {
+                            <div class="text-xs text-gray-500">Home: {{ h.homeTenantName || h.homeTenantId }}</div>
+                          }
+                        </td>
+                        <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+                          <div>{{ h.assignedAt | localeDate:'mediumDate' }}</div>
+                          @if (assignedByLabel(h); as by) {
+                            <div>by {{ by }}</div>
+                          }
+                        </td>
+                        @if (!role.isDerived) {
+                          <td class="px-4 py-3 text-right">
+                            <ui-button variant="danger" size="sm" (clicked)="confirmRemove(h)">Remove</ui-button>
+                          </td>
+                        }
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="4" class="px-4 py-10 text-center text-sm text-gray-500">
+                          {{ holders().length === 0 ? 'Nobody holds this role' : 'Nobody matches' }}
+                        </td>
+                      </tr>
+                    }
+                  }
+                </tbody>
+              </table>
+            </div>
+          </ui-card>
+        }
+      </div>
+    </div>
+  }
+</div>
+
+<ui-modal [open]="showAssign()" [title]="'Assign ' + (selected()?.displayName ?? '')" size="md" [closeOnBackdrop]="false" (closed)="closeAssign()">
+  @if (assignError()) {
+    <div class="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+      <p class="text-sm text-red-600">{{ assignError() }}</p>
+    </div>
+  }
+  <div class="space-y-4">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Organization</label>
+      <ui-select
+        [options]="tenantLookup.options()"
+        [value]="assignTenantId()"
+        (valueChange)="onTenantChange($event)"
+        [remoteSearch]="true"
+        [loading]="tenantLookup.loading()"
+        [hint]="tenantLookup.hint()"
+        (searchChange)="tenantLookup.search($event)"
+        placeholder="Choose an organization"
+        searchPlaceholder="Search organizations..."
+      />
+      @if (selected()?.appliesEverywhere) {
+        <p class="mt-1 text-xs text-gray-500">This role applies in every organization; the one you pick is where the assignment is recorded.</p>
+      }
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Person</label>
+      <ui-select
+        [options]="candidateLookup.options()"
+        [value]="assignUserId()"
+        (valueChange)="onUserChange($event)"
+        [remoteSearch]="true"
+        [loading]="candidateLookup.loading()"
+        [hint]="candidateLookup.hint()"
+        (searchChange)="candidateLookup.search($event)"
+        [disabled]="!assignTenantId()"
+        [placeholder]="assignTenantId() ? 'Choose a person' : 'Choose an organization first'"
+        searchPlaceholder="Search people..."
+      />
+      <p class="mt-1 text-xs text-gray-500">People whose home is this organization or who are members of it.</p>
+    </div>
+  </div>
+  <div modal-footer class="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+    <ui-button variant="secondary" (clicked)="closeAssign()">Cancel</ui-button>
+    <ui-button [disabled]="assignBusy() || !assignTenantId() || !assignUserId()" (clicked)="assign()">
+      {{ assignBusy() ? 'Assigning...' : 'Assign' }}
+    </ui-button>
+  </div>
+</ui-modal>
+
+<ui-confirm-dialog
+  [open]="!!removing()"
+  title="Remove role"
+  [message]="removeMessage()"
+  confirmText="Remove"
+  confirmVariant="danger"
+  [loading]="removeBusy()"
+  (confirmed)="remove()"
+  (cancelled)="removing.set(null)"
+/>
