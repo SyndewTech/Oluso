@@ -970,6 +970,28 @@ export class ClientDetailPageComponent implements OnInit {
     return PUBLIC_KEY_SECRET_TYPES.includes(secret.type);
   }
 
+  /**
+   * The last credential the client signs in with, which the API refuses to remove: the last shared secret of a client
+   * that signs in with one, the last key of a private_key_jwt client without a jwks_uri, or the last certificate of a
+   * self-signed mutual TLS client. A replacement is added first.
+   */
+  isLastRequiredCredential(secret: ClientSecret): boolean {
+    const client = this.client();
+    if (!client) return false;
+    const method = client.tokenEndpointAuthMethod;
+    if (!this.isPublicKey(secret)) {
+      return client.requireClientSecret
+        && !['private_key_jwt', 'tls_client_auth', 'self_signed_tls_client_auth'].includes(method ?? '')
+        && this.sharedSecrets().length <= 1;
+    }
+    if (method === 'private_key_jwt') return !client.jwksUri && this.publicKeys().length <= 1;
+    if (method === 'self_signed_tls_client_auth') {
+      return secret.type === 'X509CertificateBase64'
+        && this.publicKeys().filter((k) => k.type === 'X509CertificateBase64').length <= 1;
+    }
+    return false;
+  }
+
   publicKeyLabel(secret: ClientSecret): string {
     return secret.type === 'JsonWebKey' ? 'Public key (JWK)' : 'Certificate';
   }

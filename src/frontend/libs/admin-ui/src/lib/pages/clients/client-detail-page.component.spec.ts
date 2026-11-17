@@ -216,6 +216,22 @@ describe('ClientDetailPageComponent public keys', () => {
     expect(page.keyError()).toBe('Paste the public JWK.');
   });
 
+  it('keeps the credential the client signs in with, as the API does', () => {
+    const { page } = setup();
+    const [secret, key] = secrets;
+
+    page.client.set({ ...client(), tokenEndpointAuthMethod: 'client_secret_basic' });
+    expect(page.isLastRequiredCredential(secret)).toBe(true);
+    expect(page.isLastRequiredCredential(key)).toBe(false);
+
+    page.client.set({ ...client(), tokenEndpointAuthMethod: 'private_key_jwt' });
+    expect(page.isLastRequiredCredential(secret)).toBe(false);
+    expect(page.isLastRequiredCredential(key)).toBe(true);
+
+    page.client.set({ ...client(), tokenEndpointAuthMethod: 'private_key_jwt', jwksUri: 'https://app.example.com/jwks.json' });
+    expect(page.isLastRequiredCredential(key)).toBe(false);
+  });
+
   it('saves the key set URL with the client', () => {
     const { fixture, page, updateClient } = setup();
     expect(fixture.nativeElement.querySelector('[data-testid="jwks-uri"]')).not.toBeNull();

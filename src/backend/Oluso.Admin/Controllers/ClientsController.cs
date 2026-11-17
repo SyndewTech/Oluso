@@ -607,14 +607,36 @@ public class ClientsController : AdminBaseController
         BadRequest(new { error = "This application is managed by a module and cannot be changed here" });
 
     /// <summary>
-    /// Whether <paramref name="secret"/> is the last shared secret of a client that signs in with one (any method but
-    /// private_key_jwt and the mutual TLS ones).
+    /// Whether <paramref name="secret"/> is the last credential the client signs in with, so removing it would leave
+    /// the client unable to authenticate: the last shared secret of a client that signs in with one (any method but
+    /// private_key_jwt and the mutual TLS ones); the last registered key (JWK or certificate) of a private_key_jwt
+    /// client without a jwks_uri; the last certificate of a self-signed mutual TLS client. A replacement is added
+    /// first.
     /// </summary>
-    internal static bool IsLastSharedSecret(Client client, ClientSecret secret) =>
-        client.RequireClientSecret
-        && secret.Type is not (ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType)
-        && client.TokenEndpointAuthMethod is not ("private_key_jwt" or "tls_client_auth" or "self_signed_tls_client_auth")
-        && client.ClientSecrets.Count(s => s.Type is not (ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType)) <= 1;
+    internal static bool IsLastRequiredCredential(Client client, ClientSecret secret)
+    {
+        static bool IsPublicKey(ClientSecret s) => s.Type is ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType;
+
+        if (!IsPublicKey(secret))
+        {
+            return client.RequireClientSecret
+                && client.TokenEndpointAuthMethod is not ("private_key_jwt" or "tls_client_auth" or "self_signed_tls_client_auth")
+                && client.ClientSecrets.Count(s => !IsPublicKey(s)) <= 1;
+        }
+
+        return client.TokenEndpointAuthMethod switch
+        {
+            "private_key_jwt" => string.IsNullOrEmpty(client.JwksUri) && client.ClientSecrets.Count(IsPublicKey) <= 1,
+            "self_signed_tls_client_auth" => secret.Type == ClientPublicKeys.CertificateType
+                && client.ClientSecrets.Count(s => s.Type == ClientPublicKeys.CertificateType) <= 1,
+            _ => false
+        };
+    }
+
+    private static string LastCredentialError(ClientSecret secret) =>
+        secret.Type is ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType
+            ? "Cannot remove the last key this client signs in with; add its replacement first"
+            : "Cannot delete the last secret for a client that requires a secret";
 
     /// <summary>The most public keys and certificates a client holds (enough for rotation).</summary>
     private const int MaxPublicKeys = 10;
@@ -683,11 +705,10 @@ public class ClientsController : AdminBaseController
             return NotFound(new { error = "Secret not found" });
         }
 
-        // A client that signs in with a shared secret keeps at least one; a public key can always be removed (its
-        // replacement is added first, or the client reads its keys from its jwks_uri).
-        if (IsLastSharedSecret(client, secret))
+        // A client keeps the credential it signs in with: its replacement is added first.
+        if (IsLastRequiredCredential(client, secret))
         {
-            return BadRequest(new { error = "Cannot delete the last secret for a client that requires a secret" });
+            return BadRequest(new { error = LastCredentialError(secret) });
         }
 
         client.ClientSecrets.Remove(secret);

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Oluso.Core.Api;
@@ -112,17 +113,23 @@ public class TenantDomainsController : ControllerBase
 
         var domain = request.Domain.Trim().ToLowerInvariant();
 
-        // Check if domain is already claimed
+        // A domain has one record across all tenants (unique in the database). One that is live answers as in use;
+        // one that was removed or failed verification is reopened for this tenant rather than added a second time.
         var existing = await _store.GetByDomainAsync(domain, ct);
-        if (existing != null && existing.Status != CustomDomainStatus.Failed && existing.Status != CustomDomainStatus.Removed)
+        if (existing != null)
         {
-            return Conflict(existing.TenantId == tenantId
-                ? "This domain already has a pending or active verification for this tenant"
-                : "This domain is already claimed by another tenant");
+            if (existing.Status is not (CustomDomainStatus.Removed or CustomDomainStatus.Failed))
+            {
+                return Conflict(InUse(existing, tenantId));
+            }
+
+            await ReopenAsync(existing, tenantId, ct);
+            await _store.UpdateAsync(existing, ct);
+            _logger.LogInformation("Domain verification reopened for {Domain} on tenant {TenantId}", domain, tenantId);
+            return CreatedAtAction(nameof(GetDomain), new { tenantId, id = existing.Id }, MapToDto(existing));
         }
 
-        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-
+        var token = NewToken();
         var verification = new CustomDomainVerification
         {
             TenantId = tenantId,
@@ -133,10 +140,59 @@ public class TenantDomainsController : ControllerBase
             TxtRecordValue = $"oluso-verify={token}"
         };
 
-        var created = await _store.CreateAsync(verification, ct);
-        _logger.LogInformation("Domain verification initiated for {Domain} on tenant {TenantId}", domain, tenantId);
+        try
+        {
+            var created = await _store.CreateAsync(verification, ct);
+            _logger.LogInformation("Domain verification initiated for {Domain} on tenant {TenantId}", domain, tenantId);
+            return CreatedAtAction(nameof(GetDomain), new { tenantId, id = created.Id }, MapToDto(created));
+        }
+        catch (DbUpdateException ex)
+        {
+            // Added by someone else between the check and the insert; any other failure is not a conflict.
+            var added = await _store.GetByDomainAsync(domain, ct);
+            if (added == null) throw;
+            _logger.LogInformation(ex, "Domain {Domain} was added concurrently for tenant {TenantId}", domain, added.TenantId);
+            return Conflict(InUse(added, tenantId));
+        }
+    }
 
-        return CreatedAtAction(nameof(GetDomain), new { tenantId, id = created.Id }, MapToDto(created));
+    private static string InUse(CustomDomainVerification existing, string tenantId) =>
+        existing.TenantId == tenantId
+            ? "This domain has already been added to this organization."
+            : "This domain is in use by another organization.";
+
+    private static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+    /// <summary>
+    /// Starts verification of a removed or failed record over, for <paramref name="tenantId"/>. The same tenant keeps
+    /// its token, so a TXT record it already created still matches. Another tenant gets a new token, and the hostname
+    /// the edge provider holds for the previous tenant is removed.
+    /// </summary>
+    private async Task ReopenAsync(CustomDomainVerification domain, string tenantId, CancellationToken ct)
+    {
+        if (domain.TenantId != tenantId)
+        {
+            if (!string.IsNullOrEmpty(domain.ExternalProvisioningId) && _provisioningService != null)
+            {
+                await _provisioningService.DeprovisionAsync(domain.Domain, ct);
+            }
+            domain.ExternalProvisioningId = null;
+            domain.TenantId = tenantId;
+            domain.Tenant = null;
+            var token = NewToken();
+            domain.VerificationToken = token;
+            domain.TxtRecordValue = $"oluso-verify={token}";
+        }
+
+        domain.Status = CustomDomainStatus.Pending;
+        domain.CreatedAt = DateTime.UtcNow;
+        domain.CheckAttempts = 0;
+        domain.FailureReason = null;
+        domain.VerifiedAt = null;
+        domain.ActivatedAt = null;
+        domain.LastCheckedAt = null;
+        domain.LastRevalidatedAt = null;
+        domain.GracePeriodStartedAt = null;
     }
 
     /// <summary>
@@ -150,6 +206,12 @@ public class TenantDomainsController : ControllerBase
         if (domain == null || domain.TenantId != tenantId) return NotFound();
         if (domain.Status == CustomDomainStatus.Active) return Ok(MapToDto(domain));
         if (domain.Status == CustomDomainStatus.Removed) return BadRequest("Domain has been removed");
+
+        // Retrying a domain whose verification timed out starts it over, so the background check picks it up again.
+        if (domain.Status == CustomDomainStatus.Failed)
+        {
+            await ReopenAsync(domain, tenantId, ct);
+        }
 
         domain.LastCheckedAt = DateTime.UtcNow;
         domain.CheckAttempts++;

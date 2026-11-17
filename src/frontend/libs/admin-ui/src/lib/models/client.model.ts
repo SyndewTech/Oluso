@@ -28,6 +28,8 @@ export interface Client {
 
   // Authentication settings
   requireClientSecret: boolean;
+  /** How the client authenticates at the token endpoint (client_secret_basic, private_key_jwt, ...). */
+  tokenEndpointAuthMethod?: string;
   requirePkce: boolean;
   allowPlainTextPkce: boolean;
   requireRequestObject: boolean;

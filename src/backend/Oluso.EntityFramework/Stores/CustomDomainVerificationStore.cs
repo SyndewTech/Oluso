@@ -26,7 +26,7 @@ public class CustomDomainVerificationStore : ICustomDomainVerificationStore
 
     public async Task<CustomDomainVerification?> GetByDomainAsync(string domain, CancellationToken ct = default)
         => await _context.CustomDomainVerifications
-            .FirstOrDefaultAsync(d => d.Domain == domain && d.Status != CustomDomainStatus.Removed, ct);
+            .FirstOrDefaultAsync(d => d.Domain == domain, ct);
 
     public async Task<IEnumerable<CustomDomainVerification>> GetPendingVerificationsAsync(CancellationToken ct = default)
         => await _context.CustomDomainVerifications

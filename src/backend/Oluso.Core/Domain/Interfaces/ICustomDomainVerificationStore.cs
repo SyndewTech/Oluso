@@ -9,6 +9,10 @@ public interface ICustomDomainVerificationStore
 {
     Task<CustomDomainVerification?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
     Task<IEnumerable<CustomDomainVerification>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// The record for <paramref name="domain"/>, whatever its tenant or status (removed and failed included). A domain
+    /// has one record across all tenants, so a domain added again reopens it.
+    /// </summary>
     Task<CustomDomainVerification?> GetByDomainAsync(string domain, CancellationToken cancellationToken = default);
     Task<IEnumerable<CustomDomainVerification>> GetPendingVerificationsAsync(CancellationToken cancellationToken = default);
     Task<IEnumerable<CustomDomainVerification>> GetActiveDomainsForRevalidationAsync(DateTime revalidateBefore, CancellationToken cancellationToken = default);

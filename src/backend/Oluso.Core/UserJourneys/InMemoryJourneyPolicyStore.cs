@@ -56,55 +56,8 @@ public class InMemoryJourneyPolicyStore : IJourneyPolicyStore
         return Task.FromResult<IEnumerable<JourneyPolicy>>(policies);
     }
 
-    public Task<JourneyPolicy?> FindMatchingAsync(JourneyPolicyMatchContext context, CancellationToken cancellationToken = default)
-    {
-        var policies = _policies.Values
-            .Where(p => p.Enabled)
-            .Where(p => p.TenantId == context.TenantId || p.TenantId == null)
-            .Where(p => p.Type == context.Type || p.Type == JourneyType.Custom)
-            .OrderByDescending(p => p.TenantId != null) // Prefer tenant-specific
-            .ThenByDescending(p => p.Priority)
-            .ToList();
-
-        // A policy whose conditions the request meets is more specific than one without conditions, so it is chosen
-        // first; a policy without conditions is the default. A policy whose conditions fail is never chosen.
-        var conditional = policies.FirstOrDefault(p => p.Conditions is { Count: > 0 } && MatchesConditions(p, context));
-        return Task.FromResult(conditional ?? policies.FirstOrDefault(p => p.Conditions is not { Count: > 0 }));
-    }
-
-    private static bool MatchesConditions(JourneyPolicy policy, JourneyPolicyMatchContext context)
-    {
-        if (policy.Conditions == null || policy.Conditions.Count == 0)
-        {
-            return true;
-        }
-
-        foreach (var condition in policy.Conditions)
-        {
-            string? value = condition.Type switch
-            {
-                "ClientId" => context.ClientId,
-                "Scope" => context.Scopes != null ? string.Join(" ", context.Scopes) : null,
-                "AcrValue" => context.AcrValues,
-                _ => context.AdditionalParameters?.TryGetValue(condition.Type, out var v) == true ? v : null
-            };
-
-            var matches = condition.Operator switch
-            {
-                "equals" => value == condition.Value,
-                "contains" => value?.Contains(condition.Value) ?? false,
-                "startsWith" => value?.StartsWith(condition.Value) ?? false,
-                "endsWith" => value?.EndsWith(condition.Value) ?? false,
-                "matches" => !string.IsNullOrEmpty(value) &&
-                    System.Text.RegularExpressions.Regex.IsMatch(value, condition.Value),
-                _ => value == condition.Value
-            };
-
-            if (!matches) return false;
-        }
-
-        return true;
-    }
+    public Task<JourneyPolicy?> FindMatchingAsync(JourneyPolicyMatchContext context, CancellationToken cancellationToken = default) =>
+        Task.FromResult(JourneyPolicyMatching.Choose(_policies.Values, context));
 
     public Task SaveAsync(JourneyPolicy policy, CancellationToken cancellationToken = default)
     {

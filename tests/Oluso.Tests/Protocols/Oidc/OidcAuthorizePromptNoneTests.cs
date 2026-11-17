@@ -123,6 +123,23 @@ public class OidcAuthorizePromptNoneTests
         result.AuthRequirement.AcrValues.Should().Be(AuthenticationContextClasses.MultiFactor);
     }
 
+    [Theory]
+    [InlineData("login", null)]
+    [InlineData(null, "0")]
+    public async Task A_forced_sign_in_keeps_the_requests_acr_values_for_the_journey(string? prompt, string? maxAge)
+    {
+        var context = Context(prompt, signedIn: true);
+        var request = (OidcAuthorizeRequest)context.Request!;
+        request.AcrValues = AuthenticationContextClasses.MultiFactor;
+        request.MaxAge = maxAge;
+
+        var result = await _service.ProcessAuthorizeAsync(context);
+
+        result.Type.Should().Be(ProtocolResultType.RequiresAuthentication);
+        result.AuthRequirement!.ForceFreshLogin.Should().BeTrue();
+        result.AuthRequirement.AcrValues.Should().Be(AuthenticationContextClasses.MultiFactor);
+    }
+
     [Fact]
     public async Task A_session_that_meets_the_essential_acr_goes_on()
     {

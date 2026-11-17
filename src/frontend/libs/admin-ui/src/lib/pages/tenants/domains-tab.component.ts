@@ -497,14 +497,15 @@ export class DomainsTabComponent implements OnInit, OnDestroy {
     return domain.status;
   }
 
-  /** Verify/retry button is offered for Pending, Verified, and Active-without-cert. */
+  /** Verify/retry button is offered for Pending, Verified, Failed (starts verification over), and Active-without-cert. */
   canRetry(domain: DomainVerificationDto): boolean {
-    if (domain.status === 'Pending' || domain.status === 'Verified') return true;
+    if (domain.status === 'Pending' || domain.status === 'Verified' || domain.status === 'Failed') return true;
     if (domain.status === 'Active' && domain.cnameTarget && !domain.externalProvisioningId) return true;
     return false;
   }
 
   verifyButtonLabel(domain: DomainVerificationDto): string {
+    if (domain.status === 'Failed') return 'Retry verification';
     if (domain.status === 'Verified' && domain.failureReason) return 'Retry provisioning';
     if (domain.status === 'Active' && !domain.externalProvisioningId) return 'Retry provisioning';
     return 'Verify Now';

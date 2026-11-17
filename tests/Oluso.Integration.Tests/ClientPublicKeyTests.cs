@@ -64,42 +64,93 @@ public class ClientPublicKeyTests : IntegrationTestBase
         });
     }
 
-    [Fact]
-    public async Task A_clients_only_public_key_can_be_removed_but_not_its_last_shared_secret()
+    [Theory]
+    [InlineData(false, null, false)]
+    [InlineData(true, null, true)]
+    [InlineData(false, "https://keys.example.com/jwks.json", true)]
+    public async Task A_private_key_jwt_client_keeps_its_last_key_unless_a_replacement_or_jwks_uri_supplies_one(
+        bool replacementAdded, string? jwksUri, bool removed)
     {
         using var rsa = RSA.Create(2048);
+        using var replacement = RSA.Create(2048);
         var admin = await SuperAdminClient.CreateAsync(Factory, "default");
-
-        // A private_key_jwt client with one key: removing it is allowed (rotation adds the new key first).
-        var keyClientId = $"one-key-{Guid.NewGuid():N}"[..20];
-        var secretClientId = $"one-secret-{Guid.NewGuid():N}"[..22];
+        var clientId = $"one-key-{Guid.NewGuid():N}"[..20];
+        var keys = new List<ClientSecret> { new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(rsa, "old"), TenantId = "default" } };
+        if (replacementAdded)
+        {
+            keys.Add(new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(replacement, "new"), TenantId = "default" });
+        }
         await WithDbContextAsync(async db =>
         {
             db.Clients.Add(new Client
             {
-                ClientId = keyClientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
-                TokenEndpointAuthMethod = "private_key_jwt",
-                ClientSecrets = new List<ClientSecret> { new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(rsa, "only"), TenantId = "default" } },
+                ClientId = clientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
+                TokenEndpointAuthMethod = "private_key_jwt", JwksUri = jwksUri, ClientSecrets = keys,
             });
+            await db.SaveChangesAsync();
+        });
+        var oldKeyId = await SecretIdAsync(clientId, s => s.Value.Contains("\"old\""));
+
+        var response = await admin.DeleteAsync($"/api/admin/clients/{await ClientRowIdAsync(clientId)}/secrets/{oldKeyId}");
+
+        response.StatusCode.Should().Be(removed ? HttpStatusCode.NoContent : HttpStatusCode.BadRequest,
+            await response.Content.ReadAsStringAsync());
+        var stored = await StoredSecretIdsAsync(clientId);
+        if (removed)
+        {
+            stored.Should().NotContain(oldKeyId);
+        }
+        else
+        {
+            stored.Should().Contain(oldKeyId, "the client could no longer sign in without it");
+        }
+    }
+
+    [Fact]
+    public async Task A_client_that_signs_in_with_a_shared_secret_keeps_its_last_one()
+    {
+        var admin = await SuperAdminClient.CreateAsync(Factory, "default");
+        var clientId = $"one-secret-{Guid.NewGuid():N}"[..22];
+        await WithDbContextAsync(async db =>
+        {
             db.Clients.Add(new Client
             {
-                ClientId = secretClientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
+                ClientId = clientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
                 TokenEndpointAuthMethod = "client_secret_basic",
                 ClientSecrets = new List<ClientSecret> { new() { Value = "hashed", TenantId = "default" } },
             });
             await db.SaveChangesAsync();
         });
+        var secretId = await SecretIdAsync(clientId, _ => true);
 
-        var keyClient = await admin.GetFromJsonAsync<JsonElement>($"/api/admin/clients/{await ClientRowIdAsync(keyClientId)}");
-        var keyId = keyClient.GetProperty("secrets")[0].GetProperty("id").GetInt32();
-        var removed = await admin.DeleteAsync($"/api/admin/clients/{keyClient.GetProperty("id").GetInt32()}/secrets/{keyId}");
-        removed.IsSuccessStatusCode.Should().BeTrue(await removed.Content.ReadAsStringAsync());
+        var response = await admin.DeleteAsync($"/api/admin/clients/{await ClientRowIdAsync(clientId)}/secrets/{secretId}");
 
-        // A client that signs in with a shared secret keeps its last one.
-        var secretClient = await admin.GetFromJsonAsync<JsonElement>($"/api/admin/clients/{await ClientRowIdAsync(secretClientId)}");
-        var secretId = secretClient.GetProperty("secrets")[0].GetProperty("id").GetInt32();
-        (await admin.DeleteAsync($"/api/admin/clients/{secretClient.GetProperty("id").GetInt32()}/secrets/{secretId}"))
-            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await StoredSecretIdsAsync(clientId)).Should().ContainSingle().Which.Should().Be(secretId);
+    }
+
+    private async Task<int> SecretIdAsync(string clientId, Func<ClientSecret, bool> which)
+    {
+        var id = 0;
+        await WithDbContextAsync(async db =>
+        {
+            var client = await db.Clients.IgnoreQueryFilters().AsNoTracking().Include(c => c.ClientSecrets)
+                .SingleAsync(c => c.ClientId == clientId);
+            id = client.ClientSecrets.Single(which).Id;
+        });
+        return id;
+    }
+
+    private async Task<List<int>> StoredSecretIdsAsync(string clientId)
+    {
+        var ids = new List<int>();
+        await WithDbContextAsync(async db =>
+        {
+            var client = await db.Clients.IgnoreQueryFilters().AsNoTracking().Include(c => c.ClientSecrets)
+                .SingleAsync(c => c.ClientId == clientId);
+            ids = client.ClientSecrets.Select(s => s.Id).ToList();
+        });
+        return ids;
     }
 
     [Fact]
