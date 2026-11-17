@@ -114,7 +114,8 @@ public class CustomDomainReaddTests : IntegrationTestBase
         record.Status.Should().Be(CustomDomainStatus.Pending);
         record.VerificationToken.Should().NotBe("seededtoken");
         record.TxtRecordValue.Should().Be($"oluso-verify={record.VerificationToken}");
-        record.ExternalProvisioningId.Should().BeNull("the edge hostname was the previous tenant's");
+        record.ExternalProvisioningId.Should().Be("edge-1",
+            "the edge hostname is the domain's; activation checks it and resubmits it if the provider has dropped it");
     }
 
     [Theory]

@@ -45,6 +45,16 @@ public class JourneyPolicyMatchingTests
         policy.Should().BeNull("the only sign-in policy left requires acr_values to ask for mfa");
     }
 
+    [Fact]
+    public void A_custom_policy_runs_only_when_asked_for_never_in_place_of_a_typed_one()
+    {
+        var custom = Policy("custom", 1000);
+        custom.Type = JourneyType.Custom;
+
+        JourneyPolicyMatching.Choose([custom], new JourneyPolicyMatchContext { Type = JourneyType.SignIn })
+            .Should().BeNull("a custom journey starts by its id or slug, as the database store has always chosen");
+    }
+
     private static JourneyPolicy Policy(string id, int priority, string? tenantId = null, params JourneyPolicyCondition[] conditions) => new()
     {
         Id = id, Slug = id, Name = id, Type = JourneyType.SignIn, Priority = priority, TenantId = tenantId,

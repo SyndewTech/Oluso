@@ -64,34 +64,47 @@ public class ClientPublicKeyTests : IntegrationTestBase
         });
     }
 
+    public enum Replacement { None, Usable, Expired }
+
     [Theory]
-    [InlineData(false, null, false)]
-    [InlineData(true, null, true)]
-    [InlineData(false, "https://keys.example.com/jwks.json", true)]
-    public async Task A_private_key_jwt_client_keeps_its_last_key_unless_a_replacement_or_jwks_uri_supplies_one(
-        bool replacementAdded, string? jwksUri, bool removed)
+    [InlineData(false, Replacement.None, null, false)]
+    [InlineData(false, Replacement.Usable, null, true)]
+    [InlineData(false, Replacement.Expired, null, false)]
+    [InlineData(false, Replacement.None, "https://keys.example.com/jwks.json", true)]
+    [InlineData(false, Replacement.None, "  ", false)]
+    [InlineData(true, Replacement.None, null, false)]
+    [InlineData(true, Replacement.Usable, null, true)]
+    public async Task A_private_key_jwt_client_keeps_its_last_usable_key_unless_a_replacement_or_jwks_uri_supplies_one(
+        bool platform, Replacement replacement, string? jwksUri, bool removed)
     {
         using var rsa = RSA.Create(2048);
-        using var replacement = RSA.Create(2048);
-        var admin = await SuperAdminClient.CreateAsync(Factory, "default");
+        using var other = RSA.Create(2048);
+        var tenantId = platform ? Oluso.Core.PlatformConstants.TenantId : "default";
+        var admin = await SuperAdminClient.CreateAsync(Factory, tenantId);
         var clientId = $"one-key-{Guid.NewGuid():N}"[..20];
-        var keys = new List<ClientSecret> { new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(rsa, "old"), TenantId = "default" } };
-        if (replacementAdded)
+        var keys = new List<ClientSecret> { new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(rsa, "old"), TenantId = tenantId } };
+        if (replacement != Replacement.None)
         {
-            keys.Add(new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(replacement, "new"), TenantId = "default" });
+            keys.Add(new()
+            {
+                Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(other, "new"), TenantId = tenantId,
+                Expiration = replacement == Replacement.Expired ? DateTime.UtcNow.AddDays(-1) : null,
+            });
         }
         await WithDbContextAsync(async db =>
         {
             db.Clients.Add(new Client
             {
-                ClientId = clientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
+                // A platform client signing in with its key needs no shared secret, which the old platform check relied on.
+                ClientId = clientId, TenantId = tenantId, Enabled = true, RequireClientSecret = !platform,
                 TokenEndpointAuthMethod = "private_key_jwt", JwksUri = jwksUri, ClientSecrets = keys,
             });
             await db.SaveChangesAsync();
         });
         var oldKeyId = await SecretIdAsync(clientId, s => s.Value.Contains("\"old\""));
+        var api = platform ? "/api/admin/platform/clients" : "/api/admin/clients";
 
-        var response = await admin.DeleteAsync($"/api/admin/clients/{await ClientRowIdAsync(clientId)}/secrets/{oldKeyId}");
+        var response = await admin.DeleteAsync($"{api}/{await ClientRowIdAsync(clientId)}/secrets/{oldKeyId}");
 
         response.StatusCode.Should().Be(removed ? HttpStatusCode.NoContent : HttpStatusCode.BadRequest,
             await response.Content.ReadAsStringAsync());
@@ -104,6 +117,38 @@ public class ClientPublicKeyTests : IntegrationTestBase
         {
             stored.Should().Contain(oldKeyId, "the client could no longer sign in without it");
         }
+        if (replacement != Replacement.None)
+        {
+            stored.Should().Contain(await SecretIdAsync(clientId, s => s.Value.Contains("\"new\"")),
+                "deleting one key leaves the others");
+        }
+    }
+
+    [Fact]
+    public async Task An_expired_key_can_always_be_removed()
+    {
+        using var rsa = RSA.Create(2048);
+        var admin = await SuperAdminClient.CreateAsync(Factory, "default");
+        var clientId = $"expired-key-{Guid.NewGuid():N}"[..24];
+        await WithDbContextAsync(async db =>
+        {
+            db.Clients.Add(new Client
+            {
+                ClientId = clientId, TenantId = "default", Enabled = true, RequireClientSecret = true,
+                TokenEndpointAuthMethod = "private_key_jwt",
+                ClientSecrets = new List<ClientSecret>
+                {
+                    new() { Type = ClientPublicKeys.JsonWebKeyType, Value = PublicJwk(rsa, "old"), TenantId = "default", Expiration = DateTime.UtcNow.AddDays(-1) },
+                },
+            });
+            await db.SaveChangesAsync();
+        });
+        var keyId = await SecretIdAsync(clientId, _ => true);
+
+        var response = await admin.DeleteAsync($"/api/admin/clients/{await ClientRowIdAsync(clientId)}/secrets/{keyId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent, "an expired key signs nothing in");
+        (await StoredSecretIdsAsync(clientId)).Should().BeEmpty();
     }
 
     [Fact]

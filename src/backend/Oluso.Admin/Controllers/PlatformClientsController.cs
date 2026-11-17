@@ -368,9 +368,9 @@ public class PlatformClientsController : AdminBaseController
             return NotFound(new { error = "Secret not found" });
         }
 
-        if (client.RequireClientSecret && client.ClientSecrets.Count <= 1)
+        if (ClientsController.IsLastRequiredCredential(client, secret))
         {
-            return BadRequest(new { error = "Cannot delete the last secret for a client that requires a secret" });
+            return BadRequest(new { error = ClientsController.LastCredentialError(secret) });
         }
 
         client.ClientSecrets.Remove(secret);

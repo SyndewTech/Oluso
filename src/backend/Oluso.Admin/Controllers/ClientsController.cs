@@ -610,30 +610,40 @@ public class ClientsController : AdminBaseController
     /// Whether <paramref name="secret"/> is the last credential the client signs in with, so removing it would leave
     /// the client unable to authenticate: the last shared secret of a client that signs in with one (any method but
     /// private_key_jwt and the mutual TLS ones); the last registered key (JWK or certificate) of a private_key_jwt
-    /// client without a jwks_uri; the last certificate of a self-signed mutual TLS client. A replacement is added
-    /// first.
+    /// client without a jwks_uri; the last certificate of a self-signed mutual TLS client. Only unexpired credentials
+    /// count, as only they authenticate: an expired one can always be removed, and it never stands in for the last
+    /// one that works. A replacement is added first.
     /// </summary>
     internal static bool IsLastRequiredCredential(Client client, ClientSecret secret)
     {
         static bool IsPublicKey(ClientSecret s) => s.Type is ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType;
+        var now = DateTime.UtcNow;
+        bool Usable(ClientSecret s) => s.Expiration is not { } expires || expires >= now;
+        bool NoOther(Func<ClientSecret, bool> sameKind) =>
+            !client.ClientSecrets.Any(s => !ReferenceEquals(s, secret) && sameKind(s) && Usable(s));
+
+        if (!Usable(secret))
+        {
+            return false;
+        }
 
         if (!IsPublicKey(secret))
         {
             return client.RequireClientSecret
                 && client.TokenEndpointAuthMethod is not ("private_key_jwt" or "tls_client_auth" or "self_signed_tls_client_auth")
-                && client.ClientSecrets.Count(s => !IsPublicKey(s)) <= 1;
+                && NoOther(s => !IsPublicKey(s));
         }
 
         return client.TokenEndpointAuthMethod switch
         {
-            "private_key_jwt" => string.IsNullOrEmpty(client.JwksUri) && client.ClientSecrets.Count(IsPublicKey) <= 1,
+            "private_key_jwt" => string.IsNullOrWhiteSpace(client.JwksUri) && NoOther(IsPublicKey),
             "self_signed_tls_client_auth" => secret.Type == ClientPublicKeys.CertificateType
-                && client.ClientSecrets.Count(s => s.Type == ClientPublicKeys.CertificateType) <= 1,
+                && NoOther(s => s.Type == ClientPublicKeys.CertificateType),
             _ => false
         };
     }
 
-    private static string LastCredentialError(ClientSecret secret) =>
+    internal static string LastCredentialError(ClientSecret secret) =>
         secret.Type is ClientPublicKeys.JsonWebKeyType or ClientPublicKeys.CertificateType
             ? "Cannot remove the last key this client signs in with; add its replacement first"
             : "Cannot delete the last secret for a client that requires a secret";

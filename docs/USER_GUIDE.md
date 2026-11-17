@@ -2934,7 +2934,7 @@ An app can start a journey such as registering a business, editing a profile or 
 
 When a request names no policy, the policy type is `SignUp` for `prompt=create` and `SignIn` otherwise. The tenant's enabled policies of that type are chosen from (falling back to its `SignIn` policies):
 
-- **Conditions first:** a policy with conditions the request meets is chosen first, because it is more specific. The conditions are on `acr_values`, the client, the tenant or the scopes (`acr_values`, `client_id`, `tenant_id`, `scope`), with the operators `eq`, `ne`, `contains`, `starts_with`, `ends_with`, `in`, `not_in`, `exists`, `not_exists` and `regex`, compared without regard to case. Among several, the highest priority wins, and at equal priority a tenant's own policy wins over a global one.
+- **Conditions first:** a policy with conditions the request meets is chosen first, because it is more specific. The conditions are on `acr_values`, the client, the tenant or the scopes (`acr_values`, `client_id`, `tenant_id`, `scope`), or on any other authorization request parameter by its name (for example `login_hint` or `ui_locales`), with the operators `eq`, `ne`, `contains`, `starts_with`, `ends_with`, `in`, `not_in`, `exists`, `not_exists` and `regex`, compared without regard to case. Among several, the highest priority wins, and at equal priority a tenant's own policy wins over a global one.
 - **Forced sign-in:** `prompt=login`, an expired `max_age` and the other forced sign-ins choose the policy the same way: `?policy=` first, then the policy whose conditions the request's `acr_values` meet.
 - **Otherwise:** the highest-priority policy without conditions runs.
 - **Failed conditions:** a policy whose conditions the request does not meet never runs.

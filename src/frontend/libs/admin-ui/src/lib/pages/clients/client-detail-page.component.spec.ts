@@ -230,6 +230,19 @@ describe('ClientDetailPageComponent public keys', () => {
 
     page.client.set({ ...client(), tokenEndpointAuthMethod: 'private_key_jwt', jwksUri: 'https://app.example.com/jwks.json' });
     expect(page.isLastRequiredCredential(key)).toBe(false);
+
+    page.client.set({ ...client(), tokenEndpointAuthMethod: 'private_key_jwt', jwksUri: '  ' });
+    expect(page.isLastRequiredCredential(key)).toBe(true);
+  });
+
+  it('counts only unexpired keys, as only they sign the client in', () => {
+    const { page } = setup();
+    const [, key] = secrets;
+    const expired = { id: 3, type: 'JsonWebKey', created: '2026-01-01T00:00:00Z', keyId: 'old', expiration: '2026-02-01T00:00:00Z' };
+    page.client.set({ ...client(), tokenEndpointAuthMethod: 'private_key_jwt', secrets: [...secrets, expired] });
+
+    expect(page.isLastRequiredCredential(key)).toBe(true);
+    expect(page.isLastRequiredCredential(expired)).toBe(false);
   });
 
   it('saves the key set URL with the client', () => {

@@ -973,21 +973,27 @@ export class ClientDetailPageComponent implements OnInit {
   /**
    * The last credential the client signs in with, which the API refuses to remove: the last shared secret of a client
    * that signs in with one, the last key of a private_key_jwt client without a jwks_uri, or the last certificate of a
-   * self-signed mutual TLS client. A replacement is added first.
+   * self-signed mutual TLS client. Only unexpired credentials count, as only they
+   * authenticate. A replacement is added first.
    */
   isLastRequiredCredential(secret: ClientSecret): boolean {
     const client = this.client();
     if (!client) return false;
+    const now = Date.now();
+    const usable = (s: ClientSecret) => !s.expiration || Date.parse(s.expiration) >= now;
+    const noOther = (sameKind: (s: ClientSecret) => boolean) =>
+      !(client.secrets ?? []).some((s) => s.id !== secret.id && sameKind(s) && usable(s));
+    if (!usable(secret)) return false;
+
     const method = client.tokenEndpointAuthMethod;
     if (!this.isPublicKey(secret)) {
       return client.requireClientSecret
         && !['private_key_jwt', 'tls_client_auth', 'self_signed_tls_client_auth'].includes(method ?? '')
-        && this.sharedSecrets().length <= 1;
+        && noOther((s) => !this.isPublicKey(s));
     }
-    if (method === 'private_key_jwt') return !client.jwksUri && this.publicKeys().length <= 1;
+    if (method === 'private_key_jwt') return !client.jwksUri?.trim() && noOther((s) => this.isPublicKey(s));
     if (method === 'self_signed_tls_client_auth') {
-      return secret.type === 'X509CertificateBase64'
-        && this.publicKeys().filter((k) => k.type === 'X509CertificateBase64').length <= 1;
+      return secret.type === 'X509CertificateBase64' && noOther((s) => s.type === 'X509CertificateBase64');
     }
     return false;
   }

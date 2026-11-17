@@ -25,9 +25,10 @@ namespace Oluso.Tests.Protocols;
 public class RequestedPolicyAvailabilityTests
 {
     private static (AuthenticationCoordinator Coordinator, Mock<IJourneyOrchestrator> Orchestrator, ProtocolContext Context) Rig(
-        JourneyPolicy? requested, JourneyPolicy? defaultSignIn, string? requestedSlug = "business-signin", bool fallback = false)
+        JourneyPolicy? requested, JourneyPolicy? defaultSignIn, string? requestedSlug = "business-signin", bool fallback = false,
+        Mock<IJourneyPolicyStore>? store = null, IDictionary<string, string>? parameters = null)
     {
-        var policies = new Mock<IJourneyPolicyStore>();
+        var policies = store ?? new Mock<IJourneyPolicyStore>();
         policies.Setup(p => p.GetBySlugAsync("business-signin", It.IsAny<CancellationToken>())).ReturnsAsync(requested);
         policies.Setup(p => p.FindMatchingAsync(It.Is<JourneyPolicyMatchContext>(m => m.Type == JourneyType.SignIn), It.IsAny<CancellationToken>()))
             .ReturnsAsync(defaultSignIn);
@@ -64,7 +65,7 @@ public class RequestedPolicyAvailabilityTests
             HttpContext = http,
             ProtocolName = "oidc",
             PolicyId = requestedSlug,
-            Request = new Oluso.Protocols.Oidc.OidcAuthorizeRequest { ClientId = "app" },
+            Request = new Oluso.Protocols.Oidc.OidcAuthorizeRequest { ClientId = "app", Raw = parameters },
         };
         context.Properties["TenantJourneyFallbackToStandard"] = fallback;
         return (coordinator, orchestrator, context);
@@ -124,6 +125,20 @@ public class RequestedPolicyAvailabilityTests
 
         orchestrator.Verify(o => o.StartJourneyAsync(
             It.Is<JourneyPolicy>(p => p.Slug == "signin"), It.IsAny<JourneyStartContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_policy_condition_on_another_request_parameter_sees_it()
+    {
+        var store = new Mock<IJourneyPolicyStore>();
+        var (coordinator, _, context) = Rig(null, Policy("signin", true), requestedSlug: null, store: store,
+            parameters: new Dictionary<string, string> { ["login_hint"] = "ada@partner.test" });
+
+        await coordinator.StartAuthenticationAsync(context, new AuthenticationRequirement { SuggestedPolicyType = JourneyType.SignIn });
+
+        store.Verify(p => p.FindMatchingAsync(
+            It.Is<JourneyPolicyMatchContext>(m => m.AdditionalParameters!["login_hint"] == "ada@partner.test"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]

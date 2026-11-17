@@ -123,7 +123,7 @@ public class TenantDomainsController : ControllerBase
                 return Conflict(InUse(existing, tenantId));
             }
 
-            await ReopenAsync(existing, tenantId, ct);
+            Reopen(existing, tenantId);
             await _store.UpdateAsync(existing, ct);
             _logger.LogInformation("Domain verification reopened for {Domain} on tenant {TenantId}", domain, tenantId);
             return CreatedAtAction(nameof(GetDomain), new { tenantId, id = existing.Id }, MapToDto(existing));
@@ -165,18 +165,14 @@ public class TenantDomainsController : ControllerBase
 
     /// <summary>
     /// Starts verification of a removed or failed record over, for <paramref name="tenantId"/>. The same tenant keeps
-    /// its token, so a TXT record it already created still matches. Another tenant gets a new token, and the hostname
-    /// the edge provider holds for the previous tenant is removed.
+    /// its token, so a TXT record it already created still matches; another tenant gets a new token. The edge hostname
+    /// is the domain's, whichever tenant holds it, so its id stays: activation checks it with the edge provider and
+    /// resubmits the hostname when the provider no longer has it.
     /// </summary>
-    private async Task ReopenAsync(CustomDomainVerification domain, string tenantId, CancellationToken ct)
+    private static void Reopen(CustomDomainVerification domain, string tenantId)
     {
         if (domain.TenantId != tenantId)
         {
-            if (!string.IsNullOrEmpty(domain.ExternalProvisioningId) && _provisioningService != null)
-            {
-                await _provisioningService.DeprovisionAsync(domain.Domain, ct);
-            }
-            domain.ExternalProvisioningId = null;
             domain.TenantId = tenantId;
             domain.Tenant = null;
             var token = NewToken();
@@ -210,7 +206,7 @@ public class TenantDomainsController : ControllerBase
         // Retrying a domain whose verification timed out starts it over, so the background check picks it up again.
         if (domain.Status == CustomDomainStatus.Failed)
         {
-            await ReopenAsync(domain, tenantId, ct);
+            Reopen(domain, tenantId);
         }
 
         domain.LastCheckedAt = DateTime.UtcNow;
