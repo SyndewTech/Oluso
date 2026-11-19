@@ -2,14 +2,19 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Jobs;
 
 namespace Oluso.Controllers;
 
 /// <summary>
 /// Receives forwarded events from standalone apps (e.g., OlusoMarketplace.Web)
 /// and re-raises them through the platform's event service so other modules
-/// (webhooks, audit, and other modules) can act on them.
+/// (webhooks, audit, and other modules) can act on them. An event that belongs
+/// to a tenant is raised inside a scope set to that tenant, since the relay
+/// request itself has none, so every sink acts for the event's tenant.
 /// </summary>
 [ApiController]
 [Route("api/events/relay")]
@@ -18,17 +23,23 @@ public class EventRelayController : ControllerBase
     public const string RelaySource = "event-relay";
 
     private readonly IOlusoEventService _eventService;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ITenantStore _tenantStore;
     private readonly EventTypeRegistry _eventTypeRegistry;
     private readonly IConfiguration _configuration;
     private readonly ILogger<EventRelayController> _logger;
 
     public EventRelayController(
         IOlusoEventService eventService,
+        IServiceScopeFactory scopeFactory,
+        ITenantStore tenantStore,
         EventTypeRegistry eventTypeRegistry,
         IConfiguration configuration,
         ILogger<EventRelayController> logger)
     {
         _eventService = eventService;
+        _scopeFactory = scopeFactory;
+        _tenantStore = tenantStore;
         _eventTypeRegistry = eventTypeRegistry;
         _configuration = configuration;
         _logger = logger;
@@ -72,7 +83,22 @@ public class EventRelayController : ControllerBase
         // from a platform component, not from this anonymous relay request.
         evt.Origin ??= EventOrigin.System(RelaySource);
 
-        await _eventService.RaiseAsync(evt, cancellationToken);
+        if (string.IsNullOrEmpty(evt.TenantId))
+        {
+            await _eventService.RaiseAsync(evt, cancellationToken);
+        }
+        else
+        {
+            if (await _tenantStore.GetByIdAsync(evt.TenantId, cancellationToken) == null)
+            {
+                _logger.LogWarning("Relayed event {EventType} names unknown tenant {TenantId}", envelope.EventType, evt.TenantId);
+                return BadRequest($"Unknown tenant: {evt.TenantId}");
+            }
+
+            await TenantScope.RunAsync(_scopeFactory, evt.TenantId,
+                (services, ct) => services.GetRequiredService<IOlusoEventService>().RaiseAsync(evt, ct),
+                cancellationToken);
+        }
 
         _logger.LogDebug("Relayed event {EventType} from standalone app", envelope.EventType);
         return Ok();

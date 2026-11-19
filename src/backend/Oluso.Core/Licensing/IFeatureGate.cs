@@ -12,6 +12,13 @@ public interface IFeatureGate
     Task<FeatureGateResult> CheckFeatureAsync(string featureKey, string? userId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Check if a feature is available to <paramref name="tenantId"/>, for work done on a tenant other than
+    /// the current request's (seeding a tenant someone else is creating, say). <see cref="CheckFeatureAsync"/>
+    /// asks about the current request's tenant.
+    /// </summary>
+    Task<FeatureGateResult> CheckFeatureForTenantAsync(string featureKey, string tenantId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Quick synchronous check (license only, no async providers)
     /// </summary>
     FeatureGateResult CheckFeature(string featureKey);

@@ -6,6 +6,7 @@ using Oluso.Core.Api;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
 using Oluso.Core.Events;
+using Oluso.Core.Licensing;
 using Oluso.Core.Protocols.Models;
 using Oluso.Admin.Controllers.Service;
 using Oluso.Admin.Dto.Clients;
@@ -29,6 +30,7 @@ public class ClientsController : AdminBaseController
     private readonly IServiceApiScopeProvisioner _serviceApiScopeProvisioner;
     private readonly IAuthorizationService _authorization;
     private readonly IClientSecretProtector _secrets;
+    private readonly IFeatureGate _featureGate;
     private readonly ILogger<ClientsController> _logger;
 
     public ClientsController(
@@ -40,11 +42,13 @@ public class ClientsController : AdminBaseController
         IServiceApiScopeProvisioner serviceApiScopeProvisioner,
         IAuthorizationService authorization,
         IClientSecretProtector secrets,
+        IFeatureGate featureGate,
         ILogger<ClientsController> logger,
         ICorsOriginsCacheInvalidator? corsCache = null)
         : base(tenantContext)
     {
         _secrets = secrets;
+        _featureGate = featureGate;
         _corsCache = corsCache;
         _clientStore = clientStore;
         _tenantSettingsProvider = tenantSettingsProvider;
@@ -213,6 +217,11 @@ public class ClientsController : AdminBaseController
             return sensitiveScopeError;
         }
 
+        if (await UnavailableModuleScopesErrorAsync(request.AllowedScopes, Array.Empty<string>(), cancellationToken) is { } moduleScopeError)
+        {
+            return BadRequest(new { error = moduleScopeError });
+        }
+
         if (InvalidAllowedResource(request.AllowedResources) is { } resourceError)
         {
             return BadRequest(new { error = resourceError });
@@ -348,6 +357,12 @@ public class ClientsController : AdminBaseController
         if (await RejectUnheldSensitiveScopesAsync(effectiveScopes, client.AllowedScopes.Select(s => s.Scope).ToList()) is { } sensitiveScopeError)
         {
             return sensitiveScopeError;
+        }
+
+        if (await UnavailableModuleScopesErrorAsync(
+                effectiveScopes, client.AllowedScopes.Select(s => s.Scope).ToList(), cancellationToken) is { } moduleScopeError)
+        {
+            return BadRequest(new { error = moduleScopeError });
         }
 
         if (InvalidAllowedResource(request.AllowedResources) is { } resourceError)
@@ -1284,8 +1299,8 @@ public class ClientsController : AdminBaseController
         if (unknown.Count > 0)
         {
             return $"Unknown service scope(s): {string.Join(", ", unknown)}. "
-                + $"'{ServiceScopes.ReservedPrefix}' is a reserved namespace — "
-                + "use the Service API permissions on the client instead.";
+                + $"'{ServiceScopes.ReservedPrefix}' is a reserved namespace. "
+                + "Use the Service API permissions on the client instead.";
         }
 
         if (!serviceScopes.Contains(ServiceScopes.ServiceApi, StringComparer.Ordinal))
@@ -1351,6 +1366,37 @@ public class ClientsController : AdminBaseController
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// A module's Service API scope is given to a client only while the organization
+    /// has the module. Scopes the client already has aren't re-checked, so a client
+    /// keeps saving after a module is switched off and its scopes can be taken off.
+    /// </summary>
+    private async Task<string?> UnavailableModuleScopesErrorAsync(
+        IEnumerable<string>? effectiveScopes,
+        IEnumerable<string> currentScopes,
+        CancellationToken cancellationToken)
+    {
+        var current = currentScopes.ToHashSet(StringComparer.Ordinal);
+        var added = (effectiveScopes ?? Enumerable.Empty<string>())
+            .Where(s => !current.Contains(s))
+            .Select(ServiceScopes.Find)
+            .OfType<ServiceScopeDefinition>()
+            .Where(d => d.FeatureKey != null)
+            .DistinctBy(d => d.Name)
+            .ToList();
+        if (added.Count == 0)
+        {
+            return null;
+        }
+
+        var unavailable = await ServiceScopes.UnavailableFeaturesAsync(_featureGate, added, cancellationToken);
+        var refused = added.Where(d => unavailable.Contains(d.FeatureKey!)).ToList();
+        return refused.Count == 0
+            ? null
+            : $"{string.Join(", ", refused.Select(d => d.Name))} can't be given to a client: this organization doesn't have "
+                + $"{string.Join(" or ", refused.Select(d => d.Group).Distinct())}.";
     }
 
     /// <summary>

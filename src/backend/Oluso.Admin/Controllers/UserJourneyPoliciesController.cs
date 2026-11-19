@@ -511,14 +511,15 @@ public class UserJourneyPoliciesController : AdminBaseController
             Priority = request.Priority,
             OwnerModule = string.IsNullOrWhiteSpace(request.OwnerModule) ? null : request.OwnerModule.Trim(),
             Sharing = ParseSharing(request.Sharing) ?? JourneySharing.Private,
-            Steps = request.Steps.Select(s => new JourneyPolicyStep
+            Steps = request.Steps.Select((s, index) => new JourneyPolicyStep
             {
                 Id = s.Id,
                 Type = s.Type,
                 DisplayName = s.DisplayName,
                 Configuration = s.Configuration,
                 Optional = s.Optional,
-                Order = s.Order,
+                // Steps run in the order they are listed (the designer's boxes), whatever order a file or caller sent.
+                Order = index,
                 Branches = s.Branches,
                 Conditions = s.Conditions,
                 Layout = s.Layout,
@@ -626,14 +627,14 @@ public class UserJourneyPoliciesController : AdminBaseController
             // overwriting a live credential with a placeholder.
             var previousSteps = existing.Steps?.ToList() ?? new List<JourneyPolicyStep>();
 
-            existing.Steps = request.Steps.Select(s => new JourneyPolicyStep
+            existing.Steps = request.Steps.Select((s, index) => new JourneyPolicyStep
             {
                 Id = s.Id,
                 Type = s.Type,
                 DisplayName = s.DisplayName,
                 Configuration = s.Configuration,
                 Optional = s.Optional,
-                Order = s.Order,
+                Order = index,
                 Branches = s.Branches,
                 Conditions = s.Conditions,
                 Layout = s.Layout,
@@ -784,7 +785,7 @@ public class UserJourneyPoliciesController : AdminBaseController
             // A copy of a module's journey stays that module's, so its answers stay out of the platform.
             OwnerModule = source.OwnerModule,
             Sharing = source.Sharing,
-            Steps = source.Steps.Select(s => new JourneyPolicyStep
+            Steps = source.Steps.OrderBy(s => s.Order).Select((s, index) => new JourneyPolicyStep
             {
                 Id = s.Id,
                 Type = s.Type,
@@ -794,7 +795,7 @@ public class UserJourneyPoliciesController : AdminBaseController
                     : null,
                 Branches = s.Branches,
                 Optional = s.Optional,
-                Order = s.Order,
+                Order = index,
                 Conditions = s.Conditions?.ToList(),
                 Layout = s.Layout,
                 OnSuccess = s.OnSuccess,
@@ -1856,7 +1857,8 @@ public class UserJourneyPoliciesController : AdminBaseController
             OwnerModule = policy.OwnerModule,
             OwnerModuleName = ModuleName(policy.OwnerModule),
             Sharing = policy.Sharing.ToString(),
-            Steps = policy.Steps.Select(s => new JourneyPolicyStepDto
+            // Listed in the order they run, so the designer shows what runs (and saving keeps it).
+            Steps = policy.Steps.OrderBy(s => s.Order).Select(s => new JourneyPolicyStepDto
             {
                 Id = s.Id,
                 Type = s.Type,

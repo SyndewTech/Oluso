@@ -48,4 +48,11 @@ public class ServiceApiScopeDto
     /// The admin permission a sensitive scope requires the saving admin to hold.
     /// </summary>
     public string? RequiredAdminPermission { get; set; }
+
+    /// <summary>
+    /// False for a module's scope when the organization doesn't have that module:
+    /// it can't be given to a client, and is listed only so a client that already
+    /// holds it can have it taken off.
+    /// </summary>
+    public bool Available { get; set; } = true;
 }

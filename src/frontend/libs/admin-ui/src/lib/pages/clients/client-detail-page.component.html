@@ -754,7 +754,7 @@
           <ui-card title="Permissions">
             <p class="text-sm text-gray-500 mb-4">
               What this client may do when it calls <code class="font-mono">/api/service/*</code>
-              with a client-credentials token. Nothing is granted by default — a token with no
+              with a client-credentials token. Nothing is granted by default: a token with no
               permission below can authenticate but every endpoint returns 403.
             </p>
 
@@ -779,11 +779,17 @@
                             <ui-badge variant="danger" class="ml-2">Sensitive</ui-badge>
                           }
                           <span class="block text-sm text-gray-500">{{ scope.description }}</span>
+                          @if (!isServiceScopeOffered(scope)) {
+                            <span class="mt-1 block text-sm text-amber-700">
+                              This organization doesn't have {{ scope.group }}, so calls with this permission are refused.
+                              Untick it to take it off this client.
+                            </span>
+                          }
                           @if (scope.requiresExplicitGrant) {
                             <span class="mt-1 block text-sm text-red-700">
-                              Sensitive — deletes accounts permanently. Only grant it to a client you fully trust.
+                              Only give this to a client you fully trust.
                               @if (scope.requiredAdminPermission) {
-                                To grant it you need the
+                                To give it you need the
                                 <code class="font-mono">{{ scope.requiredAdminPermission }}</code>
                                 permission assigned to one of your roles by name.
                               }
@@ -800,7 +806,7 @@
 
           <ui-card title="How the client gets a token">
             <p class="text-sm text-gray-500 mb-4">
-              The tenant is fixed by this client's registration — service calls cannot switch
+              The tenant is fixed by this client's registration: service calls cannot switch
               tenant, and no <code class="font-mono">X-Tenant-Id</code> header is needed.
             </p>
             <pre class="p-3 bg-gray-100 rounded font-mono text-xs overflow-x-auto"
@@ -811,7 +817,7 @@
             <p class="text-sm text-gray-500 mt-3">
               Send the resulting access token as
               <code class="font-mono">Authorization: Bearer &lt;token&gt;</code>. Do not send a
-              <code class="font-mono">resource</code> parameter — it changes the audience and the
+              <code class="font-mono">resource</code> parameter. It changes the audience and the
               token will be rejected.
             </p>
           </ui-card>
@@ -1032,7 +1038,7 @@
                   [ngModel]="getCurrentValue('absoluteRefreshTokenLifetime') || 2592000"
                   (ngModelChange)="updateFormField('absoluteRefreshTokenLifetime', +$event)"
                 ></ui-input>
-                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('absoluteRefreshTokenLifetime')) }} — refresh token cannot be used after this.</p>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('absoluteRefreshTokenLifetime')) }}. The refresh token cannot be used after this.</p>
               </div>
 
               <div>
@@ -1042,7 +1048,7 @@
                   [ngModel]="getCurrentValue('slidingRefreshTokenLifetime') || 1296000"
                   (ngModelChange)="updateFormField('slidingRefreshTokenLifetime', +$event)"
                 ></ui-input>
-                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('slidingRefreshTokenLifetime')) }} — rolling window when expiration is Sliding.</p>
+                <p class="mt-1 text-sm text-gray-500">{{ formatDuration(getCurrentValue('slidingRefreshTokenLifetime')) }}. The rolling window when expiration is Sliding.</p>
               </div>
 
               <div>
@@ -1052,7 +1058,7 @@
                   [ngModel]="getCurrentValue('refreshTokenUsage') ?? 1"
                   (ngModelChange)="updateFormField('refreshTokenUsage', +$event)"
                 >
-                  <option [ngValue]="1">One-Time Only (rotate on use — recommended)</option>
+                  <option [ngValue]="1">One-Time Only (rotate on use, recommended)</option>
                   <option [ngValue]="0">Reusable (same token until expiry)</option>
                 </select>
               </div>
@@ -1228,8 +1234,8 @@
 
           <ui-card title="Authorize Parameter Claims">
             <p class="text-sm text-gray-500 mb-4">
-              Allowlist custom request parameters this client may pass — on <code>/authorize</code> or on the
-              <code>client_credentials</code> token request — and have emitted as token claims.
+              Allowlist custom request parameters this client may pass (on <code>/authorize</code> or on the
+              <code>client_credentials</code> token request) and have emitted as token claims.
               The claim type cannot be a reserved/system claim (sub, role, tenant_id, permissions, …).
             </p>
             <div class="space-y-2 mb-4">
@@ -1570,9 +1576,9 @@
                     [ngModel]="getCurrentValue('cibaTokenDeliveryMode') || 'poll'"
                     (ngModelChange)="updateFormField('cibaTokenDeliveryMode', $event)"
                   >
-                    <option value="poll">Poll — client polls token endpoint</option>
-                    <option value="ping">Ping — server notifies client, client polls</option>
-                    <option value="push">Push — server pushes token to client</option>
+                    <option value="poll">Poll - client polls token endpoint</option>
+                    <option value="ping">Ping - server notifies client, client polls</option>
+                    <option value="push">Push - server pushes token to client</option>
                   </select>
                 </div>
 
@@ -1624,7 +1630,7 @@
           <ui-card title="Integration / Connection">
             <p class="text-sm text-gray-500 mb-4">
               Everything an integrator needs to wire this client into their app. Issuer URI is
-              resolved per-tenant — any custom domain or token-settings override on this tenant
+              resolved per-tenant: any custom domain or token-settings override on this tenant
               is reflected below, matching what
               <code class="font-mono">/.well-known/openid-configuration</code> serves.
             </p>
