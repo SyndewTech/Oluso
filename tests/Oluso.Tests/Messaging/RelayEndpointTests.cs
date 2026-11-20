@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Oluso.Controllers;
@@ -32,8 +33,8 @@ public class RelayEndpointTests
     }
 
     private static EventRelayController EventRelay(string? configured, string? provided, Mock<IOlusoEventService> events) =>
-        WithRequest(new EventRelayController(events.Object, new EventTypeRegistry(Array.Empty<IEventPropertySource>()),
-            Config(configured), NullLogger<EventRelayController>.Instance), provided);
+        WithRequest(new EventRelayController(events.Object, Mock.Of<IServiceScopeFactory>(), Mock.Of<ITenantStore>(),
+            new EventTypeRegistry(Array.Empty<IEventPropertySource>()), Config(configured), NullLogger<EventRelayController>.Instance), provided);
 
     private static EventEnvelope Envelope() => new() { EventType = "x.y", Payload = JsonDocument.Parse("{}").RootElement };
 
@@ -70,8 +71,8 @@ public class RelayEndpointTests
         events.Setup(e => e.RaiseAsync(It.IsAny<OlusoEvent>(), It.IsAny<CancellationToken>()))
             .Callback((OlusoEvent e, CancellationToken _) => raised.Add(e))
             .Returns(Task.CompletedTask);
-        var relay = WithRequest(new EventRelayController(events.Object, new EventTypeRegistry(new[] { source.Object }),
-            Config("secret"), NullLogger<EventRelayController>.Instance), "secret");
+        var relay = WithRequest(new EventRelayController(events.Object, Mock.Of<IServiceScopeFactory>(), Mock.Of<ITenantStore>(),
+            new EventTypeRegistry(new[] { source.Object }), Config("secret"), NullLogger<EventRelayController>.Instance), "secret");
 
         EventEnvelope Relayed(UserUpdatedEvent evt) => new()
         {
@@ -85,6 +86,46 @@ public class RelayEndpointTests
         raised.Select(e => e.Origin).Should().Equal(
             EventOrigin.ServiceClient("pay1"),
             EventOrigin.System(EventRelayController.RelaySource));
+    }
+
+    [Fact]
+    public async Task A_relayed_tenant_event_is_raised_inside_that_tenants_scope_and_an_unknown_tenant_is_refused()
+    {
+        var source = new Mock<IEventPropertySource>();
+        source.Setup(s => s.ResolveEventType(nameof(UserUpdatedEvent))).Returns(typeof(UserUpdatedEvent));
+        var tenants = new Mock<ITenantStore>();
+        tenants.Setup(t => t.GetByIdAsync("acme", It.IsAny<CancellationToken>())).ReturnsAsync(new Tenant { Id = "acme", Name = "acme", Identifier = "acme" });
+        var raisedFor = new List<string?>();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(tenants.Object);
+        services.AddScoped<ITenantContextAccessor, TenantContextAccessor>();
+        services.AddScoped<IOlusoEventService>(sp =>
+        {
+            var context = sp.GetRequiredService<ITenantContextAccessor>();
+            var scoped = new Mock<IOlusoEventService>();
+            scoped.Setup(e => e.RaiseAsync(It.IsAny<OlusoEvent>(), It.IsAny<CancellationToken>()))
+                .Callback(() => raisedFor.Add(context.TenantId))
+                .Returns(Task.CompletedTask);
+            return scoped.Object;
+        });
+        using var root = services.BuildServiceProvider();
+        var unscoped = new Mock<IOlusoEventService>();
+        var relay = WithRequest(new EventRelayController(unscoped.Object,
+            root.GetRequiredService<IServiceScopeFactory>(),
+            tenants.Object, new EventTypeRegistry(new[] { source.Object }), Config("secret"), NullLogger<EventRelayController>.Instance), "secret");
+
+        EventEnvelope Relayed(string tenantId) => new()
+        {
+            EventType = nameof(UserUpdatedEvent),
+            Payload = JsonSerializer.SerializeToElement(new UserUpdatedEvent { SubjectId = "u1", TenantId = tenantId }),
+        };
+
+        (await relay.Relay(Relayed("acme"), CancellationToken.None)).Should().BeOfType<OkResult>();
+        (await relay.Relay(Relayed("nobody"), CancellationToken.None)).Should().BeOfType<BadRequestObjectResult>();
+
+        raisedFor.Should().Equal("acme");
+        unscoped.Verify(e => e.RaiseAsync(It.IsAny<OlusoEvent>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private readonly Mock<IEmailSender> _sender = new();

@@ -193,10 +193,13 @@ public class UsersDeleteExplicitGrantTests
     }
 
     [Fact]
-    public void The_service_api_catalog_flags_the_delete_scope_as_sensitive()
+    public async Task The_service_api_catalog_flags_the_delete_scope_as_sensitive()
     {
-        var catalog = (ServiceApiCatalogDto)((OkObjectResult)new ServiceApiController(new TestTenantContext { TenantId = TenantId })
-            .GetScopes().Result!).Value!;
+        var gate = new Mock<IFeatureGate>();
+        gate.Setup(g => g.CheckFeatureAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(FeatureGateResult.Allowed());
+        var catalog = (ServiceApiCatalogDto)((OkObjectResult)(await new ServiceApiController(new TestTenantContext { TenantId = TenantId }, gate.Object)
+            .GetScopes(default)).Result!).Value!;
 
         var delete = catalog.Scopes.Single(s => s.Name == ServiceScopes.UsersDelete);
         delete.RequiresExplicitGrant.Should().BeTrue();
@@ -228,7 +231,7 @@ public class UsersDeleteExplicitGrantTests
         var controller = new ClientsController(
             new TestTenantContext { TenantId = TenantId }, clients.Object, settings.Object, Mock.Of<IIssuerResolver>(),
             Mock.Of<IOlusoEventService>(), Mock.Of<IServiceApiScopeProvisioner>(), authorization.Object,
-            Mock.Of<IClientSecretProtector>(), NullLogger<ClientsController>.Instance)
+            Mock.Of<IClientSecretProtector>(), Mock.Of<IFeatureGate>(), NullLogger<ClientsController>.Instance)
         {
             ControllerContext = new ControllerContext
             {

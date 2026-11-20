@@ -542,7 +542,7 @@ export class ClientDetailPageComponent implements OnInit {
         this.activeTab.set('authentication');
       }
 
-      this.toast.warning('Service API access turned off — it requires the Client Credentials grant.');
+      this.toast.warning('Service API access turned off. It needs the Client Credentials grant.');
     }
   }
 
@@ -567,10 +567,18 @@ export class ClientDetailPageComponent implements OnInit {
     return (this.getCurrentValue('allowedScopes') || []).includes(base);
   });
 
+  /**
+   * The scopes listed on this client: those the organization can give, plus any module scope
+   * the client already has from before the module was switched off, so it can be taken off.
+   * Platform clients serve every organization, so they are offered everything.
+   */
   readonly serviceApiGroups = computed(() => {
     const scopes = this.serviceApiCatalog()?.scopes || [];
+    const saved = this.client()?.allowedScopes || [];
+    const current = this.getCurrentValue('allowedScopes') || [];
     const groups: { name: string; scopes: ServiceApiScopeDto[] }[] = [];
     for (const scope of scopes) {
+      if (!this.isServiceScopeOffered(scope) && !saved.includes(scope.name) && !current.includes(scope.name)) continue;
       const group = groups.find((g) => g.name === scope.group);
       if (group) {
         group.scopes.push(scope);
@@ -591,7 +599,12 @@ export class ClientDetailPageComponent implements OnInit {
       .join(' ');
   });
 
-  /** Every scope name the Service API owns — base plus granular. */
+  /** True when the organization has the module the scope belongs to, or this is a platform client. */
+  isServiceScopeOffered(scope: ServiceApiScopeDto): boolean {
+    return this.platformMode() || scope.available;
+  }
+
+  /** Every scope name the Service API owns: base plus granular. */
   private managedServiceScopes(): string[] {
     const catalog = this.serviceApiCatalog();
     if (!catalog) return [];

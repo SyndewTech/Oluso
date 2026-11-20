@@ -1,6 +1,7 @@
 using Oluso.Admin.Controllers.Service;
 using Oluso.Core.Domain.Entities;
 using Oluso.Core.Domain.Interfaces;
+using Oluso.Core.Services;
 
 namespace Oluso.Admin.Services;
 
@@ -12,7 +13,8 @@ namespace Oluso.Admin.Services;
 /// allowed scopes would still fail token issuance with invalid_scope. Rather
 /// than making every admin hand-create seven scopes with exactly-right names,
 /// enabling Service API access on a client provisions them in the current
-/// tenant.
+/// tenant. A module's scope carries its module's feature as the scope's
+/// required feature, so the tenant issues it only while it has the module.
 /// </summary>
 public interface IServiceApiScopeProvisioner
 {
@@ -62,13 +64,16 @@ public class ServiceApiScopeProvisioner : IServiceApiScopeProvisioner
             .Select(s => s.Name)
             .ToHashSet(StringComparer.Ordinal);
 
+        await _resourceStore.EnsureRequiredFeaturesAsync(
+            ServiceScopeFeatureSource.Definitions(wanted.Where(existing.Contains)), cancellationToken);
+
         var created = new List<string>();
 
         foreach (var name in wanted.Where(n => !existing.Contains(n)))
         {
             var definition = ServiceScopes.Find(name);
 
-            await _resourceStore.AddApiScopeAsync(new ApiScope
+            var scope = new ApiScope
             {
                 Name = name,
                 DisplayName = definition?.DisplayName ?? "Service API access",
@@ -82,7 +87,13 @@ public class ServiceApiScopeProvisioner : IServiceApiScopeProvisioner
                 // Platform-managed — the admin API refuses to edit or delete
                 // these, so a rename can't silently break every service client.
                 NonEditable = true
-            }, cancellationToken);
+            };
+            if (definition?.FeatureKey is { } featureKey)
+            {
+                scope.Properties.Add(new ApiScopeProperty { Key = ApiScopeFeatures.RequiredFeatureProperty, Value = featureKey });
+            }
+
+            await _resourceStore.AddApiScopeAsync(scope, cancellationToken);
 
             created.Add(name);
         }
@@ -96,4 +107,24 @@ public class ServiceApiScopeProvisioner : IServiceApiScopeProvisioner
 
         return created;
     }
+}
+
+/// <summary>
+/// The module scopes of the Service API catalog as feature-gated scope
+/// declarations, so the startup pass stamps the module's feature on the scope
+/// rows tenants already have, including tenants that have since switched the
+/// module off.
+/// </summary>
+public sealed class ServiceScopeFeatureSource : IFeatureGatedScopeSource
+{
+    public IEnumerable<StandaloneApiScopeDefinition> GetFeatureGatedScopes() =>
+        Definitions(ServiceScopes.Catalog.Select(d => d.Name));
+
+    /// <summary>The module scopes among <paramref name="names"/>, with the feature each requires.</summary>
+    internal static IReadOnlyList<StandaloneApiScopeDefinition> Definitions(IEnumerable<string> names) =>
+        names.Select(ServiceScopes.Find)
+            .OfType<ServiceScopeDefinition>()
+            .Where(d => d.FeatureKey != null)
+            .Select(d => new StandaloneApiScopeDefinition(d.Name, d.DisplayName, d.Description, d.FeatureKey))
+            .ToList();
 }

@@ -11,11 +11,11 @@ Platform clients are system-level OAuth 2.0 applications that operate across all
 
 The table shows all platform clients with:
 
-- **Client ID** — the unique OAuth identifier
-- **Name** — display name of the client
-- **Status** — Enabled or Disabled
-- **Grant Types** — which OAuth 2.0 flows the client supports
-- **Created** — when the client was registered
+- **Client ID**: the unique OAuth identifier
+- **Name**: display name of the client
+- **Status**: Enabled or Disabled
+- **Grant Types**: which OAuth 2.0 flows the client supports
+- **Created**: when the client was registered
 
 Click **Edit** to open the client detail page, or **Delete** to remove it.
 
@@ -35,4 +35,4 @@ Click **Add Platform Client** to open the client creation form. The form is the 
 ## Tips
 
 - Use platform clients for applications that need to authenticate users across multiple tenants (e.g., the admin portal itself)
-- Platform clients follow the same configuration options as regular clients — grant types, scopes, URIs, etc.
+- Platform clients follow the same configuration options as regular clients: grant types, scopes, URIs, etc.

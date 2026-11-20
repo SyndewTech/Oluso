@@ -79,6 +79,10 @@ export class ApprovalHistoryComponent {
       case 'skipped': return 'Skipped';
       case 'completed': return 'Completed';
       case 'commented': return 'Commented';
+      case 'followupstarted': return 'Follow-up started';
+      case 'followupapproved': return 'Follow-up approved';
+      case 'followuprejected': return 'Follow-up rejected';
+      case 'followupwithdrawn': return 'Follow-up withdrawn';
       default: return action;
     }
   }
@@ -87,10 +91,15 @@ export class ApprovalHistoryComponent {
     switch ((action || '').toLowerCase()) {
       case 'approved':
       case 'completed':
+      case 'followupapproved':
         return 'check';
       case 'rejected':
       case 'recalled':
+      case 'followuprejected':
+      case 'followupwithdrawn':
         return 'x-circle';
+      case 'followupstarted':
+        return 'arrow-right';
       case 'skipped':
         return 'arrow-path-rounded-square';
       case 'reassigned':
@@ -104,10 +113,14 @@ export class ApprovalHistoryComponent {
     switch ((action || '').toLowerCase()) {
       case 'approved':
       case 'completed':
+      case 'followupapproved':
         return 'bg-green-500';
       case 'rejected':
       case 'recalled':
+      case 'followuprejected':
         return 'bg-red-500';
+      case 'followupstarted':
+        return 'bg-blue-500';
       case 'skipped':
         return 'bg-amber-500';
       default:

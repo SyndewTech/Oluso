@@ -1,5 +1,6 @@
 // Config
 export * from './lib/config';
+export { saveBlob, readFileText } from './lib/pages/journeys/journey-file';
 
 // Auth
 export { adminOidcConfig } from './lib/auth/oidc.config';
