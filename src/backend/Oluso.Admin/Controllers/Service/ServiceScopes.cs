@@ -14,12 +14,17 @@ namespace Oluso.Admin.Controllers.Service;
 /// Set on a sensitive scope: the admin permission, itself granted by name only,
 /// an admin must hold to give a client this scope. Never pre-selected in the UI.
 /// </param>
+/// <param name="FeatureKey">
+/// Set on a module's scope: the module's feature key. An organization is offered
+/// the scope, and can give it to a client, only while it has that module.
+/// </param>
 public sealed record ServiceScopeDefinition(
     string Name,
     string DisplayName,
     string Description,
     string Group,
-    string? RequiredAdminPermission = null)
+    string? RequiredAdminPermission = null,
+    string? FeatureKey = null)
 {
     public bool RequiresExplicitGrant => RequiredAdminPermission != null;
 }
@@ -61,10 +66,6 @@ public static class ServiceScopes
     public const string RolesWrite = "oluso:roles:write";
     public const string RolesDelete = "oluso:roles:delete";
 
-    // Conversation thread scopes (comments on approvals and other entities)
-    public const string ConversationsRead = "oluso:conversations:read";
-    public const string ConversationsWrite = "oluso:conversations:write";
-
     private static readonly ServiceScopeDefinition[] BuiltIn =
     {
         new ServiceScopeDefinition(UsersRead, "Read users",
@@ -82,10 +83,6 @@ public static class ServiceScopes
             "Create roles and edit their names, descriptions, and claims.", "Roles"),
         new ServiceScopeDefinition(RolesDelete, "Delete roles",
             "Delete roles from the tenant.", "Roles"),
-        new ServiceScopeDefinition(ConversationsRead, "Read conversations",
-            "Read the comment threads on approval requests and other records, including deleted comments.", "Conversations"),
-        new ServiceScopeDefinition(ConversationsWrite, "Write conversations as users",
-            "Post, edit and delete comments on behalf of a named user who is allowed on the thread.", "Conversations"),
     };
 
     private static readonly object RegistrationLock = new();
@@ -132,6 +129,25 @@ public static class ServiceScopes
             Volatile.Write(ref _allNames, Names(catalog));
             Volatile.Write(ref _catalog, catalog);
         }
+    }
+
+    /// <summary>
+    /// The feature keys among <paramref name="definitions"/> that the current
+    /// organization doesn't have, checked through the same gate the module's
+    /// service endpoints use. A scope with one of these keys isn't offered.
+    /// </summary>
+    public static async Task<IReadOnlySet<string>> UnavailableFeaturesAsync(
+        Oluso.Core.Licensing.IFeatureGate featureGate,
+        IEnumerable<ServiceScopeDefinition> definitions,
+        CancellationToken cancellationToken)
+    {
+        var unavailable = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var featureKey in definitions.Select(d => d.FeatureKey).OfType<string>().Distinct(StringComparer.Ordinal))
+        {
+            var result = await featureGate.CheckFeatureAsync(featureKey, cancellationToken: cancellationToken);
+            if (!result.IsAllowed) unavailable.Add(featureKey);
+        }
+        return unavailable;
     }
 
     private static IReadOnlyList<string> Names(IEnumerable<ServiceScopeDefinition> catalog) =>

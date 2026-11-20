@@ -7,17 +7,17 @@ relatedTopics:
   - Identity Providers | admin.identity-providers
 ---
 
-Clients represent OAuth 2.0 / OpenID Connect applications that authenticate users through your identity platform. Each client corresponds to an application — a web app, mobile app, API, or service — that needs to verify user identity or access protected resources.
+Clients represent OAuth 2.0 / OpenID Connect applications that authenticate users through your identity platform. Each client corresponds to an application (a web app, mobile app, API, or service) that needs to verify user identity or access protected resources.
 
 ## Client List
 
 The table shows all registered clients with their:
 
-- **Client ID** — the unique identifier used in OAuth flows
-- **Name** — a human-readable display name
-- **Status** — whether the client is enabled or disabled
-- **Grant Types** — which OAuth 2.0 flows the client supports
-- **Created** — when the client was registered
+- **Client ID**: the unique identifier used in OAuth flows
+- **Name**: a human-readable display name
+- **Status**: whether the client is enabled or disabled
+- **Grant Types**: which OAuth 2.0 flows the client supports
+- **Created**: when the client was registered
 
 Click any row to view and edit the client's full configuration.
 
@@ -44,5 +44,5 @@ Click **Add Client** to register a new application. You will need to configure a
 
 - Use **Authorization Code with PKCE** for single-page applications instead of the Implicit flow
 - Enable **Require PKCE** for public clients (SPAs, mobile apps) to prevent authorization code interception
-- Keep client secrets secure — they are hashed and cannot be retrieved after creation
+- Keep client secrets secure: they are hashed and cannot be retrieved after creation
 - Use **Access Control** settings to restrict which users and roles can authenticate with a client

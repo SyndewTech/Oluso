@@ -12,6 +12,7 @@ using Oluso.Admin.Controllers.Service;
 using Oluso.Admin.Search;
 using Oluso.Admin.Services;
 using Oluso.Core.Protocols.Models;
+using Oluso.Core.Services;
 using Oluso.Imaging;
 
 using Oluso.Admin.Services.ProviderIcons;
@@ -107,6 +108,7 @@ public static class OlusoAdminExtensions
         // Provisions the ApiScope rows behind the Service API when a client is
         // granted service access — see ServiceApiScopeProvisioner.
         mvcBuilder.Services.AddScoped<IServiceApiScopeProvisioner, ServiceApiScopeProvisioner>();
+        mvcBuilder.Services.AddFeatureGatedScopeSource<ServiceScopeFeatureSource>();
 
         // Provisions the identity resource that releases the entitlements claim
         // — see EntitlementScopeProvisioner.

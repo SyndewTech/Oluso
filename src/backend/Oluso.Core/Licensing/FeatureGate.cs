@@ -35,10 +35,27 @@ public class FeatureGate : IFeatureGate
     /// <summary>
     /// Check if a feature is available
     /// </summary>
-    public async Task<FeatureGateResult> CheckFeatureAsync(
+    public Task<FeatureGateResult> CheckFeatureAsync(
         string featureKey,
         string? userId = null,
         CancellationToken cancellationToken = default)
+        => CheckAsync(featureKey, _tenantContext.TenantId, userId, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<FeatureGateResult> CheckFeatureForTenantAsync(
+        string featureKey,
+        string tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(tenantId);
+        return CheckAsync(featureKey, tenantId, null, cancellationToken);
+    }
+
+    private async Task<FeatureGateResult> CheckAsync(
+        string featureKey,
+        string? tenantId,
+        string? userId,
+        CancellationToken cancellationToken)
     {
         // 1. Check platform license first
         if (_licenseValidator != null)
@@ -53,8 +70,6 @@ public class FeatureGate : IFeatureGate
         }
 
         // 2. Check additional providers (extensibility for billing, etc.)
-        var tenantId = _tenantContext.TenantId;
-
         foreach (var provider in _featureProviders.OrderByDescending(p => p.Priority))
         {
             try

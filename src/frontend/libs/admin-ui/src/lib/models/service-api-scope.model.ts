@@ -11,6 +11,11 @@ export interface ServiceApiScopeDto {
    */
   requiresExplicitGrant: boolean;
   requiredAdminPermission?: string | null;
+  /**
+   * False for a module's scope when the organization doesn't have that module. It can't be
+   * given to a client; it is shown only on a client that already has it, so it can be taken off.
+   */
+  available: boolean;
 }
 
 /** The Service API permissions a client can be granted. */

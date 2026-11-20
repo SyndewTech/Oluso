@@ -49,13 +49,15 @@ public class TenantSeedEventSink : IOlusoEventSink
         {
             var featureKey = ModuleFeatures.GetFeatureKeyForProvider(module.FeatureKey);
 
-            // Only seed modules whose feature is enabled for this tenant.
-            // Skipping BOTH the seed AND MarkModuleSeededAsync is load-bearing —
+            // Only seed modules whose feature is enabled for the new tenant, asked
+            // about by id: the request creating it belongs to another tenant (the
+            // creator's, often the platform's), whose modules must not leak in.
+            // Skipping BOTH the seed AND MarkModuleSeededAsync is load-bearing:
             // it leaves the tracker row absent so FeatureEnabledSeedSink can
             // pick up first-time seeding when the feature is enabled later.
             if (featureKey != null && featureGate != null)
             {
-                var gate = await featureGate.CheckFeatureAsync(featureKey, cancellationToken: cancellationToken);
+                var gate = await featureGate.CheckFeatureForTenantAsync(featureKey, tenantId, cancellationToken);
                 if (!gate.IsAllowed)
                 {
                     _logger.LogDebug("Skipping seed for module {Module} — feature not enabled for tenant {TenantId}",
